@@ -3124,6 +3124,7 @@ dependencies = [
  "anyhow",
  "axum",
  "dirs",
+ "libc",
  "local-ip-address",
  "mime_guess",
  "qrcode",

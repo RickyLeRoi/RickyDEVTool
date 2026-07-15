@@ -48,6 +48,43 @@ export interface HeavyProcessesResult {
   memMinPct: number;
 }
 
+export interface PortProcess {
+  pid: number;
+  name: string;
+  exePath: string | null;
+  user: string | null;
+  startedAt: number | null;
+  isSystem: boolean;
+  knownApp: string | null;
+  killProtection: "confirm" | "typed-confirm";
+}
+
+export interface PortEntry {
+  port: number;
+  protocol: "tcp";
+  addresses: string[];
+  processes: PortProcess[];
+}
+
+export interface PortScan {
+  ports: PortEntry[];
+  hiddenSystem: number;
+  sampledAt: number;
+}
+
+export interface KillRequest {
+  pid: number;
+  expectedName: string;
+  expectedStartedAt: number | null;
+  force?: boolean;
+  confirmName?: string;
+}
+
+export interface KillOutcome {
+  killed: boolean;
+  forced: boolean;
+}
+
 export interface LanInfo {
   urls: string[];
   port: number;

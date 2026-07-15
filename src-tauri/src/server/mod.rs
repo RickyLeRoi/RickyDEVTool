@@ -83,6 +83,8 @@ pub async fn start(
         .route("/api/log", post(client_log))
         .route("/api/pollers/{topic}/interval", post(set_interval))
         .route("/api/processes/heavy", get(heavy_processes))
+        .route("/api/processes/kill", post(kill_process))
+        .route("/api/ports", get(list_ports))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -255,6 +257,92 @@ async fn heavy_processes(
     )
     .await;
     Json(json!({ "ok": true, "data": result }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PortsQuery {
+    include_system: Option<bool>,
+}
+
+async fn list_ports(
+    axum::extract::Query(query): axum::extract::Query<PortsQuery>,
+) -> Response {
+    match crate::adapters::ports::scan_tcp_listen(query.include_system.unwrap_or(false)).await {
+        Ok(scan) => Json(json!({ "ok": true, "data": scan })).into_response(),
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "INTERNAL", "message": message, "retryable": true }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// Kill di un processo. Azione distruttiva: dalla LAN è negata finché
+/// non esisterà il toggle "Remote control" (v1).
+async fn kill_process(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<crate::adapters::kill::KillRequest>,
+) -> Response {
+    use crate::adapters::kill::{kill_process as do_kill, KillError};
+
+    if !peer.ip().is_loopback() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "ok": false,
+                "error": {
+                    "code": "REMOTE_FORBIDDEN",
+                    "message": "Il kill da remoto è disabilitato: usa il desktop",
+                    "retryable": false
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    match do_kill(req).await {
+        Ok(outcome) => Json(json!({ "ok": true, "data": outcome })).into_response(),
+        Err(e) => {
+            let (status, code, message, os_hint) = match e {
+                KillError::ProcessGone => (
+                    StatusCode::CONFLICT,
+                    "PROCESS_GONE",
+                    "Il processo non esiste più o il PID è stato riusato".to_string(),
+                    None,
+                ),
+                KillError::SystemProtected => (
+                    StatusCode::FORBIDDEN,
+                    "ACCESS_DENIED",
+                    "Processo di sistema: non terminabile da questo tool".to_string(),
+                    None,
+                ),
+                KillError::TypedConfirmRequired { name } => (
+                    StatusCode::PRECONDITION_REQUIRED,
+                    "TYPED_CONFIRM_REQUIRED",
+                    format!("\"{name}\" è protetto: digita il nome per confermare"),
+                    None,
+                ),
+                KillError::Failed { message, os_hint } => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    message,
+                    os_hint,
+                ),
+            };
+            (
+                status,
+                Json(json!({
+                    "ok": false,
+                    "error": { "code": code, "message": message, "osHint": os_hint, "retryable": false }
+                })),
+            )
+                .into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]

@@ -174,7 +174,7 @@ pub fn classify_known_app(name: &str, exe_path: Option<&str>) -> Option<&'static
 
 /// Euristica sistema/non-sistema (vedi PROJECT.md §6): imperfetta per design.
 #[cfg(target_os = "macos")]
-fn is_system_process(
+pub(crate) fn is_system_process(
     name: &str,
     exe_path: Option<&str>,
     _user: Option<&str>,
@@ -195,7 +195,7 @@ fn is_system_process(
 }
 
 #[cfg(target_os = "windows")]
-fn is_system_process(
+pub(crate) fn is_system_process(
     name: &str,
     exe_path: Option<&str>,
     user: Option<&str>,
@@ -216,7 +216,7 @@ fn is_system_process(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn is_system_process(
+pub(crate) fn is_system_process(
     _name: &str,
     exe_path: Option<&str>,
     _user: Option<&str>,

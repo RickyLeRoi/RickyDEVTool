@@ -28,14 +28,15 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] Pannello destro "vital signs" sempre visibile + versione mobile — anticipato in M0
 - Nota: kill dalla tabella arriva con la M2 (userà il ProcessKiller della sezione porte). ts-rs rimandato a M4, quando i modelli git/progetti crescono davvero.
 
-### M2 — Porte + kill (4–6 gg) — rischio tecnico più alto, per questo presto
-- [ ] Adapter `PortScanner`: macOS `lsof -nP -iTCP -sTCP:LISTEN` (parser con fixture), Windows `GetExtendedTcpTable`
-- [ ] Classificazione system/non-system (euristica per OS)
-- [ ] Adapter `ProcessKiller`: SIGTERM→SIGKILL su mac, TerminateProcess/taskkill su Win; verifica PID+nome+startTime
-- [ ] Lista protetti → typed-confirm; system → mai killabili
-- [ ] UI: tabella per porta, context menu con submenu processi, conferme
-- [ ] Icone processi noti (~15 regole statiche)
-- [ ] Polling attivo solo a sezione aperta (già dal PollerRegistry)
+### M2 — Porte + kill (4–6 gg) ← COMPLETATA (15/07/2026)
+- [x] Adapter `PortScanner`: macOS `lsof -FpnP` (parser testato su fixture), Windows `netstat -ano` (parser testato su fixture; scelto al posto di GetExtendedTcpTable: niente FFI non testabile da mac)
+- [x] Classificazione system/non-system (euristica per OS, riusata da M1)
+- [x] Adapter `ProcessKiller`: SIGTERM→SIGKILL dopo 5s su mac, taskkill (/F /T per force) su Win; verifica PID+nome+startTime contro il riuso dei PID
+- [x] Lista protetti → typed-confirm lato server (non solo UI); system → mai killabili; kill da LAN → REMOTE_FORBIDDEN finché non esiste il toggle remote control (v1)
+- [x] UI: tabella per porta, riga espandibile con processi/azioni (copia, apri nel browser), dialog kill con confirm/typed-confirm e force
+- [x] Icone/etichette processi noti (16 regole statiche, condivise con M1)
+- [x] Polling attivo solo a sezione aperta (verificato: topic `ports` via WS)
+- Nota: hover-submenu del context menu rimandato a rifinitura v1 (le righe espandibili funzionano anche su mobile). UDP non incluso (solo TCP LISTEN).
 
 ### M3 — Launcher + discovery tool (2–3 gg)
 - [ ] `AppLocator`: VS Code (path noti/registry/PATH), Visual Studio via vswhere (Win-only), git, node, dotnet, terminale

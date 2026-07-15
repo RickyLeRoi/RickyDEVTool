@@ -337,6 +337,124 @@ input {
   margin-left: 4px;
 }
 
+/* ---------- porte ---------- */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+.section-header h2 {
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.dim {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.port-row {
+  cursor: pointer;
+}
+.port-number {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.proc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 8px;
+}
+
+.port-detail > td {
+  background: var(--bg-panel);
+  padding: 8px 12px;
+}
+.port-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.proc-table.inner td {
+  border-bottom: 1px solid var(--bg-hover);
+}
+
+button.danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+button.danger:hover {
+  background: rgba(224, 92, 92, 0.12);
+}
+button.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.badge-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+  margin-left: 6px;
+}
+
+/* ---------- dialog ---------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  width: min(420px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.checkbox input {
+  width: auto;
+}
+
 /* ---------- settings ---------- */
 .settings section {
   margin-bottom: 20px;
