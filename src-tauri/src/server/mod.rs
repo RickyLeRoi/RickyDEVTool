@@ -32,6 +32,8 @@ pub struct ServerState {
     pub bus: EventBus,
     pub pollers: Arc<PollerRegistry>,
     pub port: u16,
+    /// Cache della discovery tool: invalidata su refresh esplicito o override.
+    pub tools_cache: Arc<tokio::sync::Mutex<Option<Vec<crate::adapters::tools::DiscoveredTool>>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +75,7 @@ pub async fn start(
         bus,
         pollers,
         port,
+        tools_cache: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
     let api = Router::new()
@@ -85,6 +88,9 @@ pub async fn start(
         .route("/api/processes/heavy", get(heavy_processes))
         .route("/api/processes/kill", post(kill_process))
         .route("/api/ports", get(list_ports))
+        .route("/api/tools", get(list_tools))
+        .route("/api/tools/{id}/launch", post(launch_tool))
+        .route("/api/tools/{id}/path", post(set_tool_path))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -343,6 +349,112 @@ async fn kill_process(
                 .into_response()
         }
     }
+}
+
+// ---------- tools ----------
+
+#[derive(Deserialize)]
+struct ToolsQuery {
+    refresh: Option<bool>,
+}
+
+async fn cached_tools(
+    state: &ServerState,
+    force_refresh: bool,
+) -> Vec<crate::adapters::tools::DiscoveredTool> {
+    let mut cache = state.tools_cache.lock().await;
+    if force_refresh || cache.is_none() {
+        let overrides = state.config.get().tool_paths;
+        *cache = Some(crate::adapters::tools::discover_all(&overrides).await);
+    }
+    cache.clone().unwrap_or_default()
+}
+
+async fn list_tools(
+    State(state): State<ServerState>,
+    axum::extract::Query(query): axum::extract::Query<ToolsQuery>,
+) -> Json<serde_json::Value> {
+    let tools = cached_tools(&state, query.refresh.unwrap_or(false)).await;
+    Json(json!({ "ok": true, "data": { "tools": tools } }))
+}
+
+#[derive(Deserialize)]
+struct LaunchBody {
+    target: Option<String>,
+}
+
+/// Avvio di applicazioni: azione locale, negata dalla LAN come il kill.
+async fn launch_tool(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    Json(body): Json<LaunchBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "REMOTE_FORBIDDEN", "message": "L'avvio di applicazioni da remoto è disabilitato", "retryable": false }
+            })),
+        )
+            .into_response();
+    }
+    let tools = cached_tools(&state, false).await;
+    let Some(tool) = tools.iter().find(|t| t.id == id && t.found) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "TOOL_NOT_FOUND", "message": format!("tool {id} non trovato sulla macchina"), "retryable": false }
+            })),
+        )
+            .into_response();
+    };
+    match crate::adapters::tools::launch(tool, body.target.as_deref()).await {
+        Ok(()) => Json(json!({ "ok": true, "data": { "launched": true } })).into_response(),
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "INTERNAL", "message": message, "retryable": true }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ToolPathBody {
+    /// null/assente = rimuovi l'override e torna alla discovery automatica.
+    path: Option<String>,
+}
+
+async fn set_tool_path(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+    Json(body): Json<ToolPathBody>,
+) -> Response {
+    if !crate::adapters::tools::TOOL_IDS.contains(&id.as_str()) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "TOOL_NOT_FOUND", "message": format!("tool sconosciuto: {id}"), "retryable": false }
+            })),
+        )
+            .into_response();
+    }
+    state.config.update(|c| match &body.path {
+        Some(path) if !path.trim().is_empty() => {
+            c.tool_paths.insert(id.clone(), path.trim().to_string());
+        }
+        _ => {
+            c.tool_paths.remove(&id);
+        }
+    });
+    let tools = cached_tools(&state, true).await;
+    Json(json!({ "ok": true, "data": { "tools": tools } })).into_response()
 }
 
 #[derive(Deserialize)]

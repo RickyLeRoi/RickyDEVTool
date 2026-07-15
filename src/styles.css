@@ -486,6 +486,17 @@ button.small {
   max-width: 46ch;
 }
 
+.tool-edit {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.tool-edit input {
+  width: 260px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
 /* ---------- stati / feedback ---------- */
 .badge {
   display: inline-block;

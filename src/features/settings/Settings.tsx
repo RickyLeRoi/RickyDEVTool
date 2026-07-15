@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, API_BASE } from "../../lib/api";
+import { ToolsPanel } from "./ToolsPanel";
 import type { LanInfo } from "../../lib/types";
 
 export function Settings() {
@@ -58,6 +59,8 @@ export function Settings() {
           </div>
         )}
       </section>
+
+      <ToolsPanel />
     </div>
   );
 }

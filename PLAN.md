@@ -38,10 +38,11 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] Polling attivo solo a sezione aperta (verificato: topic `ports` via WS)
 - Nota: hover-submenu del context menu rimandato a rifinitura v1 (le righe espandibili funzionano anche su mobile). UDP non incluso (solo TCP LISTEN).
 
-### M3 — Launcher + discovery tool (2–3 gg)
-- [ ] `AppLocator`: VS Code (path noti/registry/PATH), Visual Studio via vswhere (Win-only), git, node, dotnet, terminale
-- [ ] Cache discovery + refresh manuale; override path da Impostazioni
-- [ ] UI launcher + badge "non trovato"/"Windows-only"
+### M3 — Launcher + discovery tool (2–3 gg) ← COMPLETATA (15/07/2026)
+- [x] `AppLocator` (`adapters/tools.rs`): VS Code (bundle mac / path noti win / PATH), Visual Studio via vswhere con edizioni (Win-only, nota esplicita su mac), git, node, npm, yarn, pnpm, dotnet, docker, terminale (iTerm/Terminal, wt/cmd)
+- [x] Versioni via `--version` con timeout; cache in memoria + refresh manuale; override path persistito in config (vince sulla discovery, invalida la cache)
+- [x] Launch di vscode/visualstudio/terminale con target opzionale; negato dalla LAN (REMOTE_FORBIDDEN)
+- [x] UI: pannello "Strumenti rilevati" in Impostazioni con badge trovato/assente, fonte, versione, bottoni Apri e Path…
 
 ### M4 — Cartelle + Git base (4–5 gg) — fine MVP
 - [ ] Dialog nativo selezione cartella, cartelle pinnate persistite

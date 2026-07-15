@@ -85,6 +85,21 @@ export interface KillOutcome {
   forced: boolean;
 }
 
+export interface ToolEdition {
+  label: string;
+  path: string;
+}
+
+export interface DiscoveredTool {
+  id: string;
+  found: boolean;
+  path: string | null;
+  version: string | null;
+  source: "wellKnownPath" | "registry" | "PATH" | "userConfig" | "none";
+  platformNote?: string;
+  editions?: ToolEdition[];
+}
+
 export interface LanInfo {
   urls: string[];
   port: number;
