@@ -1,6 +1,7 @@
 import { useStatsStore } from "../../stores/statsStore";
 import { Sparkline } from "../../components/Sparkline";
 import { post } from "../../lib/api";
+import { HeavyProcesses } from "./HeavyProcesses";
 
 const INTERVALS = [500, 1000, 2000, 5000, 10000];
 
@@ -76,9 +77,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="placeholder-note">
-        Processi pesanti (&gt;20% CPU, &gt;10% RAM): in arrivo con la M1.
-      </div>
+      <HeavyProcesses />
     </div>
   );
 }

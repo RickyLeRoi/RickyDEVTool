@@ -19,13 +19,14 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] PATH fix per app GUI macOS (login-shell PATH all'avvio)
 - [x] Bonus M1 anticipato: collector `stats` reale (sysinfo: CPU totale/per-core, RAM, swap) per validare la pipeline poller→bus→WS→UI
 
-### M1 — Dashboard risorse (3–4 gg)
-- [ ] Adapter `SysStatsProvider` con `sysinfo` (CPU totale, per core, RAM, swap)
-- [ ] Normalizzazione CPU uniforme Win/mac; scarto primo campione e post-wake
-- [ ] Ring buffer 60 campioni per sparkline (topic `stats`)
-- [ ] UI: gauge CPU/RAM, griglia core, sparkline, selettore intervallo 0.5–10s
-- [ ] "Processi pesanti" on-demand con soglie configurabili (>20% CPU, >10% RAM)
-- [ ] Pannello destro "vital signs" sempre visibile + versione mobile
+### M1 — Dashboard risorse (3–4 gg) ← COMPLETATA (15/07/2026)
+- [x] Collector stats con `sysinfo` (CPU totale, per core, RAM, swap) — anticipato in M0
+- [x] Normalizzazione CPU uniforme Win/mac (per-processo: /num core); scarto campione post-wake nel poller
+- [x] Ring buffer 60 campioni per sparkline (lato client, topic `stats`)
+- [x] UI: gauge CPU/RAM, griglia core, sparkline, selettore intervallo 0.5–10s — anticipato in M0
+- [x] "Processi pesanti" on-demand con soglie configurabili (default >20% CPU, >10% RAM, filtro OR), doppio campionamento a 300ms, badge app note e "sistema" (`adapters/procs.rs`, riusabile in M2)
+- [x] Pannello destro "vital signs" sempre visibile + versione mobile — anticipato in M0
+- Nota: kill dalla tabella arriva con la M2 (userà il ProcessKiller della sezione porte). ts-rs rimandato a M4, quando i modelli git/progetti crescono davvero.
 
 ### M2 — Porte + kill (4–6 gg) — rischio tecnico più alto, per questo presto
 - [ ] Adapter `PortScanner`: macOS `lsof -nP -iTCP -sTCP:LISTEN` (parser con fixture), Windows `GetExtendedTcpTable`

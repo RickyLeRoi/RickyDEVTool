@@ -82,6 +82,7 @@ pub async fn start(
         .route("/api/pair", post(pair))
         .route("/api/log", post(client_log))
         .route("/api/pollers/{topic}/interval", post(set_interval))
+        .route("/api/processes/heavy", get(heavy_processes))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -236,6 +237,24 @@ async fn client_log(Json(body): Json<LogBody>) -> Json<serde_json::Value> {
         _ => tracing::info!(target: "frontend", message = %body.message),
     }
     Json(json!({ "ok": true, "data": null }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HeavyQuery {
+    cpu_min: Option<f32>,
+    mem_min: Option<f32>,
+}
+
+async fn heavy_processes(
+    axum::extract::Query(query): axum::extract::Query<HeavyQuery>,
+) -> Json<serde_json::Value> {
+    let result = crate::adapters::procs::heavy_processes(
+        query.cpu_min.unwrap_or(20.0).clamp(0.0, 100.0),
+        query.mem_min.unwrap_or(10.0).clamp(0.0, 100.0),
+    )
+    .await;
+    Json(json!({ "ok": true, "data": result }))
 }
 
 #[derive(Deserialize)]

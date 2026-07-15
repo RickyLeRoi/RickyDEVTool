@@ -26,6 +26,28 @@ export interface MachineStats {
   intervalMs: number;
 }
 
+export interface ProcessInfo {
+  pid: number;
+  ppid: number | null;
+  name: string;
+  exePath: string | null;
+  user: string | null;
+  cpuPct: number;
+  memBytes: number;
+  memPct: number;
+  startedAt: number | null;
+  isSystem: boolean;
+  knownApp: string | null;
+}
+
+export interface HeavyProcessesResult {
+  processes: ProcessInfo[];
+  sampledAt: number;
+  cpuCores: number;
+  cpuMinPct: number;
+  memMinPct: number;
+}
+
 export interface LanInfo {
   urls: string[];
   port: number;
