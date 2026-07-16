@@ -107,6 +107,9 @@ pub async fn start(
         .route("/api/node/run", post(node_run))
         .route("/api/tasks", get(tasks_list))
         .route("/api/tasks/{id}/stop", post(task_stop))
+        .route("/api/dotnet/info", get(dotnet_info))
+        .route("/api/dotnet/select", post(dotnet_select))
+        .route("/api/dotnet/run", post(dotnet_run))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -180,7 +183,8 @@ async fn health(State(state): State<ServerState>) -> Json<serde_json::Value> {
         "data": {
             "name": "RickyDEVTool",
             "version": env!("CARGO_PKG_VERSION"),
-            "port": state.port
+            "port": state.port,
+            "os": std::env::consts::OS
         }
     }))
 }
@@ -757,6 +761,109 @@ async fn node_run(
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(message) => internal_error(message),
     }
+}
+
+// ---------- dotnet ----------
+
+fn dotnet_inspect_with_config(
+    state: &ServerState,
+    path: &str,
+) -> Result<crate::services::dotnet::DotnetProject, String> {
+    let cfg = state.config.get();
+    crate::services::dotnet::inspect(
+        path,
+        cfg.dotnet_startup.get(path).map(String::as_str),
+        cfg.dotnet_profile.get(path).map(String::as_str),
+    )
+}
+
+async fn dotnet_info(
+    State(state): State<ServerState>,
+    axum::extract::Query(query): axum::extract::Query<PathQuery>,
+) -> Response {
+    let Some(path) = query.path else {
+        return internal_error("parametro path mancante".into());
+    };
+    match dotnet_inspect_with_config(&state, &path) {
+        Ok(project) => Json(json!({ "ok": true, "data": project })).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": message, "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DotnetSelectBody {
+    path: String,
+    startup_project: Option<String>,
+    profile: Option<String>,
+}
+
+async fn dotnet_select(
+    State(state): State<ServerState>,
+    Json(body): Json<DotnetSelectBody>,
+) -> Response {
+    state.config.update(|c| {
+        match &body.startup_project {
+            Some(p) => {
+                c.dotnet_startup.insert(body.path.clone(), p.clone());
+            }
+            None => {}
+        }
+        match &body.profile {
+            Some(p) => {
+                c.dotnet_profile.insert(body.path.clone(), p.clone());
+            }
+            None => {
+                c.dotnet_profile.remove(&body.path);
+            }
+        }
+    });
+    dotnet_info(
+        State(state),
+        axum::extract::Query(PathQuery { path: Some(body.path) }),
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+struct DotnetRunBody {
+    path: String,
+    action: String, // run | build | rebuild | clean
+}
+
+async fn dotnet_run(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<DotnetRunBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let project = match dotnet_inspect_with_config(&state, &body.path) {
+        Ok(p) => p,
+        Err(message) => return internal_error(message),
+    };
+    let (program, args) = match crate::services::dotnet::command_for(&project, &body.action) {
+        Ok(cmd) => cmd,
+        Err(message) => return internal_error(message),
+    };
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let label = format!("dotnet {} — {}", body.action, short_name(&body.path));
+    match state.tasks.spawn(&label, &program, &arg_refs, &body.path) {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+fn short_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 // ---------- tasks ----------

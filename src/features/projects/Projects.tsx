@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
 import { GitPanel } from "./GitPanel";
 import { NodePanel } from "./NodePanel";
+import { DotnetPanel } from "./DotnetPanel";
 import type { DirListing, FolderScan, ProjectRef } from "../../lib/types";
 
 const KIND_LABELS: Record<string, string> = {
@@ -180,9 +181,7 @@ export function Projects() {
                 </div>
                 {selected.kinds.includes("git") && <GitPanel path={selected.path} />}
                 {selected.kinds.includes("node") && <NodePanel path={selected.path} />}
-                {selected.kinds.includes("dotnet") && (
-                  <div className="placeholder-note">Azioni .NET: in arrivo con la M6.</div>
-                )}
+                {selected.kinds.includes("dotnet") && <DotnetPanel path={selected.path} />}
               </div>
             )}
           </div>

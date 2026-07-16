@@ -182,6 +182,29 @@ export type TaskEvent =
   | { event: "line"; stream: "out" | "err"; line: string }
   | { event: "exit"; exitCode: number | null; ok: boolean };
 
+export interface LaunchProfile {
+  name: string;
+  commandName: string;
+  applicationUrl: string | null;
+  runnableCrossPlatform: boolean;
+}
+
+export interface CsProject {
+  csprojPath: string;
+  name: string;
+  isExecutable: boolean;
+  targetFrameworks: string[];
+  launchProfiles: LaunchProfile[];
+}
+
+export interface DotnetProject {
+  path: string;
+  slnPath: string | null;
+  projects: CsProject[];
+  startupProjectPath: string | null;
+  selectedProfile: string | null;
+}
+
 export interface LanInfo {
   urls: string[];
   port: number;

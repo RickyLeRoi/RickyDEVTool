@@ -20,6 +20,10 @@ pub struct AppConfig {
     pub pinned_folders: Vec<String>,
     /// Override del package manager per progetto (path -> npm|yarn|pnpm).
     pub node_pm_overrides: std::collections::HashMap<String, String>,
+    /// Progetto di avvio .NET per cartella (path cartella -> path csproj).
+    pub dotnet_startup: std::collections::HashMap<String, String>,
+    /// Profilo launchSettings selezionato per cartella.
+    pub dotnet_profile: std::collections::HashMap<String, String>,
 }
 
 impl Default for AppConfig {
@@ -32,6 +36,8 @@ impl Default for AppConfig {
             tool_paths: std::collections::HashMap::new(),
             pinned_folders: Vec::new(),
             node_pm_overrides: std::collections::HashMap::new(),
+            dotnet_startup: std::collections::HashMap::new(),
+            dotnet_profile: std::collections::HashMap::new(),
         }
     }
 }

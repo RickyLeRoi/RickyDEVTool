@@ -59,11 +59,12 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] UI: BranchPicker a due righe, NodePanel (pm badge cliccabile, Install, Start su start/dev/serve, dropdown altri script), TaskLog inline con autoscroll e Stop
 - Nota: capacità bus eventi portata a 1024; il WS ora accetta topic non-poller (task:*).
 
-### M6 — .NET (4–5 gg)
-- [ ] Parser `.sln` + `.csproj` (OutputType, Sdk, TFM) + `launchSettings.json`
-- [ ] Scelta startup project persistita, dropdown profili (badge Win-only su IISExpress)
-- [ ] Run (`dotnet run --launch-profile`), Stop, Rebuild, Clean via task runner
-- [ ] Open in VS (`devenv.exe <sln>`, Win-only, disabilitato su mac con tooltip)
+### M6 — .NET (4–5 gg) ← COMPLETATA (16/07/2026)
+- [x] Parser `.sln` classico **e** `.slnx` (nuovo default di dotnet 10, verificato su output reale) + `.csproj` (OutputType/Sdk Web/Worker, TFM singolo e multipli) + `launchSettings.json` (commandName, applicationUrl)
+- [x] Startup project persistito in config (auto-selezionato se un solo eseguibile), profilo persistito (auto: primo commandName==Project); profili IISExpress selezionabili solo su VS/Windows (disabled con nota)
+- [x] Run (`dotnet run --project X --launch-profile P`), Rebuild (`-t:Rebuild`), Clean via task runner con log stream e Stop
+- [x] Open in VS sulla solution (Win-only; disabilitato su mac con tooltip, OS letto da /api/health)
+- Verificato end-to-end su solution reale (console + classlib): info, run con Hello World streammato, rebuild.
 
 ### M7 — Servizi online + alerts + remote control (3–4 gg)
 - [ ] ServicesMonitor: check HTTP (HEAD/GET, expectStatus) e TCP, paralleli, timeout 4s
