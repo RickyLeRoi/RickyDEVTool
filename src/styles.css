@@ -85,6 +85,7 @@ input {
   display: grid;
   grid-template-columns: 48px 1fr 220px;
   height: 100vh;
+  overflow: hidden;
 }
 
 .rail {
@@ -124,9 +125,17 @@ input {
   margin-top: auto;
 }
 
+/* Scrolla solo il contenuto centrale: rail e pannello vitals restano fissi,
+   gli header di sezione sono sticky. */
 .main {
-  padding: 14px 18px;
+  padding: 0 18px 14px;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+.main > div > h2:first-child {
+  padding-top: 14px; /* sezioni senza header sticky (es. Impostazioni) */
 }
 
 /* ---------- vitals panel ---------- */
@@ -137,6 +146,8 @@ input {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .vitals-row {
@@ -173,7 +184,12 @@ input {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding: 14px 0 10px;
+  margin-bottom: 8px;
 }
 .dashboard-header h2 {
   margin-bottom: 0;
@@ -342,7 +358,12 @@ input {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding: 14px 0 10px;
+  margin-bottom: 8px;
 }
 .section-header h2 {
   margin-bottom: 0;

@@ -97,9 +97,30 @@ pub async fn scan(path: String) -> Result<FolderScan, String> {
     }
 
     tokio::task::spawn_blocking(move || {
-        let mut projects = Vec::new();
+        let mut raw: Vec<(ProjectRef, Vec<PathBuf>)> = Vec::new();
+        let mut slns: Vec<PathBuf> = Vec::new();
         let mut visited: usize = 0;
-        let truncated = walk(&base, 0, &mut projects, &mut visited);
+        let truncated = walk(&base, 0, &mut raw, &mut slns, &mut visited);
+
+        // I csproj referenziati da una solution trovata appartengono a lei:
+        // le loro cartelle non vanno elencate come progetti a sé (né annidate
+        // né sorelle della cartella della .sln).
+        let referenced = sln_referenced_csprojs(&slns);
+        let mut projects: Vec<ProjectRef> = Vec::new();
+        for (mut project, csprojs) in raw {
+            let only_referenced = !csprojs.is_empty()
+                && csprojs.iter().all(|c| {
+                    c.canonicalize()
+                        .map(|c| referenced.contains(&c))
+                        .unwrap_or(false)
+                });
+            if only_referenced {
+                project.kinds.retain(|k| *k != ProjectKind::Dotnet);
+            }
+            if !project.kinds.is_empty() {
+                projects.push(project);
+            }
+        }
         projects.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(FolderScan {
             path: base.to_string_lossy().to_string(),
@@ -111,26 +132,51 @@ pub async fn scan(path: String) -> Result<FolderScan, String> {
     .map_err(|e| e.to_string())?
 }
 
+fn sln_referenced_csprojs(slns: &[PathBuf]) -> std::collections::HashSet<PathBuf> {
+    let mut referenced = std::collections::HashSet::new();
+    for sln in slns {
+        let Ok(content) = std::fs::read_to_string(sln) else { continue };
+        let Some(sln_dir) = sln.parent() else { continue };
+        for rel in crate::services::dotnet::parse_sln(&content) {
+            let path = sln_dir.join(rel.replace('\\', "/"));
+            if let Ok(canonical) = path.canonicalize() {
+                referenced.insert(canonical);
+            }
+        }
+    }
+    referenced
+}
+
 /// Limite di sicurezza contro cartelle enormi.
 const MAX_VISITED: usize = 5000;
 
-fn walk(dir: &Path, depth: usize, projects: &mut Vec<ProjectRef>, visited: &mut usize) -> bool {
+fn walk(
+    dir: &Path,
+    depth: usize,
+    projects: &mut Vec<(ProjectRef, Vec<PathBuf>)>,
+    slns: &mut Vec<PathBuf>,
+    visited: &mut usize,
+) -> bool {
     *visited += 1;
     if *visited > MAX_VISITED {
         return true;
     }
 
-    let kinds = detect_kinds(dir);
-    let is_git_root = kinds.contains(&ProjectKind::Git);
-    if !kinds.is_empty() {
-        projects.push(ProjectRef {
-            path: dir.to_string_lossy().to_string(),
-            name: dir
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| dir.to_string_lossy().to_string()),
-            kinds,
-        });
+    let detected = detect_dir(dir);
+    let is_git_root = detected.kinds.contains(&ProjectKind::Git);
+    slns.extend(detected.slns);
+    if !detected.kinds.is_empty() {
+        projects.push((
+            ProjectRef {
+                path: dir.to_string_lossy().to_string(),
+                name: dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| dir.to_string_lossy().to_string()),
+                kinds: detected.kinds,
+            },
+            detected.csprojs,
+        ));
     }
     if depth >= MAX_DEPTH {
         return false;
@@ -148,13 +194,21 @@ fn walk(dir: &Path, depth: usize, projects: &mut Vec<ProjectRef>, visited: &mut 
             continue;
         }
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            truncated |= walk(&entry.path(), depth + 1, projects, visited);
+            truncated |= walk(&entry.path(), depth + 1, projects, slns, visited);
         }
     }
     truncated
 }
 
-pub fn detect_kinds(dir: &Path) -> Vec<ProjectKind> {
+struct DirDetect {
+    kinds: Vec<ProjectKind>,
+    slns: Vec<PathBuf>,
+    /// Csproj diretti della cartella; vuoto se la cartella ha una propria .sln
+    /// (in quel caso è lei l'unità di progetto e non va mai filtrata).
+    csprojs: Vec<PathBuf>,
+}
+
+fn detect_dir(dir: &Path) -> DirDetect {
     let mut kinds = Vec::new();
     // .git può essere directory (repo normale) o file (worktree/submodule).
     if dir.join(".git").exists() {
@@ -163,18 +217,25 @@ pub fn detect_kinds(dir: &Path) -> Vec<ProjectKind> {
     if dir.join("package.json").is_file() {
         kinds.push(ProjectKind::Node);
     }
-    let has_dotnet = std::fs::read_dir(dir)
-        .map(|entries| {
-            entries.flatten().any(|e| {
-                let name = e.file_name().to_string_lossy().to_lowercase();
-                name.ends_with(".sln") || name.ends_with(".slnx") || name.ends_with(".csproj")
-            })
-        })
-        .unwrap_or(false);
-    if has_dotnet {
+    let mut slns = Vec::new();
+    let mut csprojs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.ends_with(".sln") || name.ends_with(".slnx") {
+                slns.push(entry.path());
+            } else if name.ends_with(".csproj") {
+                csprojs.push(entry.path());
+            }
+        }
+    }
+    if !slns.is_empty() || !csprojs.is_empty() {
         kinds.push(ProjectKind::Dotnet);
     }
-    kinds
+    if !slns.is_empty() {
+        csprojs.clear();
+    }
+    DirDetect { kinds, slns, csprojs }
 }
 
 #[cfg(test)]
@@ -203,6 +264,39 @@ mod tests {
         assert!(api.kinds.contains(&ProjectKind::Dotnet));
         let web = scan.projects.iter().find(|p| p.name == "webapp").unwrap();
         assert_eq!(web.kinds, vec![ProjectKind::Node]);
+    }
+
+    #[tokio::test]
+    async fn i_progetti_di_una_solution_non_sono_elencati_a_parte() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        // Layout come nel repo reale: Share/ contiene la .sln, i csproj sono
+        // in cartelle sorelle referenziate dalla solution.
+        std::fs::create_dir_all(root.join("Share")).unwrap();
+        std::fs::create_dir_all(root.join("Share.Algorithms")).unwrap();
+        std::fs::create_dir_all(root.join("Share.Dto")).unwrap();
+        std::fs::create_dir_all(root.join("Indipendente")).unwrap();
+        std::fs::write(
+            root.join("Share/Share.sln"),
+            r#"Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Share.Algorithms", "..\Share.Algorithms\Share.Algorithms.csproj", "{1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Share.Dto", "..\Share.Dto\Share.Dto.csproj", "{2}"
+EndProject
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("Share.Algorithms/Share.Algorithms.csproj"), "<Project/>").unwrap();
+        std::fs::write(root.join("Share.Dto/Share.Dto.csproj"), "<Project/>").unwrap();
+        // csproj NON referenziato dalla sln: deve restare visibile.
+        std::fs::write(root.join("Indipendente/Indipendente.csproj"), "<Project/>").unwrap();
+
+        let scan = scan(root.to_string_lossy().to_string()).await.expect("scan");
+        let names: Vec<&str> = scan.projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"Share"), "{names:?}");
+        assert!(names.contains(&"Indipendente"), "{names:?}");
+        assert!(!names.contains(&"Share.Algorithms"), "{names:?}");
+        assert!(!names.contains(&"Share.Dto"), "{names:?}");
     }
 
     #[tokio::test]
