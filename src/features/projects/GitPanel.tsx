@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
+import { BranchPicker } from "./BranchPicker";
 import type { ApiError, GitRepoInfo, GitWarning } from "../../lib/types";
 
 function warningText(w: GitWarning): string {
@@ -103,6 +104,14 @@ export function GitPanel({ path }: { path: string }) {
               <span className="dim">pull disabilitato: working tree non pulito</span>
             )}
           </div>
+          <BranchPicker
+            path={path}
+            dirty={info.dirty}
+            onCheckout={(updated) => {
+              setInfo(updated);
+              setSummary(`Checkout su ${updated.currentBranch ?? "detached"}`);
+            }}
+          />
         </>
       )}
       {summary && <div className="dim">{summary}</div>}

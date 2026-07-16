@@ -51,12 +51,13 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] GitService via CLI: stato da `status --porcelain=v2 --branch` (branch/detached, dirty, ahead/behind), warnings (no-upstream, diverged, merge-in-progress, stale-fetch), Fetch `--prune`, Pull `--ff-only` (mai merge automatici); `GIT_TERMINAL_PROMPT=0` + SSH BatchMode → mai prompt appesi, errori auth mappati su GIT_AUTH_FAILED; azioni di rete loopback-only
 - [x] UI: lista progetti + pannello dettaglio con badge tipo, stato git, Fetch/Pull (pull disabilitato se dirty)
 
-### M5 — Git completo + Node (4–5 gg)
-- [ ] Dropdown branch con `for-each-ref` (hash/data/autore), stale ≥4 settimane colorati
-- [ ] Checkout (bloccato se dirty, con spiegazione), warnings (diverged, no-upstream, detached)
-- [ ] NodeService: detection npm/yarn/pnpm (lockfile > packageManager > default), override
-- [ ] Task runner: Install/Start/script con stream stdout su WS, Stop = kill tree
-- [ ] Pannello log inline nella UI
+### M5 — Git completo + Node (4–5 gg) ← COMPLETATA (16/07/2026)
+- [x] Dropdown branch con `for-each-ref` (hash/data/autore/subject), locali + remote-only (origin/x senza locale), stale ≥4 settimane colorati ambra
+- [x] Checkout (bloccato se dirty con spiegazione; remote-only → nome corto, git crea il tracking), loopback-only
+- [x] NodeService: detection npm/yarn/pnpm (override > lockfile > packageManager > npm "assunto"), override per progetto persistito in config
+- [x] Task runner generico (`tasks.rs`, riusato in M6): stream stdout/stderr riga per riga sul topic WS `task:{id}`, process group su unix / cmd+taskkill su Windows, Stop con SIGTERM→SIGKILL 3s, eventi exit
+- [x] UI: BranchPicker a due righe, NodePanel (pm badge cliccabile, Install, Start su start/dev/serve, dropdown altri script), TaskLog inline con autoscroll e Stop
+- Nota: capacità bus eventi portata a 1024; il WS ora accetta topic non-poller (task:*).
 
 ### M6 — .NET (4–5 gg)
 - [ ] Parser `.sln` + `.csproj` (OutputType, Sdk, TFM) + `launchSettings.json`

@@ -16,7 +16,8 @@ pub struct EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(256);
+        // Capiente: l'output dei task (npm install, build) può essere rapido.
+        let (tx, _) = broadcast::channel(1024);
         Self { tx }
     }
 

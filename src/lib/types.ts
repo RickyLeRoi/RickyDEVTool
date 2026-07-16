@@ -146,6 +146,42 @@ export interface GitRepoInfo {
   warnings: GitWarning[];
 }
 
+export interface GitBranch {
+  name: string;
+  isCurrent: boolean;
+  isRemoteOnly: boolean;
+  lastCommit: {
+    shortHash: string;
+    authorName: string;
+    date: number;
+    subject: string;
+  };
+  staleWeeks: number;
+}
+
+export interface NodeProject {
+  path: string;
+  packageName: string | null;
+  packageManager: "npm" | "yarn" | "pnpm";
+  pmSource: "lockfile" | "packageManagerField" | "userOverride" | "default";
+  scripts: Record<string, string>;
+  primaryStart: string | null;
+  nodeModulesPresent: boolean;
+}
+
+export interface TaskInfo {
+  id: string;
+  label: string;
+  cwd: string;
+  state: "running" | "exited" | "failed";
+  exitCode: number | null;
+  startedAt: number;
+}
+
+export type TaskEvent =
+  | { event: "line"; stream: "out" | "err"; line: string }
+  | { event: "exit"; exitCode: number | null; ok: boolean };
+
 export interface LanInfo {
   urls: string[];
   port: number;

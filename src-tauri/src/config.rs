@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub tool_paths: std::collections::HashMap<String, String>,
     /// Cartelle progetti pinnate nella sezione Progetti.
     pub pinned_folders: Vec<String>,
+    /// Override del package manager per progetto (path -> npm|yarn|pnpm).
+    pub node_pm_overrides: std::collections::HashMap<String, String>,
 }
 
 impl Default for AppConfig {
@@ -29,6 +31,7 @@ impl Default for AppConfig {
             stats_interval_ms: 1000,
             tool_paths: std::collections::HashMap::new(),
             pinned_folders: Vec::new(),
+            node_pm_overrides: std::collections::HashMap::new(),
         }
     }
 }

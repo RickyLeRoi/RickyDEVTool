@@ -48,12 +48,14 @@ async fn handle_socket(mut socket: WebSocket, state: ServerState) {
                 let Message::Text(text) = message else { continue };
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(ClientMessage::Subscribe { topic }) => {
-                        if state.pollers.known_topic(&topic) && topics.insert(topic.clone()) {
+                        // I topic dei poller attivano il polling; gli altri (es. task:{id})
+                        // ricevono solo gli eventi pubblicati sul bus.
+                        if topics.insert(topic.clone()) && state.pollers.known_topic(&topic) {
                             state.pollers.add_subscriber(&topic);
                         }
                     }
                     Ok(ClientMessage::Unsubscribe { topic }) => {
-                        if topics.remove(&topic) {
+                        if topics.remove(&topic) && state.pollers.known_topic(&topic) {
                             state.pollers.remove_subscriber(&topic);
                         }
                     }
@@ -64,6 +66,8 @@ async fn handle_socket(mut socket: WebSocket, state: ServerState) {
     }
 
     for topic in topics {
-        state.pollers.remove_subscriber(&topic);
+        if state.pollers.known_topic(&topic) {
+            state.pollers.remove_subscriber(&topic);
+        }
     }
 }

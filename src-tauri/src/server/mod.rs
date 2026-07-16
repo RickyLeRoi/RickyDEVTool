@@ -34,6 +34,7 @@ pub struct ServerState {
     pub port: u16,
     /// Cache della discovery tool: invalidata su refresh esplicito o override.
     pub tools_cache: Arc<tokio::sync::Mutex<Option<Vec<crate::adapters::tools::DiscoveredTool>>>>,
+    pub tasks: Arc<crate::tasks::TaskRegistry>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -70,12 +71,14 @@ pub async fn start(
     let listener = listener
         .ok_or_else(|| anyhow::anyhow!("nessuna porta libera tra {} e {}", cfg.port, cfg.port + PORT_FALLBACK_RANGE - 1))?;
 
+    let tasks = Arc::new(crate::tasks::TaskRegistry::new(bus.clone()));
     let state = ServerState {
         config,
         bus,
         pollers,
         port,
         tools_cache: Arc::new(tokio::sync::Mutex::new(None)),
+        tasks,
     };
 
     let api = Router::new()
@@ -97,6 +100,13 @@ pub async fn start(
         .route("/api/git/info", get(git_info))
         .route("/api/git/fetch", post(git_fetch))
         .route("/api/git/pull", post(git_pull))
+        .route("/api/git/branches", get(git_branches))
+        .route("/api/git/checkout", post(git_checkout))
+        .route("/api/node/info", get(node_info))
+        .route("/api/node/pm", post(node_set_pm))
+        .route("/api/node/run", post(node_run))
+        .route("/api/tasks", get(tasks_list))
+        .route("/api/tasks/{id}/stop", post(task_stop))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -619,6 +629,153 @@ async fn git_pull(
                 .into_response()
         }
         Err(e) => git_error_response(e),
+    }
+}
+
+// ---------- git branches / checkout ----------
+
+async fn git_branches(axum::extract::Query(query): axum::extract::Query<PathQuery>) -> Response {
+    let Some(path) = query.path else {
+        return internal_error("parametro path mancante".into());
+    };
+    match crate::services::git::branches(&path).await {
+        Ok(branches) => Json(json!({ "ok": true, "data": { "branches": branches } })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct CheckoutBody {
+    path: String,
+    branch: String,
+}
+
+async fn git_checkout(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<CheckoutBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match crate::services::git::checkout(&body.path, &body.branch).await {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+// ---------- node ----------
+
+async fn node_info(
+    State(state): State<ServerState>,
+    axum::extract::Query(query): axum::extract::Query<PathQuery>,
+) -> Response {
+    let Some(path) = query.path else {
+        return internal_error("parametro path mancante".into());
+    };
+    let overrides = state.config.get().node_pm_overrides;
+    match crate::services::node::inspect(&path, overrides.get(&path).map(String::as_str)) {
+        Ok(project) => Json(json!({ "ok": true, "data": project })).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": message, "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct NodePmBody {
+    path: String,
+    /// null = torna alla detection automatica.
+    pm: Option<String>,
+}
+
+async fn node_set_pm(State(state): State<ServerState>, Json(body): Json<NodePmBody>) -> Response {
+    if let Some(pm) = &body.pm {
+        if crate::services::node::PackageManager::from_str(pm).is_none() {
+            return internal_error(format!("package manager non valido: {pm}"));
+        }
+    }
+    state.config.update(|c| match &body.pm {
+        Some(pm) => {
+            c.node_pm_overrides.insert(body.path.clone(), pm.clone());
+        }
+        None => {
+            c.node_pm_overrides.remove(&body.path);
+        }
+    });
+    node_info(
+        State(state),
+        axum::extract::Query(PathQuery { path: Some(body.path) }),
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+struct NodeRunBody {
+    path: String,
+    /// None = install.
+    script: Option<String>,
+}
+
+async fn node_run(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<NodeRunBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let overrides = state.config.get().node_pm_overrides;
+    let project = match crate::services::node::inspect(
+        &body.path,
+        overrides.get(&body.path).map(String::as_str),
+    ) {
+        Ok(p) => p,
+        Err(message) => return internal_error(message),
+    };
+    if let Some(script) = &body.script {
+        if !project.scripts.contains_key(script) {
+            return internal_error(format!("script \"{script}\" non presente in package.json"));
+        }
+    }
+    let (program, args) = crate::services::node::command_for(
+        project.package_manager,
+        body.script.as_deref(),
+    );
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let label = format!(
+        "{} {} — {}",
+        program,
+        args.join(" "),
+        project.package_name.as_deref().unwrap_or(&body.path)
+    );
+    match state.tasks.spawn(&label, &program, &arg_refs, &body.path) {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+// ---------- tasks ----------
+
+async fn tasks_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "tasks": state.tasks.list() } }))
+}
+
+async fn task_stop(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match state.tasks.stop(&id) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "stopping": true } })).into_response(),
+        Err(message) => internal_error(message),
     }
 }
 

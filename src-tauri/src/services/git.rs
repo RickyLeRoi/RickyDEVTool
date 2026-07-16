@@ -158,6 +158,107 @@ pub async fn repo_info(path: &str) -> Result<GitRepoInfo, GitError> {
     })
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+    pub name: String,
+    pub is_current: bool,
+    pub is_remote_only: bool,
+    pub last_commit: LastCommit,
+    pub stale_weeks: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastCommit {
+    pub short_hash: String,
+    pub author_name: String,
+    pub date: u64, // epoch ms
+    pub subject: String,
+}
+
+/// Branch locali + remote-only, ordinati per data commit decrescente.
+pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
+    let current = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"], INFO_TIMEOUT)
+        .await
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let output = run_git(
+        path,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)\x1f%(objectname:short)\x1f%(committerdate:unix)\x1f%(authorname)\x1f%(subject)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+        INFO_TIMEOUT,
+    )
+    .await?;
+
+    let now_s = crate::events::now_ms() / 1000;
+    let mut locals: Vec<GitBranch> = Vec::new();
+    let mut remotes: Vec<GitBranch> = Vec::new();
+
+    for line in output.lines() {
+        let fields: Vec<&str> = line.split('\x1f').collect();
+        if fields.len() != 5 {
+            continue;
+        }
+        let full_name = fields[0].to_string();
+        if full_name.ends_with("/HEAD") {
+            continue;
+        }
+        let is_remote = full_name.contains('/') && full_name.starts_with("origin/");
+        let date_s: u64 = fields[2].parse().unwrap_or(0);
+        let branch = GitBranch {
+            is_current: full_name == current,
+            is_remote_only: is_remote, // rifinito sotto
+            last_commit: LastCommit {
+                short_hash: fields[1].to_string(),
+                author_name: fields[3].to_string(),
+                date: date_s * 1000,
+                subject: fields[4].to_string(),
+            },
+            stale_weeks: now_s.saturating_sub(date_s) / (7 * 86_400),
+            name: full_name,
+        };
+        if is_remote {
+            remotes.push(branch);
+        } else {
+            locals.push(branch);
+        }
+    }
+
+    // I remote con un locale corrispondente non sono "remote-only": si scartano.
+    let local_names: std::collections::HashSet<String> =
+        locals.iter().map(|b| b.name.clone()).collect();
+    let mut result = locals;
+    for remote in remotes {
+        let short = remote.name.trim_start_matches("origin/");
+        if !local_names.contains(short) {
+            result.push(remote);
+        }
+    }
+    result.sort_by(|a, b| b.last_commit.date.cmp(&a.last_commit.date));
+    Ok(result)
+}
+
+/// Checkout di un branch. Rifiutato se il working tree è dirty.
+/// Per i branch remote-only usa il nome corto: git crea il tracking locale.
+pub async fn checkout(path: &str, branch: &str) -> Result<GitRepoInfo, GitError> {
+    let info = repo_info(path).await?;
+    if info.dirty {
+        return Err(GitError::Failed(
+            "working tree non pulito: committa o stasha prima del checkout".to_string(),
+        ));
+    }
+    let target = branch.trim_start_matches("origin/");
+    run_git(path, &["checkout", target], INFO_TIMEOUT).await?;
+    repo_info(path).await
+}
+
 /// `git fetch --prune`; ritorna lo stato aggiornato.
 pub async fn fetch(path: &str) -> Result<GitRepoInfo, GitError> {
     run_git(path, &["fetch", "--prune", "--quiet"], NETWORK_TIMEOUT).await?;
