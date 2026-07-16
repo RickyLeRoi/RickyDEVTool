@@ -24,6 +24,10 @@ pub struct AppConfig {
     pub dotnet_startup: std::collections::HashMap<String, String>,
     /// Profilo launchSettings selezionato per cartella.
     pub dotnet_profile: std::collections::HashMap<String, String>,
+    /// Servizi online monitorati (preset + personalizzati).
+    pub services: Vec<crate::services::online::ServiceDef>,
+    /// Se true, i device LAN abbinati possono eseguire azioni (kill, run, git).
+    pub remote_control_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -38,6 +42,8 @@ impl Default for AppConfig {
             node_pm_overrides: std::collections::HashMap::new(),
             dotnet_startup: std::collections::HashMap::new(),
             dotnet_profile: std::collections::HashMap::new(),
+            services: Vec::new(),
+            remote_control_enabled: false,
         }
     }
 }
@@ -63,6 +69,13 @@ impl ConfigHandle {
 
         if cfg.pair_token.is_empty() {
             cfg.pair_token = generate_token();
+        }
+        // Integra i preset mancanti (nuovi preset in versioni future compaiono da soli;
+        // le personalizzazioni enabled/disabled dell'utente restano).
+        for preset in crate::services::online::builtin_presets() {
+            if !cfg.services.iter().any(|s| s.id == preset.id) {
+                cfg.services.push(preset);
+            }
         }
         let handle = Self {
             inner: Arc::new(RwLock::new(cfg)),

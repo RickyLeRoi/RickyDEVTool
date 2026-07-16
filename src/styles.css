@@ -772,6 +772,99 @@ button.small {
   font-size: 12px;
 }
 
+/* ---------- servizi online ---------- */
+.state-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.state-dot.up {
+  background: var(--ok);
+}
+.state-dot.degraded {
+  background: var(--warn);
+}
+.state-dot.down {
+  background: var(--error);
+}
+
+.history-bar {
+  display: inline-flex;
+  gap: 2px;
+}
+.history-cell {
+  width: 6px;
+  height: 14px;
+  border-radius: 1px;
+}
+.history-cell.up {
+  background: var(--ok);
+  opacity: 0.7;
+}
+.history-cell.degraded {
+  background: var(--warn);
+}
+.history-cell.down {
+  background: var(--error);
+}
+
+.services-config {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.service-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.service-form input {
+  flex: 1;
+  min-width: 140px;
+}
+.service-form select {
+  font: inherit;
+  color: inherit;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+}
+
+/* ---------- alert nel pannello vitals ---------- */
+.alert-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-left: 2px solid var(--warn);
+  border-radius: 3px;
+  background: var(--bg-hover);
+  padding: 5px 8px;
+  margin-top: 6px;
+  gap: 1px;
+}
+.alert-item.critical {
+  border-left-color: var(--error);
+}
+.alert-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.alert-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
 /* ---------- stati / feedback ---------- */
 .badge {
   display: inline-block;

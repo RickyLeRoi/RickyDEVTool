@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, API_BASE } from "../../lib/api";
+import { api, API_BASE, post } from "../../lib/api";
 import { ToolsPanel } from "./ToolsPanel";
 import type { LanInfo } from "../../lib/types";
 
@@ -13,6 +13,15 @@ export function Settings() {
       else setError(r.error.message);
     });
   }, []);
+
+  const toggleRemote = async () => {
+    if (!lan) return;
+    const r = await post<{ remoteControlEnabled: boolean }>(
+      "/api/config/remote-control",
+      { enabled: !lan.remoteControlEnabled },
+    );
+    if (r.ok) setLan({ ...lan, remoteControlEnabled: r.data.remoteControlEnabled });
+  };
 
   return (
     <div className="settings">
@@ -43,9 +52,17 @@ export function Settings() {
               </ul>
               <p className="hint">
                 Scansiona il QR dal telefono: contiene l'indirizzo e il token di
-                abbinamento. Il telefono resta in sola lettura finché il
-                controllo remoto non verrà abilitato (v1).
+                abbinamento.
               </p>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={lan.remoteControlEnabled}
+                  onChange={toggleRemote}
+                />
+                Controllo remoto: consenti azioni (kill, run, git) dai device
+                abbinati. Se spento, il telefono è in sola lettura.
+              </label>
             </div>
             {lan.lanEnabled && lan.urls.length > 0 && (
               <img

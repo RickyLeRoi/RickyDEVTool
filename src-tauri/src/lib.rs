@@ -1,4 +1,5 @@
 mod adapters;
+mod alerts;
 mod collectors;
 mod config;
 mod events;

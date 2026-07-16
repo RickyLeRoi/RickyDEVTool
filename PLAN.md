@@ -66,12 +66,12 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] Open in VS sulla solution (Win-only; disabilitato su mac con tooltip, OS letto da /api/health)
 - Verificato end-to-end su solution reale (console + classlib): info, run con Hello World streammato, rebuild.
 
-### M7 — Servizi online + alerts + remote control (3–4 gg)
-- [ ] ServicesMonitor: check HTTP (HEAD/GET, expectStatus) e TCP, paralleli, timeout 4s
-- [ ] Preset pubblici + servizi custom da config (inclusi hostname cloudflared)
-- [ ] Attivo solo a sezione aperta, intervallo default 15s
-- [ ] AlertService: cpu-sustained, mem-high, service-down, task-failed → toast + badge tray
-- [ ] Toggle "Remote control" per azioni distruttive da LAN
+### M7 — Servizi online + alerts + remote control (3–4 gg) ← COMPLETATA (16/07/2026)
+- [x] ServicesMonitor: check HTTP (GET con UA browser, expectStatus o 200-399, degraded su status inatteso o latenza >2.5s) e TCP connect, paralleli via JoinSet, history ultimi 20 esiti
+- [x] 8 preset pubblici integrati in config al primo avvio (nuovi preset futuri compaiono da soli); custom add/toggle/delete da UI, con nota cloudflared (tunnel+origine)
+- [x] Attivo solo a sezione aperta (topic `services`, 15s)
+- [x] AlertService su eventi bus: service-down (solo transizione), cpu-sustained >90% per 60s, mem-high >92%, task-failed; dedup con cooldown 10 min; lista nel pannello vitals con ack al click (toast/tray rimandati a rifinitura)
+- [x] Toggle "Remote control" (default OFF, attivabile solo da localhost): tutte le azioni di scrittura passano da un'unica guardia `write_allowed`
 
 ### M8 — Packaging/release (3–5 gg)
 - [ ] tauri-bundler: NSIS .exe (Win), .dmg universal (mac), .deb + AppImage (Linux CI-only)

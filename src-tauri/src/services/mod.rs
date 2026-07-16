@@ -2,4 +2,5 @@
 pub mod dotnet;
 pub mod git;
 pub mod node;
+pub mod online;
 pub mod projects;

@@ -209,6 +209,43 @@ export interface LanInfo {
   urls: string[];
   port: number;
   lanEnabled: boolean;
+  remoteControlEnabled: boolean;
+}
+
+// ---------- servizi online / alerts ----------
+
+export interface ServiceDef {
+  id: string;
+  label: string;
+  kind: "http" | "tcp";
+  target: string;
+  expectStatus?: number[] | null;
+  timeoutMs: number;
+  builtin: boolean;
+  enabled: boolean;
+}
+
+export type ServiceState = "up" | "degraded" | "down";
+
+export interface ServiceStatus {
+  id: string;
+  label: string;
+  state: ServiceState;
+  latencyMs: number | null;
+  httpStatus: number | null;
+  error: string | null;
+  checkedAt: number;
+  history: ServiceState[];
+}
+
+export interface Alert {
+  id: string;
+  severity: "info" | "warning" | "critical";
+  kind: string;
+  title: string;
+  detail: string;
+  createdAt: number;
+  acknowledged: boolean;
 }
 
 export interface WsEvent {

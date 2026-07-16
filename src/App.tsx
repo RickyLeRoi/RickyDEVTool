@@ -4,6 +4,7 @@ import { VitalsPanel } from "./app/VitalsPanel";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { Ports } from "./features/ports/Ports";
 import { Projects } from "./features/projects/Projects";
+import { Services } from "./features/services/Services";
 import { Settings } from "./features/settings/Settings";
 import { ws } from "./lib/ws";
 import { useStatsStore } from "./stores/statsStore";
@@ -18,15 +19,6 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "services", icon: "🌐", label: "Servizi" },
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
-
-function Placeholder({ title, milestone }: { title: string; milestone: string }) {
-  return (
-    <div>
-      <h2>{title}</h2>
-      <div className="empty">In arrivo con la {milestone}.</div>
-    </div>
-  );
-}
 
 export default function App() {
   const [section, setSection] = useState<Section>("dashboard");
@@ -64,7 +56,7 @@ export default function App() {
           {section === "dashboard" && <Dashboard />}
           {section === "ports" && <Ports />}
           {section === "projects" && <Projects />}
-          {section === "services" && <Placeholder title="Servizi online" milestone="M7" />}
+          {section === "services" && <Services />}
           {section === "settings" && <Settings />}
         </main>
 

@@ -35,6 +35,13 @@ pub struct ServerState {
     /// Cache della discovery tool: invalidata su refresh esplicito o override.
     pub tools_cache: Arc<tokio::sync::Mutex<Option<Vec<crate::adapters::tools::DiscoveredTool>>>>,
     pub tasks: Arc<crate::tasks::TaskRegistry>,
+    pub alerts: Arc<crate::alerts::AlertService>,
+}
+
+/// Le azioni che modificano il sistema sono locali, oppure LAN se l'utente
+/// ha attivato esplicitamente il controllo remoto.
+fn write_allowed(state: &ServerState, peer: SocketAddr) -> bool {
+    peer.ip().is_loopback() || state.config.get().remote_control_enabled
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,6 +79,7 @@ pub async fn start(
         .ok_or_else(|| anyhow::anyhow!("nessuna porta libera tra {} e {}", cfg.port, cfg.port + PORT_FALLBACK_RANGE - 1))?;
 
     let tasks = Arc::new(crate::tasks::TaskRegistry::new(bus.clone()));
+    let alerts = crate::alerts::AlertService::start(bus.clone());
     let state = ServerState {
         config,
         bus,
@@ -79,6 +87,7 @@ pub async fn start(
         port,
         tools_cache: Arc::new(tokio::sync::Mutex::new(None)),
         tasks,
+        alerts,
     };
 
     let api = Router::new()
@@ -110,6 +119,12 @@ pub async fn start(
         .route("/api/dotnet/info", get(dotnet_info))
         .route("/api/dotnet/select", post(dotnet_select))
         .route("/api/dotnet/run", post(dotnet_run))
+        .route("/api/services", get(services_get).post(services_upsert))
+        .route("/api/services/{id}", axum::routing::delete(services_delete))
+        .route("/api/services/{id}/toggle", post(services_toggle))
+        .route("/api/alerts", get(alerts_get))
+        .route("/api/alerts/ack", post(alerts_ack))
+        .route("/api/config/remote-control", post(set_remote_control))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -197,7 +212,7 @@ async fn lan_info(State(state): State<ServerState>) -> Json<serde_json::Value> {
         .collect();
     Json(json!({
         "ok": true,
-        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled }
+        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled }
     }))
 }
 
@@ -310,12 +325,13 @@ async fn list_ports(
 /// Kill di un processo. Azione distruttiva: dalla LAN è negata finché
 /// non esisterà il toggle "Remote control" (v1).
 async fn kill_process(
+    State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(req): Json<crate::adapters::kill::KillRequest>,
 ) -> Response {
     use crate::adapters::kill::{kill_process as do_kill, KillError};
 
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
@@ -410,7 +426,7 @@ async fn launch_tool(
     Path(id): Path<String>,
     Json(body): Json<LaunchBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
@@ -608,10 +624,11 @@ fn remote_forbidden() -> Response {
 }
 
 async fn git_fetch(
+    State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<GitActionBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
     match crate::services::git::fetch(&body.path).await {
@@ -621,10 +638,11 @@ async fn git_fetch(
 }
 
 async fn git_pull(
+    State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<GitActionBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
     match crate::services::git::pull(&body.path).await {
@@ -655,10 +673,11 @@ struct CheckoutBody {
 }
 
 async fn git_checkout(
+    State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CheckoutBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
     match crate::services::git::checkout(&body.path, &body.branch).await {
@@ -730,7 +749,7 @@ async fn node_run(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<NodeRunBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
     let overrides = state.config.get().node_pm_overrides;
@@ -843,7 +862,7 @@ async fn dotnet_run(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<DotnetRunBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
     let project = match dotnet_inspect_with_config(&state, &body.path) {
@@ -866,6 +885,100 @@ fn short_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
+// ---------- servizi online / alerts / remote control ----------
+
+async fn services_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "services": state.config.get().services } }))
+}
+
+async fn services_upsert(
+    State(state): State<ServerState>,
+    Json(def): Json<crate::services::online::ServiceDef>,
+) -> Response {
+    if def.id.trim().is_empty() || def.label.trim().is_empty() || def.target.trim().is_empty() {
+        return internal_error("id, label e target sono obbligatori".into());
+    }
+    state.config.update(|c| {
+        match c.services.iter_mut().find(|s| s.id == def.id) {
+            Some(existing) => {
+                if existing.builtin {
+                    // Dei preset si può cambiare solo enabled (via toggle): ignora il resto.
+                    return;
+                }
+                *existing = crate::services::online::ServiceDef { builtin: false, ..def.clone() };
+            }
+            None => {
+                c.services.push(crate::services::online::ServiceDef {
+                    builtin: false,
+                    ..def.clone()
+                });
+            }
+        }
+    });
+    services_get(State(state)).await.into_response()
+}
+
+async fn services_delete(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
+    let mut removed = false;
+    state.config.update(|c| {
+        let before = c.services.len();
+        c.services.retain(|s| s.id != id || s.builtin);
+        removed = c.services.len() != before;
+    });
+    if !removed {
+        return internal_error("servizio non trovato o preset non eliminabile".into());
+    }
+    services_get(State(state)).await.into_response()
+}
+
+async fn services_toggle(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
+    let mut found = false;
+    state.config.update(|c| {
+        if let Some(service) = c.services.iter_mut().find(|s| s.id == id) {
+            service.enabled = !service.enabled;
+            found = true;
+        }
+    });
+    if !found {
+        return internal_error("servizio non trovato".into());
+    }
+    services_get(State(state)).await.into_response()
+}
+
+async fn alerts_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "alerts": state.alerts.list() } }))
+}
+
+#[derive(Deserialize)]
+struct AckBody {
+    /// None = ack di tutti.
+    id: Option<String>,
+}
+
+async fn alerts_ack(State(state): State<ServerState>, Json(body): Json<AckBody>) -> Json<serde_json::Value> {
+    state.alerts.ack(body.id.as_deref());
+    Json(json!({ "ok": true, "data": { "alerts": state.alerts.list() } }))
+}
+
+#[derive(Deserialize)]
+struct RemoteControlBody {
+    enabled: bool,
+}
+
+/// Attivabile solo dal desktop: un telefono non può auto-promuoversi.
+async fn set_remote_control(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<RemoteControlBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    state.config.update(|c| c.remote_control_enabled = body.enabled);
+    tracing::info!(enabled = body.enabled, "remote control aggiornato");
+    Json(json!({ "ok": true, "data": { "remoteControlEnabled": body.enabled } })).into_response()
+}
+
 // ---------- tasks ----------
 
 async fn tasks_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
@@ -877,7 +990,7 @@ async fn task_stop(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
     match state.tasks.stop(&id) {
