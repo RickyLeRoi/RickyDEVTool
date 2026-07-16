@@ -116,6 +116,7 @@ pub async fn start(
         .route("/api/node/run", post(node_run))
         .route("/api/tasks", get(tasks_list))
         .route("/api/tasks/{id}/stop", post(task_stop))
+        .route("/api/tasks/clear-finished", post(tasks_clear_finished))
         .route("/api/dotnet/info", get(dotnet_info))
         .route("/api/dotnet/select", post(dotnet_select))
         .route("/api/dotnet/run", post(dotnet_run))
@@ -982,6 +983,11 @@ async fn set_remote_control(
 // ---------- tasks ----------
 
 async fn tasks_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "tasks": state.tasks.list() } }))
+}
+
+async fn tasks_clear_finished(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    state.tasks.clear_finished();
     Json(json!({ "ok": true, "data": { "tasks": state.tasks.list() } }))
 }
 

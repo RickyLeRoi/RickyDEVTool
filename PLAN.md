@@ -73,11 +73,11 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] AlertService su eventi bus: service-down (solo transizione), cpu-sustained >90% per 60s, mem-high >92%, task-failed; dedup con cooldown 10 min; lista nel pannello vitals con ack al click (toast/tray rimandati a rifinitura)
 - [x] Toggle "Remote control" (default OFF, attivabile solo da localhost): tutte le azioni di scrittura passano da un'unica guardia `write_allowed`
 
-### M8 — Packaging/release (3–5 gg)
-- [ ] tauri-bundler: NSIS .exe (Win), .dmg universal (mac), .deb + AppImage (Linux CI-only)
-- [ ] CI GitHub Actions, matrix 3 OS, artifact su tag `v*`
-- [ ] Firma: Authenticode (se certificato disponibile), notarizzazione mac (se account Apple Dev) — vedi QUESTIONS Q9
-- [ ] Chiavi updater generate ora anche se l'updater arriva in v2
+### M8 — Packaging/release (3–5 gg) ← COMPLETATA in locale (16/07/2026); CI da attivare con un remote
+- [x] tauri-bundler verificato in locale su mac: `RickyDEVTool.app` (18 MB) + `.dmg` (5.9 MB); NSIS/.deb prodotti dalla CI sui rispettivi runner
+- [x] Workflow GitHub Actions (`.github/workflows/build.yml`): test matrix 3 OS su ogni push, bundle + release draft su tag `v*` (mac universal); serve creare il repo remoto GitHub e pushare per attivarlo
+- [ ] Firma: rimandata (Q9: uso personale, niente account Apple Dev / certificato) — su mac Gatekeeper mostrerà l'avviso "sviluppatore non verificato" (aggirabile con click destro > Apri), su Windows SmartScreen
+- [ ] Chiavi updater: rimandate a v2 insieme all'updater
 
 ### v2 (dopo rilascio v1)
 - Lista commit selezionabile + checkout detached HEAD

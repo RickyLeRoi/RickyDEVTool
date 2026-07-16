@@ -211,6 +211,7 @@ async fn list_listeners() -> Result<Vec<RawListener>, String> {
 }
 
 /// Parser dell'output `netstat -ano -p TCP` (righe LISTENING). Testato su fixture.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn parse_netstat(output: &str) -> Vec<RawListener> {
     let mut result = Vec::new();
     for line in output.lines() {
