@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub stats_interval_ms: u64,
     /// Override manuali dei path dei tool (id -> path eseguibile/bundle).
     pub tool_paths: std::collections::HashMap<String, String>,
+    /// Cartelle progetti pinnate nella sezione Progetti.
+    pub pinned_folders: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -26,6 +28,7 @@ impl Default for AppConfig {
             pair_token: String::new(),
             stats_interval_ms: 1000,
             tool_paths: std::collections::HashMap::new(),
+            pinned_folders: Vec::new(),
         }
     }
 }

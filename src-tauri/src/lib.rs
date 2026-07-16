@@ -5,6 +5,7 @@ mod events;
 mod netinfo;
 mod poller;
 mod server;
+mod services;
 
 use std::sync::{Arc, OnceLock};
 

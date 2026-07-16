@@ -100,6 +100,52 @@ export interface DiscoveredTool {
   editions?: ToolEdition[];
 }
 
+// ---------- progetti / git ----------
+
+export interface DirEntryInfo {
+  name: string;
+  path: string;
+}
+
+export interface DirListing {
+  path: string;
+  parent: string | null;
+  dirs: DirEntryInfo[];
+}
+
+export type ProjectKind = "git" | "node" | "dotnet";
+
+export interface ProjectRef {
+  path: string;
+  name: string;
+  kinds: ProjectKind[];
+}
+
+export interface FolderScan {
+  path: string;
+  projects: ProjectRef[];
+  truncated: boolean;
+}
+
+export type GitWarning =
+  | { kind: "no-upstream" }
+  | { kind: "diverged"; ahead: number; behind: number }
+  | { kind: "detached-head" }
+  | { kind: "merge-in-progress" }
+  | { kind: "stale-fetch"; days: number };
+
+export interface GitRepoInfo {
+  root: string;
+  currentBranch: string | null;
+  detachedAt?: string;
+  dirty: boolean;
+  dirtyFiles: number;
+  ahead: number | null;
+  behind: number | null;
+  lastFetchAt: number | null;
+  warnings: GitWarning[];
+}
+
 export interface LanInfo {
   urls: string[];
   port: number;

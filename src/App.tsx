@@ -3,6 +3,7 @@ import { PairGate } from "./app/PairGate";
 import { VitalsPanel } from "./app/VitalsPanel";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { Ports } from "./features/ports/Ports";
+import { Projects } from "./features/projects/Projects";
 import { Settings } from "./features/settings/Settings";
 import { ws } from "./lib/ws";
 import { useStatsStore } from "./stores/statsStore";
@@ -62,7 +63,7 @@ export default function App() {
         <main className="main">
           {section === "dashboard" && <Dashboard />}
           {section === "ports" && <Ports />}
-          {section === "projects" && <Placeholder title="Progetti" milestone="M4" />}
+          {section === "projects" && <Projects />}
           {section === "services" && <Placeholder title="Servizi online" milestone="M7" />}
           {section === "settings" && <Settings />}
         </main>

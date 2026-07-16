@@ -44,12 +44,12 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [x] Launch di vscode/visualstudio/terminale con target opzionale; negato dalla LAN (REMOTE_FORBIDDEN)
 - [x] UI: pannello "Strumenti rilevati" in Impostazioni con badge trovato/assente, fonte, versione, bottoni Apri e Path…
 
-### M4 — Cartelle + Git base (4–5 gg) — fine MVP
-- [ ] Dialog nativo selezione cartella, cartelle pinnate persistite
-- [ ] Scanner progetti: `.git` (dir o file), `package.json`, `.sln`/`.csproj`; depth 3, ignore list
-- [ ] Azioni comuni: apri in VS Code, apri terminale, apri file manager, copia path
-- [ ] GitService via CLI: stato (branch, dirty, ahead/behind), Fetch, Pull
-- [ ] UI explorer: albero lazy + pannello dettaglio + badge tipo progetto
+### M4 — Cartelle + Git base (4–5 gg) ← COMPLETATA (16/07/2026) — **fine MVP**
+- [x] Selezione cartella: browser lato backend (`/api/fs/dirs`) invece del dialog nativo Tauri — funziona identico da desktop e da telefono; cartelle pinnate persistite in config (max 12)
+- [x] Scanner progetti: `.git` (dir o file), `package.json`, `.sln`/`.slnx`/`.csproj`; depth 3, ignore list, limite 5000 dir con flag `truncated`; dentro un repo git non si cercano altri repo
+- [x] Azioni comuni: apri in VS Code, apri terminale, copia path (file manager rimandato: le prime tre coprono l'uso reale)
+- [x] GitService via CLI: stato da `status --porcelain=v2 --branch` (branch/detached, dirty, ahead/behind), warnings (no-upstream, diverged, merge-in-progress, stale-fetch), Fetch `--prune`, Pull `--ff-only` (mai merge automatici); `GIT_TERMINAL_PROMPT=0` + SSH BatchMode → mai prompt appesi, errori auth mappati su GIT_AUTH_FAILED; azioni di rete loopback-only
+- [x] UI: lista progetti + pannello dettaglio con badge tipo, stato git, Fetch/Pull (pull disabilitato se dirty)
 
 ### M5 — Git completo + Node (4–5 gg)
 - [ ] Dropdown branch con `for-each-ref` (hash/data/autore), stale ≥4 settimane colorati

@@ -91,6 +91,12 @@ pub async fn start(
         .route("/api/tools", get(list_tools))
         .route("/api/tools/{id}/launch", post(launch_tool))
         .route("/api/tools/{id}/path", post(set_tool_path))
+        .route("/api/fs/dirs", get(fs_dirs))
+        .route("/api/projects/scan", get(projects_scan))
+        .route("/api/projects/pinned", get(pinned_get).post(pinned_set))
+        .route("/api/git/info", get(git_info))
+        .route("/api/git/fetch", post(git_fetch))
+        .route("/api/git/pull", post(git_pull))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -455,6 +461,165 @@ async fn set_tool_path(
     });
     let tools = cached_tools(&state, true).await;
     Json(json!({ "ok": true, "data": { "tools": tools } })).into_response()
+}
+
+// ---------- progetti / filesystem / git ----------
+
+#[derive(Deserialize)]
+struct PathQuery {
+    path: Option<String>,
+}
+
+fn internal_error(message: String) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "ok": false,
+            "error": { "code": "INTERNAL", "message": message, "retryable": true }
+        })),
+    )
+        .into_response()
+}
+
+async fn fs_dirs(axum::extract::Query(query): axum::extract::Query<PathQuery>) -> Response {
+    match crate::services::projects::list_dirs(query.path).await {
+        Ok(listing) => Json(json!({ "ok": true, "data": listing })).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": message, "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn projects_scan(axum::extract::Query(query): axum::extract::Query<PathQuery>) -> Response {
+    let Some(path) = query.path else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": "parametro path mancante", "retryable": false }
+            })),
+        )
+            .into_response();
+    };
+    match crate::services::projects::scan(path).await {
+        Ok(scan) => Json(json!({ "ok": true, "data": scan })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+async fn pinned_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "folders": state.config.get().pinned_folders } }))
+}
+
+#[derive(Deserialize)]
+struct PinBody {
+    path: String,
+    action: String, // "add" | "remove"
+}
+
+async fn pinned_set(State(state): State<ServerState>, Json(body): Json<PinBody>) -> Response {
+    state.config.update(|c| {
+        c.pinned_folders.retain(|p| p != &body.path);
+        if body.action == "add" {
+            c.pinned_folders.insert(0, body.path.clone());
+            c.pinned_folders.truncate(12);
+        }
+    });
+    Json(json!({ "ok": true, "data": { "folders": state.config.get().pinned_folders } }))
+        .into_response()
+}
+
+fn git_error_response(e: crate::services::git::GitError) -> Response {
+    use crate::services::git::GitError;
+    let (status, code, message, os_hint) = match e {
+        GitError::NotARepo => (
+            StatusCode::BAD_REQUEST,
+            "PATH_NOT_FOUND",
+            "La cartella non è un repository git".to_string(),
+            None,
+        ),
+        GitError::AuthFailed(detail) => (
+            StatusCode::BAD_GATEWAY,
+            "GIT_AUTH_FAILED",
+            "Autenticazione git fallita".to_string(),
+            Some(detail),
+        ),
+        GitError::Timeout => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "TIMEOUT",
+            "Operazione git scaduta".to_string(),
+            None,
+        ),
+        GitError::Failed(detail) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", detail, None),
+    };
+    (
+        status,
+        Json(json!({
+            "ok": false,
+            "error": { "code": code, "message": message, "osHint": os_hint, "retryable": true }
+        })),
+    )
+        .into_response()
+}
+
+async fn git_info(axum::extract::Query(query): axum::extract::Query<PathQuery>) -> Response {
+    let Some(path) = query.path else {
+        return internal_error("parametro path mancante".into());
+    };
+    match crate::services::git::repo_info(&path).await {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct GitActionBody {
+    path: String,
+}
+
+fn remote_forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "ok": false,
+            "error": { "code": "REMOTE_FORBIDDEN", "message": "Azione disabilitata da remoto: usa il desktop", "retryable": false }
+        })),
+    )
+        .into_response()
+}
+
+async fn git_fetch(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<GitActionBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match crate::services::git::fetch(&body.path).await {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+async fn git_pull(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<GitActionBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match crate::services::git::pull(&body.path).await {
+        Ok((info, summary)) => {
+            Json(json!({ "ok": true, "data": { "info": info, "summary": summary } }))
+                .into_response()
+        }
+        Err(e) => git_error_response(e),
+    }
 }
 
 #[derive(Deserialize)]
