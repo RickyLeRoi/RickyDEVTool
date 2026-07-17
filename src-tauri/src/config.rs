@@ -28,6 +28,8 @@ pub struct AppConfig {
     pub services: Vec<crate::services::online::ServiceDef>,
     /// Se true, i device LAN abbinati possono eseguire azioni (kill, run, git).
     pub remote_control_enabled: bool,
+    /// Se true, dopo 5 min di inattività muove il mouse ogni 3 min (anti-idle).
+    pub anti_idle_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -36,7 +38,7 @@ impl Default for AppConfig {
             port: DEFAULT_PORT,
             lan_enabled: true,
             pair_token: String::new(),
-            stats_interval_ms: 1000,
+            stats_interval_ms: 10_000,
             tool_paths: std::collections::HashMap::new(),
             pinned_folders: Vec::new(),
             node_pm_overrides: std::collections::HashMap::new(),
@@ -44,6 +46,7 @@ impl Default for AppConfig {
             dotnet_profile: std::collections::HashMap::new(),
             services: Vec::new(),
             remote_control_enabled: false,
+            anti_idle_enabled: false,
         }
     }
 }

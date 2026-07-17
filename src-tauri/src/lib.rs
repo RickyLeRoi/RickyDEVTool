@@ -3,6 +3,7 @@ mod alerts;
 mod collectors;
 mod config;
 mod events;
+mod jiggler;
 mod netinfo;
 mod poller;
 mod server;

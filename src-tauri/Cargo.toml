@@ -36,5 +36,13 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Movimento del mouse per l'anti-idle: solo mac/win (enigo su Linux tira X11).
+[target.'cfg(target_os = "macos")'.dependencies]
+enigo = "0.3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+enigo = "0.3"
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation"] }
+
 [dev-dependencies]
 tempfile = "3"

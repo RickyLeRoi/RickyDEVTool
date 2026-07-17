@@ -80,6 +80,8 @@ pub async fn start(
 
     let tasks = Arc::new(crate::tasks::TaskRegistry::new(bus.clone()));
     let alerts = crate::alerts::AlertService::start(bus.clone());
+    // Avviato qui perché serve il runtime tokio (attivo dentro server::start).
+    crate::jiggler::start(config.clone());
     let state = ServerState {
         config,
         bus,
@@ -100,6 +102,9 @@ pub async fn start(
         .route("/api/processes/heavy", get(heavy_processes))
         .route("/api/processes/kill", post(kill_process))
         .route("/api/ports", get(list_ports))
+        .route("/api/disks", get(list_disks))
+        .route("/api/disks/eject", post(disk_eject))
+        .route("/api/disks/format", post(disk_format))
         .route("/api/tools", get(list_tools))
         .route("/api/tools/{id}/launch", post(launch_tool))
         .route("/api/tools/{id}/path", post(set_tool_path))
@@ -126,6 +131,7 @@ pub async fn start(
         .route("/api/alerts", get(alerts_get))
         .route("/api/alerts/ack", post(alerts_ack))
         .route("/api/config/remote-control", post(set_remote_control))
+        .route("/api/config/anti-idle", post(set_anti_idle))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -213,7 +219,7 @@ async fn lan_info(State(state): State<ServerState>) -> Json<serde_json::Value> {
         .collect();
     Json(json!({
         "ok": true,
-        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled }
+        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled, "antiIdleEnabled": cfg.anti_idle_enabled }
     }))
 }
 
@@ -886,6 +892,79 @@ fn short_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
+// ---------- dischi ----------
+
+async fn list_disks() -> Json<serde_json::Value> {
+    let disks = tokio::task::spawn_blocking(crate::adapters::disks::list)
+        .await
+        .unwrap_or_default();
+    Json(json!({ "ok": true, "data": { "disks": disks } }))
+}
+
+fn disk_error_response(e: crate::adapters::disks::DiskError) -> Response {
+    use crate::adapters::disks::DiskError;
+    let (status, code, message, os_hint) = match e {
+        DiskError::NotFound => (
+            StatusCode::NOT_FOUND,
+            "PATH_NOT_FOUND",
+            "Disco non trovato (forse già rimosso)".to_string(),
+            None,
+        ),
+        DiskError::NotRemovable => (
+            StatusCode::FORBIDDEN,
+            "ACCESS_DENIED",
+            "Solo i dischi rimovibili possono essere espulsi o formattati".to_string(),
+            None,
+        ),
+        DiskError::Unsupported(msg) => (StatusCode::NOT_IMPLEMENTED, "UNSUPPORTED", msg, None),
+        DiskError::Failed { message, os_hint } => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", message, os_hint)
+        }
+    };
+    (
+        status,
+        Json(json!({
+            "ok": false,
+            "error": { "code": code, "message": message, "osHint": os_hint, "retryable": false }
+        })),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EjectBody {
+    mount_point: String,
+}
+
+/// Eject e format sono distruttivi: sempre e solo da localhost, mai da remoto
+/// (nemmeno col controllo remoto attivo).
+async fn disk_eject(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<EjectBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match crate::adapters::disks::eject(&body.mount_point).await {
+        Ok(()) => Json(json!({ "ok": true, "data": { "ejected": true } })).into_response(),
+        Err(e) => disk_error_response(e),
+    }
+}
+
+async fn disk_format(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<crate::adapters::disks::FormatRequest>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match crate::adapters::disks::format(req).await {
+        Ok(()) => Json(json!({ "ok": true, "data": { "formatted": true } })).into_response(),
+        Err(e) => disk_error_response(e),
+    }
+}
+
 // ---------- servizi online / alerts / remote control ----------
 
 async fn services_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
@@ -978,6 +1057,19 @@ async fn set_remote_control(
     state.config.update(|c| c.remote_control_enabled = body.enabled);
     tracing::info!(enabled = body.enabled, "remote control aggiornato");
     Json(json!({ "ok": true, "data": { "remoteControlEnabled": body.enabled } })).into_response()
+}
+
+async fn set_anti_idle(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<RemoteControlBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    state.config.update(|c| c.anti_idle_enabled = body.enabled);
+    tracing::info!(enabled = body.enabled, "anti-idle aggiornato");
+    Json(json!({ "ok": true, "data": { "antiIdleEnabled": body.enabled } })).into_response()
 }
 
 // ---------- tasks ----------
