@@ -8,7 +8,8 @@ import { Services } from "./features/services/Services";
 import { Settings } from "./features/settings/Settings";
 import { ws } from "./lib/ws";
 import { useStatsStore } from "./stores/statsStore";
-import type { MachineStats } from "./lib/types";
+import { useDisksStore } from "./stores/disksStore";
+import type { DiskInfo, MachineStats } from "./lib/types";
 
 type Section = "dashboard" | "ports" | "projects" | "services" | "settings";
 
@@ -24,6 +25,7 @@ export default function App() {
   const [section, setSection] = useState<Section>("dashboard");
   const push = useStatsStore((s) => s.push);
   const setError = useStatsStore((s) => s.setError);
+  const setDisks = useDisksStore((s) => s.setDisks);
 
   // Il pannello vital signs è sempre visibile, quindi il topic "stats"
   // resta sottoscritto per tutta la vita della UI.
@@ -34,6 +36,16 @@ export default function App() {
         setError((event.payload as { message: string }).message);
     });
   }, [push, setError]);
+
+  // I dischi si aggiornano (anche su inserimento/rimozione) solo mentre la
+  // dashboard è aperta: il poller backend si spegne quando si esce.
+  useEffect(() => {
+    if (section !== "dashboard") return;
+    return ws.subscribe("disks", (event) => {
+      if (event.topic === "disks")
+        setDisks((event.payload as { disks: DiskInfo[] }).disks);
+    });
+  }, [section, setDisks]);
 
   return (
     <PairGate>

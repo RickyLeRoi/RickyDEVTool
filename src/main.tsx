@@ -2,7 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { post } from "./lib/api";
+import { initTheme } from "./lib/theme";
 import "./styles.css";
+
+initTheme();
 
 // Gli errori JS del frontend finiscono nel log del backend.
 window.addEventListener("error", (e) => {

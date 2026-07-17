@@ -1,4 +1,6 @@
-:root {
+/* Palette scura (default). */
+:root,
+:root[data-theme="dark"] {
   --bg: #16181d;
   --bg-panel: #1c1f26;
   --bg-hover: #262a33;
@@ -10,6 +12,44 @@
   --ok: #3fb96a;
   --warn: #e0a63c;
   --error: #e05c5c;
+  --code-bg: #101216;
+}
+
+/* Palette chiara. */
+:root[data-theme="light"] {
+  --bg: #f5f6f8;
+  --bg-panel: #ffffff;
+  --bg-hover: #eceef2;
+  --border: #d9dde4;
+  --text: #1c2027;
+  --text-dim: #66707d;
+  --accent: #1f6feb;
+  --accent2: #8250df;
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --error: #cf222e;
+  --code-bg: #eef0f4;
+}
+
+/* "auto": segue il tema di sistema quando l'utente non ha scelto. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f5f6f8;
+    --bg-panel: #ffffff;
+    --bg-hover: #eceef2;
+    --border: #d9dde4;
+    --text: #1c2027;
+    --text-dim: #66707d;
+    --accent: #1f6feb;
+    --accent2: #8250df;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --error: #cf222e;
+    --code-bg: #eef0f4;
+  }
+}
+
+:root {
   font-size: 13px;
 }
 
@@ -280,6 +320,68 @@ input {
 
 .sparkline {
   display: block;
+}
+
+/* ---------- dischi ---------- */
+.disks {
+  margin-top: 18px;
+}
+.disk-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.disk-row:last-child {
+  border-bottom: none;
+}
+.disk-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+.disk-name {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.disk-actions {
+  display: flex;
+  gap: 6px;
+}
+.disk-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.disk-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.disk-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.form-row select,
+.form-row input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
 }
 
 /* ---------- processi pesanti ---------- */
@@ -697,7 +799,7 @@ button.small {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 11px;
   line-height: 1.5;
-  background: #101216;
+  background: var(--code-bg);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -749,6 +851,66 @@ button.small {
 }
 .checkbox input {
   width: auto;
+}
+
+/* ---------- toggle switch ---------- */
+.toggle {
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  padding: 0;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.toggle.on .toggle-knob {
+  transform: translateX(18px);
+}
+
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+}
+.setting-text {
+  min-width: 0;
+}
+.setting-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.qr-block {
+  margin: 10px 0;
+}
+.qr-panel {
+  margin-top: 10px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
 }
 
 /* ---------- settings ---------- */

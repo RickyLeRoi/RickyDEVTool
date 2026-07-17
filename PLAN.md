@@ -79,6 +79,14 @@ Stime in giornate effettive di lavoro, con margine per l'apprendimento di Rust i
 - [ ] Firma: rimandata (Q9: uso personale, niente account Apple Dev / certificato) — su mac Gatekeeper mostrerà l'avviso "sviluppatore non verificato" (aggirabile con click destro > Apri), su Windows SmartScreen
 - [ ] Chiavi updater: rimandate a v2 insieme all'updater
 
+### Extra post-v1 (17/07/2026, richieste d'uso)
+- [x] Monitor dischi nella dashboard: spazio usato/libero con barra colorata, rilevamento removable, aggiornamento a 10s (insert/remove riflessi automaticamente); default refresh dashboard portato a 10s
+- [x] Espulsione e formattazione dischi rimovibili (`adapters/disks.rs`): eject + format con opzioni (filesystem, nome, formattazione a basso livello/ripartizione) e conferma digitando il nome; solo da localhost, mai da remoto; il disco di sistema è escluso a livello di guardia. macOS via `diskutil`, Windows best-effort via PowerShell (non testato su HW), Linux non supportato per format
+- [x] Anti-inattività (`jiggler.rs`): dopo 5 min di inattività reale muove il mouse di 1px ogni 3 min; se l'utente torna attivo si ferma; toggle in Impostazioni; idle via ioreg (mac)/GetLastInputInfo (win), movimento via enigo (mac/win). Nota: su macOS serve il permesso Accessibilità
+- [x] Tema chiaro/scuro/auto (segue il sistema), selettore in Impostazioni, persistito in localStorage
+- [x] Toggle switch al posto delle checkbox per controllo remoto e anti-idle; QR di abbinamento dietro un pulsante
+- Nota di verifica: eject/format non sono stati eseguiti su un disco rimovibile reale (nessuno collegato); testate le guardie (rifiuto su disco di sistema/inesistente, blocco remoto) e la costruzione dei comandi. Il jiggler è stato verificato solo nella logica e nel rilevamento idle, non lasciando la macchina ferma 5 min.
+
 ### v2 (dopo rilascio v1)
 - Lista commit selezionabile + checkout detached HEAD
 - Start/Stop Debug via VS DTE (Windows-only, fragile — accettato)

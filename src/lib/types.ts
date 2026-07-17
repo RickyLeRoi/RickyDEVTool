@@ -210,6 +210,18 @@ export interface LanInfo {
   port: number;
   lanEnabled: boolean;
   remoteControlEnabled: boolean;
+  antiIdleEnabled: boolean;
+}
+
+export interface DiskInfo {
+  name: string;
+  mountPoint: string;
+  fileSystem: string;
+  totalBytes: number;
+  availableBytes: number;
+  usedPct: number;
+  isRemovable: boolean;
+  isSystem: boolean;
 }
 
 // ---------- servizi online / alerts ----------
