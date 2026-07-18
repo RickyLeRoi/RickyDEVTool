@@ -213,6 +213,11 @@ export interface LanInfo {
   antiIdleEnabled: boolean;
 }
 
+export interface AccessibilityStatus {
+  supported: boolean;
+  trusted: boolean;
+}
+
 export interface DiskInfo {
   name: string;
   mountPoint: string;

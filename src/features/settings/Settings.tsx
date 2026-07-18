@@ -3,7 +3,7 @@ import { api, API_BASE, post } from "../../lib/api";
 import { ToolsPanel } from "./ToolsPanel";
 import { Toggle } from "../../components/Toggle";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
-import type { LanInfo } from "../../lib/types";
+import type { AccessibilityStatus, LanInfo } from "../../lib/types";
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: "auto", label: "Auto (sistema)" },
@@ -16,17 +16,24 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
   const [theme, setTheme] = useState<Theme>(getTheme());
+  const [access, setAccess] = useState<AccessibilityStatus | null>(null);
 
   useEffect(() => {
     api<LanInfo>("/api/lan").then((r) => {
       if (r.ok) setLan(r.data);
       else setError(r.error.message);
     });
+    refreshAccess();
   }, []);
+
+  const refreshAccess = () =>
+    api<AccessibilityStatus>("/api/system/accessibility").then((r) => {
+      if (r.ok) setAccess(r.data);
+    });
 
   const chooseTheme = (t: Theme) => {
     setTheme(t);
-    applyTheme(t);
+    applyTheme(t, true);
   };
 
   const toggleRemote = async (enabled: boolean) => {
@@ -40,8 +47,15 @@ export function Settings() {
   const toggleAntiIdle = async (enabled: boolean) => {
     if (!lan) return;
     const r = await post<{ antiIdleEnabled: boolean }>("/api/config/anti-idle", { enabled });
-    if (r.ok) setLan({ ...lan, antiIdleEnabled: r.data.antiIdleEnabled });
+    if (r.ok) {
+      setLan({ ...lan, antiIdleEnabled: r.data.antiIdleEnabled });
+      if (enabled) refreshAccess(); // il permesso potrebbe essere cambiato
+    }
   };
+
+  // Avvisa solo se serve davvero: anti-idle attivo, permesso rilevante e non concesso.
+  const needsAccessibility =
+    !!lan?.antiIdleEnabled && !!access?.supported && !access.trusted;
 
   return (
     <div className="settings">
@@ -70,8 +84,6 @@ export function Settings() {
             <div className="hint">
               Dopo 5 minuti di inattività muove il mouse ogni 3 minuti, così lo schermo non si
               spegne e le chat non ti segnano assente. Se torni attivo, si ferma da solo.
-              {" "}
-              <em>Su macOS serve il permesso «Accessibilità» per RickyDEVTool.</em>
             </div>
           </div>
           <Toggle
@@ -81,6 +93,21 @@ export function Settings() {
             label="Anti-inattività"
           />
         </div>
+        {needsAccessibility && (
+          <div className="banner banner-warn">
+            <div>
+              <strong>Permesso Accessibilità richiesto.</strong> Per muovere il mouse, macOS
+              chiede di autorizzare RickyDEVTool in Impostazioni di Sistema → Privacy e sicurezza
+              → Accessibilità. Finché non lo concedi, l'anti-inattività resta senza effetto.
+            </div>
+            <div className="banner-actions">
+              <button onClick={() => post("/api/system/open-accessibility", {})}>
+                Apri Accessibilità
+              </button>
+              <button onClick={refreshAccess}>Ho attivato, ricontrolla</button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section>
@@ -107,25 +134,7 @@ export function Settings() {
             </ul>
 
             {lan.lanEnabled && lan.urls.length > 0 && (
-              <div className="qr-block">
-                <button onClick={() => setShowQr(!showQr)}>
-                  {showQr ? "Nascondi QR" : "Mostra QR di abbinamento"}
-                </button>
-                {showQr && (
-                  <div className="qr-panel">
-                    <img
-                      className="qr"
-                      src={`${API_BASE}/api/lan/qr.svg`}
-                      alt="QR di abbinamento"
-                      width={180}
-                      height={180}
-                    />
-                    <p className="hint">
-                      Scansiona dal telefono: contiene indirizzo e token di abbinamento.
-                    </p>
-                  </div>
-                )}
-              </div>
+              <button onClick={() => setShowQr(true)}>Mostra QR di abbinamento</button>
             )}
 
             <div className="setting-row">
@@ -148,6 +157,28 @@ export function Settings() {
       </section>
 
       <ToolsPanel />
+
+      {showQr && (
+        <div className="overlay" onClick={() => setShowQr(false)}>
+          <div className="dialog qr-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Abbina uno smartphone</h3>
+            <img
+              className="qr"
+              src={`${API_BASE}/api/lan/qr.svg`}
+              alt="QR di abbinamento"
+              width={220}
+              height={220}
+            />
+            <p className="hint">
+              Scansiona dal telefono: contiene indirizzo e token di abbinamento. Il telefono resta
+              in sola lettura finché non attivi il controllo remoto.
+            </p>
+            <div className="dialog-actions">
+              <button onClick={() => setShowQr(false)}>Chiudi</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

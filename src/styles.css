@@ -53,6 +53,19 @@
   font-size: 13px;
 }
 
+/* Transizione morbida (1s) dei colori solo durante il cambio tema. */
+:root.theme-transition,
+:root.theme-transition *,
+:root.theme-transition *::before,
+:root.theme-transition *::after {
+  transition:
+    background-color 1s ease,
+    color 1s ease,
+    border-color 1s ease,
+    fill 1s ease,
+    stroke 1s ease !important;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -1076,6 +1089,30 @@ button.small {
   background: rgba(224, 92, 92, 0.12);
   border: 1px solid var(--error);
   color: var(--error);
+}
+.banner-warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid var(--warn);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+.banner-warn strong {
+  color: var(--warn);
+}
+.banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.qr-dialog {
+  align-items: center;
+  text-align: center;
+}
+.qr-dialog .qr {
+  align-self: center;
 }
 .banner-error-text {
   color: var(--error);

@@ -132,6 +132,8 @@ pub async fn start(
         .route("/api/alerts/ack", post(alerts_ack))
         .route("/api/config/remote-control", post(set_remote_control))
         .route("/api/config/anti-idle", post(set_anti_idle))
+        .route("/api/system/accessibility", get(accessibility_status))
+        .route("/api/system/open-accessibility", post(open_accessibility))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -1070,6 +1072,21 @@ async fn set_anti_idle(
     state.config.update(|c| c.anti_idle_enabled = body.enabled);
     tracing::info!(enabled = body.enabled, "anti-idle aggiornato");
     Json(json!({ "ok": true, "data": { "antiIdleEnabled": body.enabled } })).into_response()
+}
+
+async fn accessibility_status() -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": crate::adapters::accessibility::status() }))
+}
+
+/// Apre il pannello Accessibilità delle impostazioni di sistema (solo macOS).
+async fn open_accessibility(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match crate::adapters::accessibility::open_settings() {
+        Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
+        Err(message) => internal_error(message),
+    }
 }
 
 // ---------- tasks ----------
