@@ -287,6 +287,20 @@ impl DropService {
         }
         std::fs::remove_file(self.received_dir.join(&clean)).map_err(|e| e.to_string())
     }
+
+    /// Percorso validato di un file ricevuto (per aprirlo/mostrarlo).
+    /// Il nome deve restare dentro la cartella dei ricevuti: niente traversal.
+    pub fn received_path(&self, name: &str) -> Result<PathBuf, String> {
+        let clean = sanitize_name(name);
+        if clean != name {
+            return Err("nome non valido".to_string());
+        }
+        let path = self.received_dir.join(&clean);
+        if !path.is_file() {
+            return Err("file non trovato".to_string());
+        }
+        Ok(path)
+    }
 }
 
 #[derive(Debug, Serialize)]

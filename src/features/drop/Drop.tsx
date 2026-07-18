@@ -130,7 +130,19 @@ function ReceivedPanel() {
               <tr key={f.name}>
                 <td>{f.name}</td>
                 <td className="num dim">{fmtBytes(f.sizeBytes)}</td>
-                <td className="num">
+                <td className="num received-actions">
+                  <button
+                    className="small"
+                    onClick={() => post(`/api/drop/open/${encodeURIComponent(f.name)}`, {})}
+                  >
+                    Apri
+                  </button>
+                  <button
+                    className="small"
+                    onClick={() => post(`/api/drop/reveal/${encodeURIComponent(f.name)}`, {})}
+                  >
+                    Mostra
+                  </button>
                   <button
                     className="small danger"
                     onClick={async () => {

@@ -158,7 +158,9 @@ pub async fn start(
         .route("/api/drop/text", post(drop_text))
         .route("/api/drop/download/{id}", get(drop_download))
         .route("/api/drop/received", get(drop_received))
-        .route("/api/drop/received/{name}", axum::routing::delete(drop_received_delete))
+        .route("/api/drop/open/{name}", post(drop_open_file))
+        .route("/api/drop/reveal/{name}", post(drop_reveal_file))
+        .route("/api/drop/received/{name}",axum::routing::delete(drop_received_delete))
         .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
         .route("/api/config/anti-idle", post(set_anti_idle))
@@ -1630,6 +1632,44 @@ async fn drop_open_folder(
     let _ = std::fs::create_dir_all(&folder);
     match tauri_plugin_opener::open_path(folder, None::<String>) {
         Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
+        Err(e) => internal_error(e.to_string()),
+    }
+}
+
+/// Apre un file ricevuto con l'app di default (solo desktop/localhost).
+async fn drop_open_file(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(name): Path<String>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let path = match state.drop.received_path(&name) {
+        Ok(p) => p,
+        Err(message) => return internal_error(message),
+    };
+    match tauri_plugin_opener::open_path(path, None::<String>) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
+        Err(e) => internal_error(e.to_string()),
+    }
+}
+
+/// Mostra il file nel file manager (Finder/Explorer), evidenziandolo.
+async fn drop_reveal_file(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(name): Path<String>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let path = match state.drop.received_path(&name) {
+        Ok(p) => p,
+        Err(message) => return internal_error(message),
+    };
+    match tauri_plugin_opener::reveal_item_in_dir(path) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "revealed": true } })).into_response(),
         Err(e) => internal_error(e.to_string()),
     }
 }

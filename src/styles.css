@@ -1070,6 +1070,20 @@ button.small {
   white-space: pre-wrap;
   font-size: 12px;
 }
+.drop-path {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  margin-bottom: 8px;
+}
+.drop-toast-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .drop-toast-action {
   display: inline-block;
   background: var(--accent);
@@ -1080,6 +1094,16 @@ button.small {
   font-size: 12px;
   cursor: pointer;
   text-decoration: none;
+}
+.drop-toast-action.ghost {
+  background: none;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.received-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 /* ---------- toggle switch ---------- */
