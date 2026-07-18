@@ -138,6 +138,7 @@ input {
   display: grid;
   grid-template-columns: 48px 1fr 220px;
   height: 100vh;
+  height: 100dvh; /* su mobile esclude le barre del browser: niente contenuto tagliato */
   overflow: hidden;
 }
 
@@ -1142,18 +1143,60 @@ button.small {
 
 /* ---------- mobile ---------- */
 @media (max-width: 700px) {
+  /* Ordine verticale: nav in alto (sempre visibile sotto la barra del browser),
+     poi CPU/RAM, poi il contenuto scrollabile. */
+  /* minmax(0,…) impedisce alla colonna di allargarsi oltre lo schermo per via
+     di contenuti larghi (es. selettore intervalli), evitando l'overflow che
+     spingeva fuori vista l'ultimo tab. */
   .shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr 56px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+  }
+  .dashboard-header,
+  .section-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .rail {
+    grid-row: 1;
+    flex-direction: row;
+    justify-content: space-around;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 4px;
+    padding-top: calc(4px + env(safe-area-inset-top));
+    overflow: hidden;
+  }
+  /* flex:1 1 0 + min-width:0: i 5 tab si restringono per entrare sempre,
+     su qualsiasi larghezza di schermo. */
+  .rail-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 5px 2px;
+  }
+  .rail-btn:last-child {
+    margin-top: 0;
+  }
+  .rail-label {
+    display: block;
+    font-size: 10px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .vitals {
-    grid-row: 1;
+    grid-row: 2;
     flex-direction: row;
     align-items: center;
     border-left: none;
     border-bottom: 1px solid var(--border);
     padding: 8px 12px;
     gap: 18px;
+    overflow: visible;
+  }
+  .vitals-block {
+    flex: 1;
   }
   .vitals-block .sparkline {
     display: none;
@@ -1163,27 +1206,9 @@ button.small {
     display: none;
   }
   .main {
-    grid-row: 2;
-    padding: 12px;
-  }
-  .rail {
     grid-row: 3;
-    flex-direction: row;
-    justify-content: space-around;
-    border-right: none;
-    border-top: 1px solid var(--border);
-    padding: 4px;
-  }
-  .rail-btn {
-    flex: 1;
-    padding: 4px 0;
-  }
-  .rail-btn:last-child {
-    margin-top: 0;
-  }
-  .rail-label {
-    display: block;
-    font-size: 10px;
+    padding: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
   .lan-panel {
     flex-direction: column;
