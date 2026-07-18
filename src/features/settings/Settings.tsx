@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, API_BASE, post } from "../../lib/api";
 import { ToolsPanel } from "./ToolsPanel";
+import { PushPanel } from "./PushPanel";
 import { Toggle } from "../../components/Toggle";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
 import type { AccessibilityStatus, LanInfo } from "../../lib/types";
@@ -155,6 +156,8 @@ export function Settings() {
           </>
         )}
       </section>
+
+      <PushPanel />
 
       <ToolsPanel />
 

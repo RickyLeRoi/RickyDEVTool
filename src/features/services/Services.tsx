@@ -7,6 +7,20 @@ function StateDot({ state }: { state: ServiceState }) {
   return <span className={`state-dot ${state}`} />;
 }
 
+function CertBadge({ daysLeft }: { daysLeft: number | null }) {
+  if (daysLeft === null) return null;
+  // Mostra il badge solo se merita attenzione (scaduto o < 21 giorni).
+  if (daysLeft > 21) return null;
+  if (daysLeft < 0) {
+    return <span className="badge badge-cert-expired" title="Certificato TLS scaduto">cert scaduto</span>;
+  }
+  return (
+    <span className="badge badge-warn" title="Certificato TLS in scadenza">
+      cert {daysLeft}g
+    </span>
+  );
+}
+
 function HistoryBar({ history }: { history: ServiceState[] }) {
   return (
     <span className="history-bar" title="ultimi check">
@@ -94,6 +108,7 @@ export function Services() {
                 <tr key={def.id} title={def.target}>
                   <td>
                     <StateDot state={s?.state ?? "down"} /> {def.label}
+                    <CertBadge daysLeft={s?.certDaysLeft ?? null} />
                   </td>
                   <td className="num dim">
                     {s?.latencyMs != null ? `${s.latencyMs} ms` : s?.error ?? "—"}

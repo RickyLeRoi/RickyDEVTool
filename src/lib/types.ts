@@ -308,6 +308,15 @@ export interface ServiceStatus {
   error: string | null;
   checkedAt: number;
   history: ServiceState[];
+  certExpiresAt: number | null;
+  certDaysLeft: number | null;
+}
+
+export interface PushConfig {
+  enabled: boolean;
+  server: string;
+  topic: string;
+  minSeverity: "info" | "warning" | "critical";
 }
 
 export interface Alert {

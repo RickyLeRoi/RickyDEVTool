@@ -551,6 +551,15 @@ button.small {
   border-color: var(--warn);
   margin-left: 6px;
 }
+.badge-cert-expired {
+  color: #fff;
+  background: var(--error);
+  border-color: var(--error);
+  margin-left: 6px;
+}
+.push-test {
+  margin-top: 8px;
+}
 
 /* ---------- progetti ---------- */
 .pin-chips {
