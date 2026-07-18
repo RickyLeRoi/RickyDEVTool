@@ -3,6 +3,8 @@ import { api, post } from "../../lib/api";
 import { GitPanel } from "./GitPanel";
 import { NodePanel } from "./NodePanel";
 import { DotnetPanel } from "./DotnetPanel";
+import { EnvPanel } from "./EnvPanel";
+import { LogTail } from "./LogTail";
 import type { DirListing, FolderScan, ProjectRef } from "../../lib/types";
 
 const KIND_LABELS: Record<string, string> = {
@@ -182,6 +184,8 @@ export function Projects() {
                 {selected.kinds.includes("git") && <GitPanel path={selected.path} />}
                 {selected.kinds.includes("node") && <NodePanel path={selected.path} />}
                 {selected.kinds.includes("dotnet") && <DotnetPanel path={selected.path} />}
+                <EnvPanel key={`env-${selected.path}`} path={selected.path} />
+                <LogTail key={`tail-${selected.path}`} projectPath={selected.path} />
               </div>
             )}
           </div>

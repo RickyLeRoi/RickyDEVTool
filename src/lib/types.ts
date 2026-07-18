@@ -268,6 +268,30 @@ export interface ReceivedFile {
   modifiedAt: number | null;
 }
 
+export interface EnvFile {
+  name: string;
+  sizeBytes: number;
+  modifiedAt: number | null;
+  isActive: boolean;
+}
+
+export interface EnvEntry {
+  key: string;
+  value: string;
+  raw: string | null;
+}
+
+export interface EnvContent {
+  file: string;
+  entries: EnvEntry[];
+}
+
+export interface TailInfo {
+  id: string;
+  path: string;
+  startedAt: number;
+}
+
 export interface AccessibilityStatus {
   supported: boolean;
   trusted: boolean;

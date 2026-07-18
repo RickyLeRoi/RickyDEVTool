@@ -886,6 +886,37 @@ button.small {
   width: auto;
 }
 
+/* ---------- env / logtail ---------- */
+.env-panel,
+.logtail {
+  margin-top: 14px;
+}
+.env-key {
+  font-family: ui-monospace, Menlo, monospace;
+  color: var(--accent);
+}
+.env-val {
+  font-family: ui-monospace, Menlo, monospace;
+  word-break: break-all;
+}
+.env-raw {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.env-values {
+  margin-top: 8px;
+}
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  cursor: pointer;
+}
+.logtail-body {
+  margin-top: 8px;
+}
+
 /* ---------- net tools ---------- */
 .net-tool {
   margin-top: 12px;
