@@ -213,6 +213,37 @@ export interface LanInfo {
   antiIdleEnabled: boolean;
 }
 
+// ---------- net tools ----------
+
+export interface PingResult {
+  host: string;
+  sent: number;
+  received: number;
+  timesMs: number[];
+  avgMs: number | null;
+  error: string | null;
+}
+
+export interface DnsRecordSet {
+  recordType: string;
+  values: string[];
+}
+
+export interface PortCheckResult {
+  port: number;
+  open: boolean;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+export interface LanHost {
+  ip: string;
+  hostname: string | null;
+  mac: string | null;
+  latencyMs: number | null;
+  isSelf: boolean;
+}
+
 export interface DropPeer {
   deviceId: string;
   name: string;

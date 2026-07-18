@@ -877,6 +877,43 @@ button.small {
   width: auto;
 }
 
+/* ---------- net tools ---------- */
+.net-tool {
+  margin-top: 12px;
+}
+.net-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.net-form input {
+  flex: 1;
+  min-width: 120px;
+}
+.net-result {
+  margin-top: 8px;
+}
+.port-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.port-pill {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.port-pill.open {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.port-pill.closed {
+  color: var(--text-dim);
+}
+
 /* ---------- drop ---------- */
 .rail-icon {
   position: relative;

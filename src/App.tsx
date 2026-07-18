@@ -7,6 +7,7 @@ import { Projects } from "./features/projects/Projects";
 import { Services } from "./features/services/Services";
 import { Settings } from "./features/settings/Settings";
 import { Drop } from "./features/drop/Drop";
+import { NetTools } from "./features/nettools/NetTools";
 import { DropToasts } from "./features/drop/DropToasts";
 import { usePresence } from "./features/drop/usePresence";
 import { ws } from "./lib/ws";
@@ -15,13 +16,21 @@ import { useDisksStore } from "./stores/disksStore";
 import { useDropStore } from "./stores/dropStore";
 import type { DiskInfo, MachineStats } from "./lib/types";
 
-type Section = "dashboard" | "ports" | "projects" | "services" | "drop" | "settings";
+type Section =
+  | "dashboard"
+  | "ports"
+  | "projects"
+  | "services"
+  | "net"
+  | "drop"
+  | "settings";
 
 const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "dashboard", icon: "🖥", label: "Dashboard" },
   { id: "ports", icon: "🔌", label: "Porte" },
   { id: "projects", icon: "📁", label: "Progetti" },
   { id: "services", icon: "🌐", label: "Servizi" },
+  { id: "net", icon: "📡", label: "Rete" },
   { id: "drop", icon: "📤", label: "Drop" },
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
@@ -83,6 +92,7 @@ export default function App() {
           {section === "ports" && <Ports />}
           {section === "projects" && <Projects />}
           {section === "services" && <Services />}
+          {section === "net" && <NetTools />}
           {section === "drop" && <Drop />}
           {section === "settings" && <Settings />}
         </main>
