@@ -56,6 +56,9 @@ pub struct ServiceStatus {
     pub checked_at: u64,
     /// Ultimi esiti (max 20), il più recente in coda.
     pub history: Vec<ServiceState>,
+    /// Scadenza del certificato TLS (solo target https), ms epoch.
+    pub cert_expires_at: Option<u64>,
+    pub cert_days_left: Option<i64>,
 }
 
 const DEGRADED_LATENCY_MS: u64 = 2500;
@@ -141,6 +144,21 @@ async fn check_one(def: ServiceDef) -> ServiceStatus {
         ServiceState::Up if latency > DEGRADED_LATENCY_MS => ServiceState::Degraded,
         s => s,
     };
+
+    // Scadenza certificato per i target https (probe cachato 1h in tlscert).
+    let cert_expires_at = match (&def.kind, https_host(&def.target)) {
+        (ServiceKind::Http, Some((host, port))) if state != ServiceState::Down => {
+            super::tlscert::cert_expiry_ms(&host, port).await
+        }
+        _ => None,
+    };
+    let cert_days_left = cert_expires_at.map(super::tlscert::days_left);
+    // Un certificato scaduto è un problema anche se il check risponde.
+    let state = match cert_days_left {
+        Some(days) if days < 0 && state == ServiceState::Up => ServiceState::Degraded,
+        _ => state,
+    };
+
     ServiceStatus {
         id: def.id,
         label: def.label,
@@ -150,7 +168,18 @@ async fn check_one(def: ServiceDef) -> ServiceStatus {
         error,
         checked_at: crate::events::now_ms(),
         history: Vec::new(),
+        cert_expires_at,
+        cert_days_left,
     }
+}
+
+/// (host, porta) se il target è un URL https, altrimenti None.
+fn https_host(target: &str) -> Option<(String, u16)> {
+    let url = reqwest::Url::parse(target).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    Some((url.host_str()?.to_string(), url.port().unwrap_or(443)))
 }
 
 async fn check_http(

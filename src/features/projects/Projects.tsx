@@ -112,7 +112,7 @@ export function Projects() {
         <div className="browser">
           <div className="browser-path">
             <code>{listing.path}</code>
-            <span>
+            <span className="browser-actions">
               <button className="small" onClick={() => doScan(listing.path)} disabled={scanning}>
                 {scanning ? "Scansiono…" : "Usa questa cartella"}
               </button>{" "}

@@ -18,7 +18,7 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 tower-http = { version = "0.6", features = ["cors"] }
 rust-embed = "8"
 mime_guess = "2"
@@ -31,7 +31,14 @@ local-ip-address = "0.6"
 rand = "0.9"
 qrcode = "0.14"
 sysinfo = "0.33"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "json"] }
+# Toolbox di rete: risoluzione DNS diretta (A/AAAA/MX/TXT/...) senza parsare nslookup.
+hickory-resolver = "0.24"
+# Scadenza certificati: handshake TLS diretto (verifier permissivo che cattura la chain).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+x509-parser = "0.16"
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -30,6 +30,14 @@ pub struct AppConfig {
     pub remote_control_enabled: bool,
     /// Se true, dopo 5 min di inattività muove il mouse ogni 3 min (anti-idle).
     pub anti_idle_enabled: bool,
+    /// Notifiche push degli alert via ntfy (app ntfy sul telefono, nessun HTTPS richiesto in LAN).
+    pub push_enabled: bool,
+    /// Server ntfy (default pubblico; sostituibile con un'istanza self-hosted).
+    pub push_server: String,
+    /// Topic ntfy: generato random al primo avvio, fa da segreto condiviso col telefono.
+    pub push_topic: String,
+    /// Severità minima da notificare: info | warning | critical.
+    pub push_min_severity: String,
 }
 
 impl Default for AppConfig {
@@ -47,6 +55,10 @@ impl Default for AppConfig {
             services: Vec::new(),
             remote_control_enabled: false,
             anti_idle_enabled: false,
+            push_enabled: false,
+            push_server: "https://ntfy.sh".to_string(),
+            push_topic: String::new(),
+            push_min_severity: "warning".to_string(),
         }
     }
 }
@@ -73,6 +85,10 @@ impl ConfigHandle {
         if cfg.pair_token.is_empty() {
             cfg.pair_token = generate_token();
         }
+        if cfg.push_topic.is_empty() {
+            // Il topic è l'unico segreto di ntfy: random e impronunciabile.
+            cfg.push_topic = format!("rickydev-{}", generate_token());
+        }
         // Integra i preset mancanti (nuovi preset in versioni future compaiono da soli;
         // le personalizzazioni enabled/disabled dell'utente restano).
         for preset in crate::services::online::builtin_presets() {
@@ -86,6 +102,18 @@ impl ConfigHandle {
         };
         handle.save();
         handle
+    }
+
+    /// Config isolata per i test: default in memoria, salvataggi su file temporaneo.
+    #[cfg(test)]
+    pub fn in_memory() -> Self {
+        let mut token = [0u8; 8];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut token);
+        let name: String = token.iter().map(|b| format!("{b:02x}")).collect();
+        Self {
+            inner: Arc::new(RwLock::new(AppConfig::default())),
+            path: std::env::temp_dir().join(format!("rickydev-test-{name}.json")),
+        }
     }
 
     pub fn get(&self) -> AppConfig {

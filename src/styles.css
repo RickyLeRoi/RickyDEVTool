@@ -591,11 +591,21 @@ button.small {
 }
 .browser-path {
   display: flex;
+  flex-wrap: wrap; /* path lungo: i pulsanti vanno a capo invece di uscire dallo schermo */
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
+}
+.browser-path code {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-all;
+}
+.browser-path .browser-actions {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .browser-list {
   list-style: none;

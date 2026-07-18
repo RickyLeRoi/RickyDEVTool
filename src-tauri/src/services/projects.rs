@@ -87,6 +87,70 @@ pub async fn list_dirs(path: Option<String>) -> Result<DirListing, String> {
     Ok(listing)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub entries: Vec<FsEntry>,
+}
+
+/// Cartelle e file (per il picker del tail log). A differenza di list_dirs
+/// include anche i nascosti: su macOS i log stanno spesso sotto ~/Library
+/// o in dotdir.
+pub async fn list_entries(path: Option<String>) -> Result<FsListing, String> {
+    let base = match path {
+        Some(p) if !p.trim().is_empty() => PathBuf::from(p),
+        _ => dirs::home_dir().ok_or("home directory non trovata")?,
+    };
+    let base = base.canonicalize().map_err(|e| format!("percorso non valido: {e}"))?;
+    if !base.is_dir() {
+        return Err("il percorso non è una cartella".to_string());
+    }
+
+    let listing = tokio::task::spawn_blocking(move || {
+        let mut entries_found = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                let Ok(file_type) = entry.file_type() else { continue };
+                if file_type.is_symlink() {
+                    continue;
+                }
+                entries_found.push(FsEntry {
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    path: entry.path().to_string_lossy().to_string(),
+                    is_dir: file_type.is_dir(),
+                    size_bytes: entry.metadata().map(|m| m.len()).unwrap_or(0),
+                });
+            }
+        }
+        // Cartelle prima, poi file, alfabetico dentro i gruppi.
+        entries_found.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        FsListing {
+            parent: base.parent().map(|p| p.to_string_lossy().to_string()),
+            path: base.to_string_lossy().to_string(),
+            entries: entries_found,
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(listing)
+}
+
 /// Riconosce i progetti dentro `path` (inclusa la cartella stessa), profondità max 3.
 pub async fn scan(path: String) -> Result<FolderScan, String> {
     let base = PathBuf::from(&path)

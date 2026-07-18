@@ -5,6 +5,7 @@ mod config;
 mod events;
 mod jiggler;
 mod netinfo;
+mod notify;
 mod poller;
 mod server;
 mod services;

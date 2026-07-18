@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
+use crate::config::ConfigHandle;
 use crate::events::{now_ms, EventBus};
 
 /// Regole di alert valutate sugli eventi del bus. Girano solo quando i
@@ -25,10 +26,14 @@ const CPU_SUSTAINED_SECS: u64 = 60;
 const MEM_HIGH_PCT: f64 = 92.0;
 /// Non ripetere lo stesso alert per 10 minuti.
 const COOLDOWN_MS: u64 = 600_000;
+/// Un certificato in scadenza resta tale per giorni: un promemoria al giorno basta.
+const CERT_COOLDOWN_MS: u64 = 86_400_000;
+const CERT_WARN_DAYS: i64 = 14;
 const MAX_ALERTS: usize = 50;
 
 pub struct AlertService {
     bus: EventBus,
+    config: ConfigHandle,
     inner: Mutex<Inner>,
 }
 
@@ -45,9 +50,10 @@ struct Inner {
 }
 
 impl AlertService {
-    pub fn start(bus: EventBus) -> Arc<Self> {
+    pub fn start(bus: EventBus, config: ConfigHandle) -> Arc<Self> {
         let service = Arc::new(Self {
             bus: bus.clone(),
+            config,
             inner: Mutex::new(Inner::default()),
         });
         let this = Arc::clone(&service);
@@ -159,6 +165,28 @@ impl AlertService {
                         .to_string(),
                 );
             }
+            // Certificato TLS scaduto o in scadenza (solo target https).
+            if let Some(days) = status.get("certDaysLeft").and_then(|v| v.as_i64()) {
+                if days < 0 {
+                    self.fire_with_cooldown(
+                        "cert-expired",
+                        id,
+                        "critical",
+                        format!("Certificato di {label} scaduto"),
+                        format!("Scaduto da {} giorni", -days),
+                        CERT_COOLDOWN_MS,
+                    );
+                } else if days <= CERT_WARN_DAYS {
+                    self.fire_with_cooldown(
+                        "cert-expiring",
+                        id,
+                        "warning",
+                        format!("Certificato di {label} in scadenza"),
+                        format!("Scade tra {days} giorni"),
+                        CERT_COOLDOWN_MS,
+                    );
+                }
+            }
         }
     }
 
@@ -186,12 +214,24 @@ impl AlertService {
     }
 
     fn fire(&self, kind: &'static str, key: &str, severity: &'static str, title: String, detail: String) {
+        self.fire_with_cooldown(kind, key, severity, title, detail, COOLDOWN_MS);
+    }
+
+    fn fire_with_cooldown(
+        &self,
+        kind: &'static str,
+        key: &str,
+        severity: &'static str,
+        title: String,
+        detail: String,
+        cooldown_ms: u64,
+    ) {
         let dedup_key = format!("{kind}:{key}");
         let now = now_ms();
         {
             let mut inner = self.inner.lock().expect("alerts lock");
             if let Some(last) = inner.last_fired.get(&dedup_key) {
-                if now.saturating_sub(*last) < COOLDOWN_MS {
+                if now.saturating_sub(*last) < cooldown_ms {
                     return;
                 }
             }
@@ -204,14 +244,15 @@ impl AlertService {
                     id,
                     severity,
                     kind,
-                    title,
-                    detail,
+                    title: title.clone(),
+                    detail: detail.clone(),
                     created_at: now,
                     acknowledged: false,
                 },
             );
             inner.alerts.truncate(MAX_ALERTS);
         }
+        crate::notify::push_alert(&self.config, severity, &title, &detail);
         self.publish();
     }
 
@@ -230,7 +271,7 @@ mod tests {
     #[tokio::test]
     async fn alert_su_servizio_down_solo_in_transizione() {
         let bus = EventBus::new();
-        let service = AlertService::start(bus.clone());
+        let service = AlertService::start(bus.clone(), ConfigHandle::in_memory());
 
         let payload_up = serde_json::json!({ "statuses": [{ "id": "x", "label": "X", "state": "up" }] });
         let payload_down = serde_json::json!({ "statuses": [{ "id": "x", "label": "X", "state": "down", "error": "timeout" }] });
@@ -250,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn task_failed_genera_alert_con_cooldown() {
         let bus = EventBus::new();
-        let service = AlertService::start(bus);
+        let service = AlertService::start(bus, ConfigHandle::in_memory());
         let payload = serde_json::json!({ "tasks": [{ "id": "t1", "label": "npm run x", "state": "failed", "exitCode": 1 }] });
         service.on_event("tasks", &payload);
         service.on_event("tasks", &payload); // dedup

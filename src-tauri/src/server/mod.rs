@@ -36,6 +36,8 @@ pub struct ServerState {
     pub tools_cache: Arc<tokio::sync::Mutex<Option<Vec<crate::adapters::tools::DiscoveredTool>>>>,
     pub tasks: Arc<crate::tasks::TaskRegistry>,
     pub alerts: Arc<crate::alerts::AlertService>,
+    pub tails: Arc<crate::services::logtail::TailRegistry>,
+    pub drop: Arc<crate::services::drop::DropService>,
 }
 
 /// Le azioni che modificano il sistema sono locali, oppure LAN se l'utente
@@ -79,7 +81,9 @@ pub async fn start(
         .ok_or_else(|| anyhow::anyhow!("nessuna porta libera tra {} e {}", cfg.port, cfg.port + PORT_FALLBACK_RANGE - 1))?;
 
     let tasks = Arc::new(crate::tasks::TaskRegistry::new(bus.clone()));
-    let alerts = crate::alerts::AlertService::start(bus.clone());
+    let alerts = crate::alerts::AlertService::start(bus.clone(), config.clone());
+    let tails = Arc::new(crate::services::logtail::TailRegistry::new(bus.clone()));
+    let drop_service = Arc::new(crate::services::drop::DropService::new(bus.clone()));
     // Avviato qui perché serve il runtime tokio (attivo dentro server::start).
     crate::jiggler::start(config.clone());
     let state = ServerState {
@@ -90,6 +94,8 @@ pub async fn start(
         tools_cache: Arc::new(tokio::sync::Mutex::new(None)),
         tasks,
         alerts,
+        tails,
+        drop: drop_service,
     };
 
     let api = Router::new()
@@ -130,6 +136,30 @@ pub async fn start(
         .route("/api/services/{id}/toggle", post(services_toggle))
         .route("/api/alerts", get(alerts_get))
         .route("/api/alerts/ack", post(alerts_ack))
+        .route("/api/fs/entries", get(fs_entries))
+        .route("/api/env/files", get(env_files))
+        .route("/api/env/read", get(env_read))
+        .route("/api/env/activate", post(env_activate))
+        .route("/api/logtail", get(logtail_list))
+        .route("/api/logtail/start", post(logtail_start))
+        .route("/api/logtail/{id}/stop", post(logtail_stop))
+        .route("/api/net/ping", post(net_ping))
+        .route("/api/net/dns", post(net_dns))
+        .route("/api/net/portcheck", post(net_portcheck))
+        .route("/api/net/scan", post(net_scan))
+        .route("/api/push", get(push_get).post(push_set))
+        .route("/api/push/test", post(push_test))
+        .route("/api/drop/hello", post(drop_hello))
+        .route("/api/drop/peers", get(drop_peers))
+        .route(
+            "/api/drop/send",
+            post(drop_send).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024 * 1024)),
+        )
+        .route("/api/drop/text", post(drop_text))
+        .route("/api/drop/download/{id}", get(drop_download))
+        .route("/api/drop/received", get(drop_received))
+        .route("/api/drop/received/{name}", axum::routing::delete(drop_received_delete))
+        .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
         .route("/api/config/anti-idle", post(set_anti_idle))
         .route("/api/system/accessibility", get(accessibility_status))
@@ -1141,6 +1171,467 @@ async fn set_interval(
             .update(|c| c.stats_interval_ms = body.interval_ms.clamp(200, 60_000));
     }
     Json(json!({ "ok": true, "data": { "intervalMs": body.interval_ms } })).into_response()
+}
+
+// ---------- fs / env / logtail ----------
+// Leggere file arbitrari (log, .env) espone contenuti sensibili: come le
+// azioni di scrittura, è riservato a localhost o al controllo remoto attivo.
+
+async fn fs_entries(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Query(query): axum::extract::Query<PathQuery>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::projects::list_entries(query.path).await {
+        Ok(listing) => Json(json!({ "ok": true, "data": listing })).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": message, "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn env_files(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Query(query): axum::extract::Query<PathQuery>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let Some(path) = query.path else {
+        return internal_error("parametro path mancante".into());
+    };
+    match crate::services::env::list(&path) {
+        Ok(files) => Json(json!({ "ok": true, "data": { "files": files } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+#[derive(Deserialize)]
+struct EnvQuery {
+    path: String,
+    file: String,
+}
+
+async fn env_read(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Query(query): axum::extract::Query<EnvQuery>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::env::read(&query.path, &query.file) {
+        Ok(content) => Json(json!({ "ok": true, "data": content })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+#[derive(Deserialize)]
+struct EnvActivateBody {
+    path: String,
+    file: String,
+}
+
+async fn env_activate(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<EnvActivateBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::env::activate(&body.path, &body.file) {
+        Ok(()) => match crate::services::env::list(&body.path) {
+            Ok(files) => Json(json!({ "ok": true, "data": { "files": files } })).into_response(),
+            Err(message) => internal_error(message),
+        },
+        Err(message) => internal_error(message),
+    }
+}
+
+async fn logtail_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "tails": state.tails.list() } }))
+}
+
+#[derive(Deserialize)]
+struct TailStartBody {
+    path: String,
+}
+
+async fn logtail_start(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<TailStartBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match state.tails.start(&body.path) {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+async fn logtail_stop(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
+    match state.tails.stop(&id) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "stopped": true } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+// ---------- toolbox di rete ----------
+
+#[derive(Deserialize)]
+struct HostBody {
+    host: String,
+}
+
+async fn net_ping(Json(body): Json<HostBody>) -> Json<serde_json::Value> {
+    let result = crate::services::nettools::ping(body.host.trim()).await;
+    Json(json!({ "ok": true, "data": result }))
+}
+
+#[derive(Deserialize)]
+struct DnsBody {
+    name: String,
+}
+
+async fn net_dns(Json(body): Json<DnsBody>) -> Response {
+    match crate::services::nettools::dns_lookup(body.name.trim()).await {
+        Ok(records) => Json(json!({ "ok": true, "data": { "records": records } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+#[derive(Deserialize)]
+struct PortCheckBody {
+    host: String,
+    ports: Vec<u16>,
+}
+
+async fn net_portcheck(Json(body): Json<PortCheckBody>) -> Response {
+    match crate::services::nettools::check_ports(body.host.trim(), &body.ports).await {
+        Ok(results) => Json(json!({ "ok": true, "data": { "results": results } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+async fn net_scan() -> Response {
+    match crate::services::nettools::scan_lan().await {
+        Ok(hosts) => Json(json!({ "ok": true, "data": { "hosts": hosts } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+// ---------- push (ntfy) ----------
+
+fn push_settings_json(state: &ServerState) -> serde_json::Value {
+    let cfg = state.config.get();
+    json!({
+        "enabled": cfg.push_enabled,
+        "server": cfg.push_server,
+        "topic": cfg.push_topic,
+        "minSeverity": cfg.push_min_severity,
+    })
+}
+
+async fn push_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": push_settings_json(&state) }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PushBody {
+    enabled: Option<bool>,
+    server: Option<String>,
+    topic: Option<String>,
+    min_severity: Option<String>,
+}
+
+/// Configurabile solo dal desktop, come il controllo remoto.
+async fn push_set(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<PushBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    if let Some(severity) = &body.min_severity {
+        if !["info", "warning", "critical"].contains(&severity.as_str()) {
+            return internal_error(format!("severità non valida: {severity}"));
+        }
+    }
+    state.config.update(|c| {
+        if let Some(enabled) = body.enabled {
+            c.push_enabled = enabled;
+        }
+        if let Some(server) = &body.server {
+            let server = server.trim();
+            if server.starts_with("http://") || server.starts_with("https://") {
+                c.push_server = server.trim_end_matches('/').to_string();
+            }
+        }
+        if let Some(topic) = &body.topic {
+            let topic = topic.trim();
+            if !topic.is_empty() && topic.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_') {
+                c.push_topic = topic.to_string();
+            }
+        }
+        if let Some(severity) = &body.min_severity {
+            c.push_min_severity = severity.clone();
+        }
+    });
+    Json(json!({ "ok": true, "data": push_settings_json(&state) })).into_response()
+}
+
+async fn push_test(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let cfg = state.config.get();
+    match crate::notify::send(
+        &cfg.push_server,
+        &cfg.push_topic,
+        "info",
+        "Notifica di prova",
+        "Se la leggi sul telefono, il push funziona. 🎉",
+    )
+    .await
+    {
+        Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
+        Err(message) => internal_error(format!("invio fallito: {message}")),
+    }
+}
+
+// ---------- file drop ----------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DropHelloBody {
+    device_id: String,
+    name: String,
+}
+
+fn valid_device_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+async fn drop_hello(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<DropHelloBody>,
+) -> Response {
+    if !valid_device_id(&body.device_id) {
+        return internal_error("deviceId non valido".into());
+    }
+    // "Desktop" = la webview locale: è il peer che salva su disco.
+    let peers = state
+        .drop
+        .hello(&body.device_id, &body.name, peer.ip().is_loopback());
+    Json(json!({ "ok": true, "data": { "peers": peers } })).into_response()
+}
+
+#[derive(Deserialize)]
+struct PeersQuery {
+    #[serde(rename = "self")]
+    self_id: Option<String>,
+}
+
+async fn drop_peers(
+    State(state): State<ServerState>,
+    axum::extract::Query(query): axum::extract::Query<PeersQuery>,
+) -> Json<serde_json::Value> {
+    let peers = state.drop.peers_except(query.self_id.as_deref().unwrap_or(""));
+    Json(json!({ "ok": true, "data": { "peers": peers } }))
+}
+
+/// Upload multipart: campi `to`, `fromName` e poi `file` (l'ordine conta,
+/// i campi testo devono precedere il file).
+async fn drop_send(
+    State(state): State<ServerState>,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    use tokio::io::AsyncWriteExt;
+
+    let mut to = String::new();
+    let mut from_name = String::from("Sconosciuto");
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(e) => return internal_error(format!("upload interrotto: {e}")),
+        };
+        match field.name() {
+            Some("to") => to = field.text().await.unwrap_or_default(),
+            Some("fromName") => from_name = field.text().await.unwrap_or_default(),
+            Some("file") => {
+                if to.is_empty() {
+                    return internal_error("campo 'to' mancante prima del file".into());
+                }
+                let file_name = field
+                    .file_name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "file".to_string());
+                let (id, path, saved_on_disk) = match state.drop.prepare_incoming(&to, &file_name) {
+                    Ok(prepared) => prepared,
+                    Err(message) => return internal_error(message),
+                };
+                let mut out = match tokio::fs::File::create(&path).await {
+                    Ok(f) => f,
+                    Err(e) => return internal_error(format!("scrittura fallita: {e}")),
+                };
+                let mut size: u64 = 0;
+                let mut field = field;
+                loop {
+                    match field.chunk().await {
+                        Ok(Some(chunk)) => {
+                            size += chunk.len() as u64;
+                            if let Err(e) = out.write_all(&chunk).await {
+                                let _ = tokio::fs::remove_file(&path).await;
+                                return internal_error(format!("scrittura fallita: {e}"));
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            let _ = tokio::fs::remove_file(&path).await;
+                            return internal_error(format!("upload interrotto: {e}"));
+                        }
+                    }
+                }
+                if out.flush().await.is_err() {
+                    let _ = tokio::fs::remove_file(&path).await;
+                    return internal_error("scrittura fallita".into());
+                }
+                state
+                    .drop
+                    .finish_incoming(&id, &to, &from_name, &file_name, path, size, saved_on_disk);
+                return Json(json!({ "ok": true, "data": { "transferId": id, "sizeBytes": size } }))
+                    .into_response();
+            }
+            _ => {}
+        }
+    }
+    internal_error("campo 'file' mancante".into())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DropTextBody {
+    to: String,
+    from_name: String,
+    text: String,
+}
+
+async fn drop_text(State(state): State<ServerState>, Json(body): Json<DropTextBody>) -> Response {
+    match state.drop.send_text(&body.to, &body.from_name, &body.text) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+async fn drop_download(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
+    let Some((path, name)) = state.drop.transfer_file(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": "trasferimento scaduto o inesistente", "retryable": false }
+            })),
+        )
+            .into_response();
+    };
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
+        Err(e) => return internal_error(format!("file non leggibile: {e}")),
+    };
+    let stream = tokio_util::io::ReaderStream::new(file);
+    // RFC 5987 per i nomi non-ASCII; fallback ASCII per i client vecchi.
+    let ascii: String = name
+        .chars()
+        .map(|c| if c.is_ascii() && c != '"' && c != '\\' { c } else { '_' })
+        .collect();
+    let encoded: String = name
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_') {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    (
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}"),
+            ),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response()
+}
+
+/// Lista/gestione dei file ricevuti sul desktop: solo da localhost
+/// (la cartella vive sul computer che ospita il server).
+async fn drop_received(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    Json(json!({
+        "ok": true,
+        "data": {
+            "files": state.drop.received_files(),
+            "folder": state.drop.received_dir().to_string_lossy(),
+        }
+    }))
+    .into_response()
+}
+
+async fn drop_received_delete(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(name): Path<String>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match state.drop.delete_received(&name) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "deleted": true } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+async fn drop_open_folder(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let folder = state.drop.received_dir().clone();
+    let _ = std::fs::create_dir_all(&folder);
+    match tauri_plugin_opener::open_path(folder, None::<String>) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
+        Err(e) => internal_error(e.to_string()),
+    }
 }
 
 /// Serve la SPA embedded; fallback su index.html per le route client-side.
