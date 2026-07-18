@@ -213,6 +213,30 @@ export interface LanInfo {
   antiIdleEnabled: boolean;
 }
 
+export interface DropPeer {
+  deviceId: string;
+  name: string;
+  isDesktop: boolean;
+  lastSeen: number;
+}
+
+export type DropIncoming =
+  | {
+      kind: "file";
+      transferId: string;
+      name: string;
+      sizeBytes: number;
+      fromName: string;
+      savedPath: string | null;
+    }
+  | { kind: "text"; text: string; fromName: string };
+
+export interface ReceivedFile {
+  name: string;
+  sizeBytes: number;
+  modifiedAt: number | null;
+}
+
 export interface AccessibilityStatus {
   supported: boolean;
   trusted: boolean;
