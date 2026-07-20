@@ -168,6 +168,7 @@ async fn list_listeners() -> Result<Vec<RawListener>, String> {
 
 /// Parser dell'output `lsof -FpnP`: righe prefissate da un carattere campo
 /// (p=pid, P=protocollo, n=indirizzo). Testato su fixture.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub fn parse_lsof_f(output: &str) -> Vec<RawListener> {
     let mut result = Vec::new();
     let mut current_pid: Option<u32> = None;
