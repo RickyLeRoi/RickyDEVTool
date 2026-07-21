@@ -38,6 +38,12 @@ pub struct AppConfig {
     pub push_topic: String,
     /// Severità minima da notificare: info | warning | critical.
     pub push_min_severity: String,
+    /// Identità stabile di questo desktop per la discovery cross-host di Drop
+    /// (generato una volta, sopravvive ai riavvii): funge anche da deviceId
+    /// permanente quando altri hub ci inviano file/testo via proxy.
+    pub drop_hub_id: String,
+    /// Nome mostrato agli altri hub; vuoto = usa l'hostname di sistema.
+    pub drop_hub_name: String,
 }
 
 impl Default for AppConfig {
@@ -59,6 +65,8 @@ impl Default for AppConfig {
             push_server: "https://ntfy.sh".to_string(),
             push_topic: String::new(),
             push_min_severity: "warning".to_string(),
+            drop_hub_id: String::new(),
+            drop_hub_name: String::new(),
         }
     }
 }
@@ -88,6 +96,9 @@ impl ConfigHandle {
         if cfg.push_topic.is_empty() {
             // Il topic è l'unico segreto di ntfy: random e impronunciabile.
             cfg.push_topic = format!("rickydev-{}", generate_token());
+        }
+        if cfg.drop_hub_id.is_empty() {
+            cfg.drop_hub_id = format!("hub-{}", generate_token());
         }
         // Integra i preset mancanti (nuovi preset in versioni future compaiono da soli;
         // le personalizzazioni enabled/disabled dell'utente restano).

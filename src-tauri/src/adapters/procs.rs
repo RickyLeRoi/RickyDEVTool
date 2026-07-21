@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -24,10 +25,31 @@ pub struct ProcessInfo {
     pub known_app: Option<&'static str>,
 }
 
+/// Processi raggruppati per nome eseguibile. Serve perché app come VS Code,
+/// Chrome o Docker Desktop si spezzano in decine di processi (renderer, GPU,
+/// extension host, helper…) ciascuno leggero: sommati possono pesare giga di
+/// RAM anche se nessun singolo PID supera la soglia. Il Task Manager/Activity
+/// Monitor li aggrega già in questo modo nella vista principale; senza questa
+/// aggregazione il tool sembrava "vedere" molta meno RAM del sistema.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessGroup {
+    pub name: String,
+    pub known_app: Option<&'static str>,
+    pub is_system: bool,
+    /// Somma sul gruppo (normalizzata sui core, come per il singolo processo).
+    pub cpu_pct: f32,
+    pub mem_bytes: u64,
+    pub mem_pct: f32,
+    pub count: usize,
+    /// Ordinati per CPU decrescente; espansi in UI per il dettaglio/kill.
+    pub members: Vec<ProcessInfo>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeavyProcessesResult {
-    pub processes: Vec<ProcessInfo>,
+    pub groups: Vec<ProcessGroup>,
     pub sampled_at: u64,
     pub cpu_cores: usize,
     pub cpu_min_pct: f32,
@@ -48,8 +70,9 @@ fn users() -> &'static Users {
     USERS.get_or_init(Users::new_with_refreshed_list)
 }
 
-/// Processi sopra soglia CPU **oppure** RAM, ordinati per CPU decrescente.
-/// Doppio campionamento: la CPU per processo è un delta, il primo giro da solo darebbe 0.
+/// Gruppi (per nome eseguibile) sopra soglia CPU **oppure** RAM sul totale del
+/// gruppo, ordinati per CPU decrescente. Doppio campionamento: la CPU per
+/// processo è un delta, il primo giro da solo darebbe 0.
 pub async fn heavy_processes(cpu_min_pct: f32, mem_min_pct: f32) -> HeavyProcessesResult {
     let refresh = ProcessRefreshKind::nothing()
         .with_cpu()
@@ -65,10 +88,12 @@ pub async fn heavy_processes(cpu_min_pct: f32, mem_min_pct: f32) -> HeavyProcess
     let cores = num_cores(&mut sys);
     let total_mem = total_memory();
 
-    let mut processes: Vec<ProcessInfo> = sys
+    // Nessun filtro qui: la soglia si applica al gruppo, non al singolo PID
+    // (vedi doc di ProcessGroup).
+    let all: Vec<ProcessInfo> = sys
         .processes()
         .values()
-        .filter_map(|p| {
+        .map(|p| {
             let cpu_pct = p.cpu_usage() / cores as f32;
             let mem_bytes = p.memory();
             let mem_pct = if total_mem > 0 {
@@ -76,10 +101,6 @@ pub async fn heavy_processes(cpu_min_pct: f32, mem_min_pct: f32) -> HeavyProcess
             } else {
                 0.0
             };
-            if cpu_pct < cpu_min_pct && mem_pct < mem_min_pct {
-                return None;
-            }
-
             let name = p.name().to_string_lossy().to_string();
             let exe_path = p.exe().map(|path| path.to_string_lossy().to_string());
             let user = p
@@ -88,7 +109,7 @@ pub async fn heavy_processes(cpu_min_pct: f32, mem_min_pct: f32) -> HeavyProcess
                 .map(|u| u.name().to_string());
             let uid_num: Option<u32> = p.user_id().and_then(|uid| uid.to_string().parse().ok());
 
-            Some(ProcessInfo {
+            ProcessInfo {
                 pid: p.pid().as_u32(),
                 ppid: p.parent().map(|pid| pid.as_u32()),
                 is_system: is_system_process(&name, exe_path.as_deref(), user.as_deref(), uid_num),
@@ -103,14 +124,40 @@ pub async fn heavy_processes(cpu_min_pct: f32, mem_min_pct: f32) -> HeavyProcess
                     0 => None,
                     secs => Some(secs * 1000),
                 },
-            })
+            }
         })
         .collect();
 
-    processes.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
+    let mut by_name: HashMap<String, Vec<ProcessInfo>> = HashMap::new();
+    for p in all {
+        by_name.entry(p.name.clone()).or_default().push(p);
+    }
+
+    let mut groups: Vec<ProcessGroup> = by_name
+        .into_values()
+        .map(|mut members| {
+            members.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
+            let cpu_pct = members.iter().map(|m| m.cpu_pct).sum();
+            let mem_bytes = members.iter().map(|m| m.mem_bytes).sum();
+            let mem_pct = members.iter().map(|m| m.mem_pct).sum();
+            ProcessGroup {
+                name: members[0].name.clone(),
+                known_app: members[0].known_app,
+                is_system: members[0].is_system,
+                cpu_pct,
+                mem_bytes,
+                mem_pct,
+                count: members.len(),
+                members,
+            }
+        })
+        .filter(|g| g.cpu_pct >= cpu_min_pct || g.mem_pct >= mem_min_pct)
+        .collect();
+
+    groups.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
 
     HeavyProcessesResult {
-        processes,
+        groups,
         sampled_at: crate::events::now_ms(),
         cpu_cores: cores,
         cpu_min_pct,
@@ -248,10 +295,31 @@ mod tests {
     async fn heavy_processes_ritorna_dati_coerenti() {
         let result = heavy_processes(0.0, 0.0).await;
         assert!(result.cpu_cores >= 1);
-        assert!(!result.processes.is_empty());
-        for p in &result.processes {
-            assert!(p.cpu_pct >= 0.0 && p.cpu_pct <= 100.0 + f32::EPSILON);
-            assert!(p.mem_pct >= 0.0 && p.mem_pct <= 100.0);
+        assert!(!result.groups.is_empty());
+        for g in &result.groups {
+            assert_eq!(g.count, g.members.len());
+            assert!(g.mem_pct >= 0.0);
+            for m in &g.members {
+                assert!(m.cpu_pct >= 0.0 && m.cpu_pct <= 100.0 + f32::EPSILON);
+                assert!(m.mem_pct >= 0.0 && m.mem_pct <= 100.0);
+            }
         }
+    }
+
+    #[tokio::test]
+    async fn gruppo_supera_soglia_anche_se_nessun_membro_da_solo() {
+        // Con soglia 0 tutti i processi rientrano: verifica che processi con lo
+        // stesso nome (es. più helper dello stesso browser) vengano sommati in
+        // un solo gruppo invece di restare voci separate.
+        let result = heavy_processes(0.0, 0.0).await;
+        let total_from_groups: usize = result.groups.iter().map(|g| g.count).sum();
+        // Nessun processo perso nell'aggregazione.
+        assert!(total_from_groups > 0);
+        // Ogni nome compare in un solo gruppo (niente duplicati per nome).
+        let mut names: Vec<&str> = result.groups.iter().map(|g| g.name.as_str()).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), before, "nomi duplicati tra i gruppi");
     }
 }

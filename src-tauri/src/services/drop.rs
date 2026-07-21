@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
+use crate::config::ConfigHandle;
 use crate::events::{now_ms, EventBus};
 
 /// File drop stile Snapdrop: ogni client con la UI aperta si annuncia come
@@ -27,6 +28,10 @@ pub struct PeerInfo {
     pub name: String,
     pub is_desktop: bool,
     pub last_seen: u64,
+    /// true se rappresenta un altro hub (altro computer) scoperto in LAN,
+    /// non un browser/telefono collegato a QUESTO hub.
+    #[serde(default)]
+    pub remote: bool,
 }
 
 struct Transfer {
@@ -39,6 +44,8 @@ struct Transfer {
 
 pub struct DropService {
     bus: EventBus,
+    config: ConfigHandle,
+    hub_registry: Arc<crate::services::hubdiscovery::HubRegistry>,
     peers: Mutex<HashMap<String, PeerInfo>>,
     transfers: Mutex<HashMap<String, Transfer>>,
     counter: AtomicU64,
@@ -84,7 +91,11 @@ fn dedupe_path(dir: &PathBuf, name: &str) -> PathBuf {
 }
 
 impl DropService {
-    pub fn new(bus: EventBus) -> Self {
+    pub fn new(
+        bus: EventBus,
+        config: ConfigHandle,
+        hub_registry: Arc<crate::services::hubdiscovery::HubRegistry>,
+    ) -> Self {
         let transfer_dir = crate::config::data_dir().join("drop-transfers");
         // Residui di sessioni precedenti: si riparte puliti.
         let _ = std::fs::remove_dir_all(&transfer_dir);
@@ -94,6 +105,8 @@ impl DropService {
             .join("RickyDEVTool");
         Self {
             bus,
+            config,
+            hub_registry,
             peers: Mutex::new(HashMap::new()),
             transfers: Mutex::new(HashMap::new()),
             counter: AtomicU64::new(1),
@@ -104,6 +117,24 @@ impl DropService {
 
     pub fn received_dir(&self) -> &PathBuf {
         &self.received_dir
+    }
+
+    /// Identità permanente di questo hub (sopravvive a riavvii e all'assenza
+    /// di browser collegati): è il target che un altro hub usa per proxare un
+    /// invio "al computer", indipendentemente da eventuali peer via hello.
+    pub fn hub_id(&self) -> String {
+        self.config.get().drop_hub_id
+    }
+
+    /// Altri hub (altri computer con RickyDEVTool) scoperti in LAN via beacon UDP.
+    pub fn remote_hubs(&self) -> Vec<crate::services::hubdiscovery::RemoteHub> {
+        self.hub_registry.list()
+    }
+
+    /// Un hub remoto specifico, se ancora visto di recente: usato per capire
+    /// se un invio va proxato verso un'altra macchina.
+    pub fn remote_hub(&self, hub_id: &str) -> Option<crate::services::hubdiscovery::RemoteHub> {
+        self.hub_registry.get(hub_id)
     }
 
     /// Registra/aggiorna un peer e ritorna la lista aggiornata (senza il chiamante).
@@ -119,6 +150,7 @@ impl DropService {
                     name: name.trim().chars().take(40).collect(),
                     is_desktop,
                     last_seen: now,
+                    remote: false,
                 },
             );
         }
@@ -127,19 +159,42 @@ impl DropService {
         self.peers_except(device_id)
     }
 
+    /// Peer locali (via hello) + hub remoti scoperti in LAN, uniti in una
+    /// sola lista per la UI. `device_id` è escluso (è chi sta chiedendo).
     pub fn peers_except(&self, device_id: &str) -> Vec<PeerInfo> {
         let now = now_ms();
-        let peers = self.peers.lock().expect("peers lock");
-        let mut list: Vec<PeerInfo> = peers
-            .values()
-            .filter(|p| p.device_id != device_id && now.saturating_sub(p.last_seen) < PEER_TTL_MS)
-            .cloned()
-            .collect();
+        let mut list: Vec<PeerInfo> = {
+            let peers = self.peers.lock().expect("peers lock");
+            peers
+                .values()
+                .filter(|p| p.device_id != device_id && now.saturating_sub(p.last_seen) < PEER_TTL_MS)
+                .cloned()
+                .collect()
+        };
+        for hub in self.hub_registry.list() {
+            if hub.hub_id == device_id {
+                continue;
+            }
+            list.push(PeerInfo {
+                device_id: hub.hub_id,
+                name: hub.name,
+                is_desktop: true,
+                last_seen: hub.last_seen,
+                remote: true,
+            });
+        }
         list.sort_by(|a, b| b.is_desktop.cmp(&a.is_desktop).then(a.name.cmp(&b.name)));
         list
     }
 
+    /// true/false se il device è un peer noto; None se non registrato. Il
+    /// proprio hub_id è sempre riconosciuto come desktop, anche senza hello:
+    /// è il target stabile che un altro hub usa per proxare un invio "a
+    /// questo computer" indipendentemente da eventuali browser aperti.
     fn peer_is_desktop(&self, device_id: &str) -> Option<bool> {
+        if device_id == self.hub_id() {
+            return Some(true);
+        }
         let now = now_ms();
         let peers = self.peers.lock().expect("peers lock");
         peers
@@ -324,9 +379,17 @@ mod tests {
         assert_eq!(sanitize_name(""), "file");
     }
 
+    fn test_service() -> DropService {
+        DropService::new(
+            EventBus::new(),
+            ConfigHandle::in_memory(),
+            Arc::new(crate::services::hubdiscovery::HubRegistry::new()),
+        )
+    }
+
     #[test]
     fn peers_ttl_e_esclusione() {
-        let service = DropService::new(EventBus::new());
+        let service = test_service();
         service.hello("a", "iPhone", false);
         service.hello("b", "Desktop", true);
         let peers = service.peers_except("a");
@@ -337,7 +400,16 @@ mod tests {
 
     #[test]
     fn testo_verso_peer_sconosciuto() {
-        let service = DropService::new(EventBus::new());
+        let service = test_service();
         assert!(service.send_text("nessuno", "X", "ciao").is_err());
+    }
+
+    #[test]
+    fn il_proprio_hub_id_e_sempre_desktop_anche_senza_hello() {
+        let service = test_service();
+        let hub_id = service.hub_id();
+        // Nessun hello mai fatto: eppure il proprio hub_id deve funzionare come
+        // target valido, perché è così che un altro hub ci invia qualcosa.
+        assert!(service.send_text(&hub_id, "Altro PC", "ciao dal proxy").is_ok());
     }
 }

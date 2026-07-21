@@ -45,9 +45,15 @@ function PeerCard({ peer }: { peer: DropPeer }) {
   return (
     <div className="peer-card">
       <div className="peer-head">
-        <span className="peer-icon">{peer.isDesktop ? "🖥" : "📱"}</span>
+        <span className="peer-icon">{peer.remote ? "🌐" : peer.isDesktop ? "🖥" : "📱"}</span>
         <span className="peer-name">{peer.name}</span>
-        {peer.isDesktop && <span className="badge">questo PC</span>}
+        {peer.remote ? (
+          <span className="badge" title="Altro computer scoperto in rete locale">
+            altra rete
+          </span>
+        ) : (
+          peer.isDesktop && <span className="badge">questo PC</span>
+        )}
       </div>
       <div className="peer-actions">
         <button className="small" onClick={() => fileInput.current?.click()}>

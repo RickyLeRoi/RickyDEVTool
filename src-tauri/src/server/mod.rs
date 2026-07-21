@@ -83,7 +83,15 @@ pub async fn start(
     let tasks = Arc::new(crate::tasks::TaskRegistry::new(bus.clone()));
     let alerts = crate::alerts::AlertService::start(bus.clone(), config.clone());
     let tails = Arc::new(crate::services::logtail::TailRegistry::new(bus.clone()));
-    let drop_service = Arc::new(crate::services::drop::DropService::new(bus.clone()));
+    // Beacon UDP broadcast: permette ad altre istanze RickyDEVTool sulla LAN
+    // (altri computer) di scoprirsi a vicenda per Drop, indipendentemente
+    // dall'hub a cui un browser/telefono è connesso.
+    let hub_registry = crate::services::hubdiscovery::start(&config, port);
+    let drop_service = Arc::new(crate::services::drop::DropService::new(
+        bus.clone(),
+        config.clone(),
+        hub_registry,
+    ));
     // Avviato qui perché serve il runtime tokio (attivo dentro server::start).
     crate::jiggler::start(config.clone());
     let state = ServerState {
@@ -151,6 +159,8 @@ pub async fn start(
         .route("/api/push/test", post(push_test))
         .route("/api/drop/hello", post(drop_hello))
         .route("/api/drop/peers", get(drop_peers))
+        .route("/api/drop/self", get(drop_self))
+        .route("/api/drop/hubs", get(drop_hubs))
         .route(
             "/api/drop/send",
             post(drop_send).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024 * 1024)),
@@ -206,6 +216,24 @@ async fn auth_middleware(
 ) -> Response {
     if peer.ip().is_loopback() || request.uri().path() == "/api/pair" {
         return next.run(request).await;
+    }
+    // Richieste hub-to-hub (Drop cross-computer, proxy_send_*): non hanno il
+    // pairing dell'utente (ogni hub genera il proprio token indipendente), ma
+    // sono già verificate dalla discovery UDP reciproca — l'IP di provenienza
+    // deve combaciare con un hub che abbiamo visto beaconare con quello
+    // stesso hub_id. Vale solo per i due endpoint di trasferimento.
+    if matches!(request.uri().path(), "/api/drop/send" | "/api/drop/text") {
+        if let Some(claimed) = request
+            .headers()
+            .get("x-rickydev-hub-id")
+            .and_then(|v| v.to_str().ok())
+        {
+            if let Some(hub) = state.drop.remote_hub(claimed) {
+                if hub.ip == peer.ip().to_string() {
+                    return next.run(request).await;
+                }
+            }
+        }
     }
     let token = state.config.get().pair_token;
     if cookie_value(request.headers(), PAIR_COOKIE).as_deref() == Some(token.as_str()) {
@@ -1460,6 +1488,74 @@ async fn drop_peers(
     Json(json!({ "ok": true, "data": { "peers": peers } }))
 }
 
+/// Identità stabile di questo hub: la UI la usa per sottoscriversi anche al
+/// canale WS su cui arrivano i trasferimenti proxati da altri computer.
+async fn drop_self(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "hubId": state.drop.hub_id() } }))
+}
+
+/// Altri computer RickyDEVTool visti in LAN via beacon UDP (indipendenti da
+/// questo hub): utile per capire se la discovery cross-macchina funziona.
+async fn drop_hubs(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "hubs": state.drop.remote_hubs() } }))
+}
+
+const MAX_PROXY_BYTES: usize = 200 * 1024 * 1024;
+
+/// Inoltra un file all'hub remoto via HTTP (l'utente ha scelto un peer che
+/// vive su un'altra macchina, scoperta via UDP broadcast). `to` per il
+/// ricevente è il SUO hub_id: ogni hub riconosce sempre il proprio come "il
+/// desktop", quindi non serve che il destinatario abbia fatto hello.
+async fn proxy_send_file(
+    hub: &crate::services::hubdiscovery::RemoteHub,
+    own_hub_id: &str,
+    from_name: &str,
+    file_name: &str,
+    bytes: Vec<u8>,
+) -> Result<u64, String> {
+    let size = bytes.len() as u64;
+    let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.to_string());
+    let form = reqwest::multipart::Form::new()
+        .text("to", hub.hub_id.clone())
+        .text("fromName", from_name.to_string())
+        .part("file", part);
+    let url = format!("http://{}:{}/api/drop/send", hub.ip, hub.http_port);
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header("X-RickyDev-Hub-Id", own_hub_id)
+        .multipart(form)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| format!("invio a {} fallito: {e}", hub.name))?;
+    if !response.status().is_success() {
+        return Err(format!("{} ha rifiutato il file (HTTP {})", hub.name, response.status()));
+    }
+    Ok(size)
+}
+
+async fn proxy_send_text(
+    hub: &crate::services::hubdiscovery::RemoteHub,
+    own_hub_id: &str,
+    from_name: &str,
+    text: &str,
+) -> Result<(), String> {
+    let url = format!("http://{}:{}/api/drop/text", hub.ip, hub.http_port);
+    let body = json!({ "to": hub.hub_id, "fromName": from_name, "text": text });
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header("X-RickyDev-Hub-Id", own_hub_id)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("invio a {} fallito: {e}", hub.name))?;
+    if !response.status().is_success() {
+        return Err(format!("{} ha rifiutato il messaggio (HTTP {})", hub.name, response.status()));
+    }
+    Ok(())
+}
+
 /// Upload multipart: campi `to`, `fromName` e poi `file` (l'ordine conta,
 /// i campi testo devono precedere il file).
 async fn drop_send(
@@ -1487,6 +1583,31 @@ async fn drop_send(
                     .file_name()
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "file".to_string());
+
+                // Il destinatario è un altro computer (scoperto in LAN via UDP),
+                // non un peer di questo hub: si proxa l'intero file via HTTP.
+                if let Some(hub) = state.drop.remote_hub(&to) {
+                    let bytes = match field.bytes().await {
+                        Ok(b) => b,
+                        Err(e) => return internal_error(format!("upload interrotto: {e}")),
+                    };
+                    if bytes.len() > MAX_PROXY_BYTES {
+                        return internal_error(format!(
+                            "file troppo grande per l'invio a un altro computer (max {}MB)",
+                            MAX_PROXY_BYTES / 1024 / 1024
+                        ));
+                    }
+                    let own_hub_id = state.drop.hub_id();
+                    return match proxy_send_file(&hub, &own_hub_id, &from_name, &file_name, bytes.to_vec()).await {
+                        Ok(size) => Json(json!({
+                            "ok": true,
+                            "data": { "transferId": format!("proxy-{}", crate::events::now_ms()), "sizeBytes": size }
+                        }))
+                        .into_response(),
+                        Err(message) => internal_error(message),
+                    };
+                }
+
                 let (id, path, saved_on_disk) = match state.drop.prepare_incoming(&to, &file_name) {
                     Ok(prepared) => prepared,
                     Err(message) => return internal_error(message),
@@ -1538,6 +1659,13 @@ struct DropTextBody {
 }
 
 async fn drop_text(State(state): State<ServerState>, Json(body): Json<DropTextBody>) -> Response {
+    if let Some(hub) = state.drop.remote_hub(&body.to) {
+        let own_hub_id = state.drop.hub_id();
+        return match proxy_send_text(&hub, &own_hub_id, &body.from_name, &body.text).await {
+            Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
+            Err(message) => internal_error(message),
+        };
+    }
     match state.drop.send_text(&body.to, &body.from_name, &body.text) {
         Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
         Err(message) => internal_error(message),

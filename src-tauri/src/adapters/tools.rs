@@ -191,8 +191,10 @@ async fn discover_visual_studio() -> DiscoveredTool {
     if !Path::new(&vswhere).exists() {
         return not_found("visualstudio", Some("vswhere non trovato: nessun VS ≥2017 installato".into()));
     }
+    // -prerelease: senza questo flag vswhere esclude le edizioni Preview/Insiders
+    // (es. VS 2026 finché resta in preview), facendole risultare "non trovate".
     let output = match tokio::process::Command::new(&vswhere)
-        .args(["-all", "-products", "*", "-format", "json"])
+        .args(["-all", "-prerelease", "-products", "*", "-format", "json"])
         .output()
         .await
     {

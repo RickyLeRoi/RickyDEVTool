@@ -40,8 +40,19 @@ export interface ProcessInfo {
   knownApp: string | null;
 }
 
+export interface ProcessGroup {
+  name: string;
+  knownApp: string | null;
+  isSystem: boolean;
+  cpuPct: number;
+  memBytes: number;
+  memPct: number;
+  count: number;
+  members: ProcessInfo[];
+}
+
 export interface HeavyProcessesResult {
-  processes: ProcessInfo[];
+  groups: ProcessGroup[];
   sampledAt: number;
   cpuCores: number;
   cpuMinPct: number;
@@ -249,6 +260,7 @@ export interface DropPeer {
   name: string;
   isDesktop: boolean;
   lastSeen: number;
+  remote: boolean;
 }
 
 export type DropIncoming =
