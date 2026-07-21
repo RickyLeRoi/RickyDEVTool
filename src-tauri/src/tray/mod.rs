@@ -171,19 +171,42 @@ fn build_ports_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Su
         return builder.item(&none).build();
     }
     for entry in snap.ports.iter().take(MAX_LISTED) {
-        let id = format!("nav:ports:{}", entry.port);
-        if entry.processes.len() <= 1 {
-            let proc_name = entry.processes.first().map(|p| p.name.as_str()).unwrap_or("?");
-            let item = MenuItemBuilder::with_id(id, format!(":{} — {proc_name}", entry.port)).build(app)?;
-            builder = builder.item(&item);
-        } else {
-            let mut sub = SubmenuBuilder::new(app, format!(":{} ({} processi)", entry.port, entry.processes.len()));
-            for p in &entry.processes {
-                let item = MenuItemBuilder::with_id(id.clone(), format!("{} (pid {})", p.name, p.pid)).build(app)?;
+        let names: Vec<&str> = entry.processes.iter().map(|p| p.name.as_str()).collect();
+        let label = format!(
+            ":{} — {}",
+            entry.port,
+            if names.is_empty() { "?".to_string() } else { names.join(", ") }
+        );
+        let open_item = MenuItemBuilder::with_id(format!("nav:ports:{}", entry.port), "Apri nell'app").build(app)?;
+        let mut sub = SubmenuBuilder::new(app, label).item(&open_item);
+        if !entry.processes.is_empty() {
+            sub = sub.separator();
+        }
+        // Kill diretto dal tray (con conferma nativa) per i processi normali;
+        // i protetti (typed-confirm) e quelli di sistema restano solo nell'app.
+        for p in &entry.processes {
+            if p.is_system {
+                let item = MenuItemBuilder::new(format!("{} (pid {}) — di sistema", p.name, p.pid))
+                    .enabled(false)
+                    .build(app)?;
+                sub = sub.item(&item);
+            } else if p.kill_protection == "typed-confirm" {
+                let item = MenuItemBuilder::with_id(
+                    format!("nav:ports:{}", entry.port),
+                    format!("Termina {}… (conferma nell'app)", p.name),
+                )
+                .build(app)?;
+                sub = sub.item(&item);
+            } else {
+                let item = MenuItemBuilder::with_id(
+                    format!("port:kill:{}:{}", entry.port, p.pid),
+                    format!("Termina {} (pid {})", p.name, p.pid),
+                )
+                .build(app)?;
                 sub = sub.item(&item);
             }
-            builder = builder.item(&sub.build()?);
         }
+        builder = builder.item(&sub.build()?);
     }
     if snap.ports.len() > MAX_LISTED {
         let more = MenuItemBuilder::with_id("nav:ports", format!("… e altre {}", snap.ports.len() - MAX_LISTED))
@@ -335,6 +358,13 @@ fn handle_menu_event(
             let device_id = id.trim_start_matches("drop:file:").to_string();
             pick_and_send_file(app, drop.clone(), config.clone(), device_id);
         }
+        _ if id.starts_with("port:kill:") => {
+            if let Some((port_s, pid_s)) = id.trim_start_matches("port:kill:").split_once(':') {
+                if let (Ok(port), Ok(pid)) = (port_s.parse::<u16>(), pid_s.parse::<u32>()) {
+                    confirm_and_kill_port_process(app, snapshot, port, pid);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -373,6 +403,68 @@ fn launch_tool(snapshot: &SharedSnapshot, tool_id: String) {
             tracing::warn!(%e, tool = %tool.id, "tray: avvio strumento fallito");
         }
     });
+}
+
+/// Kill diretto dal tray: conferma nativa semplice (non il typed-confirm
+/// robusto dell'app, riservato ai processi protetti — quelli restano
+/// raggiungibili solo da lì). Il processo va ri-cercato nello snapshot
+/// corrente: l'id del menu porta solo (porta, pid), non nome/orario di
+/// avvio, che servono a `kill_process` per rifiutare un PID riusato.
+fn confirm_and_kill_port_process(app: &AppHandle, snapshot: &SharedSnapshot, port: u16, pid: u32) {
+    let proc = snapshot
+        .read()
+        .expect("tray snapshot lock")
+        .ports
+        .iter()
+        .find(|e| e.port == port)
+        .and_then(|entry| entry.processes.iter().find(|p| p.pid == pid))
+        .cloned();
+    let Some(proc) = proc else { return };
+
+    let app_for_kill = app.clone();
+    app.dialog()
+        .message(format!("Terminare \"{}\" (pid {}) sulla porta {port}?", proc.name, proc.pid))
+        .title("Termina processo")
+        .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+        .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
+        .show(move |confirmed| {
+            if !confirmed {
+                return;
+            }
+            let app_for_error = app_for_kill.clone();
+            tauri::async_runtime::spawn(async move {
+                let req = crate::adapters::kill::KillRequest {
+                    pid: proc.pid,
+                    expected_name: proc.name.clone(),
+                    expected_started_at: proc.started_at,
+                    force: false,
+                    confirm_name: None,
+                };
+                match crate::adapters::kill::kill_process(req).await {
+                    Ok(_) => tracing::info!(pid = proc.pid, name = %proc.name, "tray: processo terminato"),
+                    Err(e) => {
+                        let message = kill_error_message(e);
+                        tracing::warn!(pid = proc.pid, %message, "tray: kill fallito");
+                        app_for_error
+                            .dialog()
+                            .message(message)
+                            .title("Kill fallito")
+                            .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                            .show(|_| {});
+                    }
+                }
+            });
+        });
+}
+
+fn kill_error_message(e: crate::adapters::kill::KillError) -> String {
+    use crate::adapters::kill::KillError;
+    match e {
+        KillError::ProcessGone => "Il processo non esiste più o il PID è stato riusato".to_string(),
+        KillError::SystemProtected => "Processo di sistema: non terminabile".to_string(),
+        KillError::TypedConfirmRequired { name } => format!("\"{name}\" richiede conferma scritta: usa l'app"),
+        KillError::Failed { message, .. } => message,
+    }
 }
 
 /// Dialog nativo di selezione file → invio diretto (peer locale: copia su

@@ -1,11 +1,19 @@
 import { useState } from "react";
-import { post } from "../../lib/api";
+import { api, post } from "../../lib/api";
 import { useDisksStore } from "../../stores/disksStore";
 import { FormatDialog } from "./FormatDialog";
 import type { ApiError, DiskInfo } from "../../lib/types";
 
 function fmtGb(bytes: number) {
   return (bytes / 1024 ** 3).toFixed(bytes < 10 * 1024 ** 3 ? 1 : 0);
+}
+
+// Il poller "disks" gira ogni 10s: dopo un eject/format aspettarlo si sente
+// come "non è successo niente", quindi si rilegge subito e si aggiorna lo
+// store senza aspettare il prossimo giro.
+async function refreshDisksNow() {
+  const r = await api<{ disks: DiskInfo[] }>("/api/disks");
+  if (r.ok) useDisksStore.getState().setDisks(r.data.disks);
 }
 
 function DiskRow({ disk }: { disk: DiskInfo }) {
@@ -19,6 +27,7 @@ function DiskRow({ disk }: { disk: DiskInfo }) {
     const r = await post("/api/disks/eject", { mountPoint: disk.mountPoint });
     setBusy(false);
     if (!r.ok) setError(r.error);
+    else await refreshDisksNow();
   };
 
   const barColor =
@@ -55,7 +64,15 @@ function DiskRow({ disk }: { disk: DiskInfo }) {
           {error.osHint && <div className="hint">{error.osHint}</div>}
         </div>
       )}
-      {formatting && <FormatDialog disk={disk} onClose={() => setFormatting(false)} />}
+      {formatting && (
+        <FormatDialog
+          disk={disk}
+          onClose={(done) => {
+            setFormatting(false);
+            if (done) refreshDisksNow();
+          }}
+        />
+      )}
     </div>
   );
 }

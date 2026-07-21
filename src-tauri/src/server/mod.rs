@@ -158,6 +158,7 @@ pub async fn start(
         .route("/api/net/dns", post(net_dns))
         .route("/api/net/portcheck", post(net_portcheck))
         .route("/api/net/scan", post(net_scan))
+        .route("/api/net/traceroute", post(net_traceroute))
         .route("/api/push", get(push_get).post(push_set))
         .route("/api/push/test", post(push_test))
         .route("/api/drop/hello", post(drop_hello))
@@ -1324,12 +1325,14 @@ async fn logtail_stop(State(state): State<ServerState>, Path(id): Path<String>) 
 // ---------- toolbox di rete ----------
 
 #[derive(Deserialize)]
-struct HostBody {
+struct PingBody {
     host: String,
+    #[serde(default)]
+    count: Option<u32>,
 }
 
-async fn net_ping(Json(body): Json<HostBody>) -> Json<serde_json::Value> {
-    let result = crate::services::nettools::ping(body.host.trim()).await;
+async fn net_ping(Json(body): Json<PingBody>) -> Json<serde_json::Value> {
+    let result = crate::services::nettools::ping(body.host.trim(), body.count).await;
     Json(json!({ "ok": true, "data": result }))
 }
 
@@ -1361,6 +1364,29 @@ async fn net_portcheck(Json(body): Json<PortCheckBody>) -> Response {
 async fn net_scan() -> Response {
     match crate::services::nettools::scan_lan().await {
         Ok(hosts) => Json(json!({ "ok": true, "data": { "hosts": hosts } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TracerouteBody {
+    host: String,
+    #[serde(default)]
+    resolve_hostnames: bool,
+}
+
+/// Traceroute come task in streaming (stessa infrastruttura di node/dotnet
+/// run): l'output grezzo arriva riga per riga sul topic WS `task:{id}`.
+async fn net_traceroute(State(state): State<ServerState>, Json(body): Json<TracerouteBody>) -> Response {
+    let host = body.host.trim();
+    if !crate::services::nettools::valid_host(host) {
+        return internal_error("host non valido".into());
+    }
+    let (program, args) = crate::services::nettools::traceroute_command(host, body.resolve_hostnames);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    match state.tasks.spawn(&format!("traceroute {host}"), program, &arg_refs, ".") {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(message) => internal_error(message),
     }
 }

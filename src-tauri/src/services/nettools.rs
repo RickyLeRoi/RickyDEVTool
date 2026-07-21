@@ -44,11 +44,11 @@ pub struct LanHost {
     pub is_self: bool,
 }
 
-const PING_COUNT: u32 = 4;
+const DEFAULT_PING_COUNT: u32 = 4;
 
 /// Consente hostname/IP "ragionevoli" ed esclude qualsiasi cosa che possa
 /// essere interpretata come flag o shell injection nel comando ping.
-fn valid_host(host: &str) -> bool {
+pub(crate) fn valid_host(host: &str) -> bool {
     !host.is_empty()
         && host.len() < 254
         && !host.starts_with('-')
@@ -57,7 +57,11 @@ fn valid_host(host: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_'))
 }
 
-pub async fn ping(host: &str) -> PingResult {
+/// `count`: la UI chiama con `count=1` più volte in sequenza per mostrare i
+/// tentativi in tempo reale invece di aspettare il pacchetto di N; `None`
+/// usa il default storico (chiamata singola, usata anche dai test).
+pub async fn ping(host: &str, count: Option<u32>) -> PingResult {
+    let count = count.unwrap_or(DEFAULT_PING_COUNT).clamp(1, 20);
     if !valid_host(host) {
         return PingResult {
             host: host.to_string(),
@@ -68,7 +72,7 @@ pub async fn ping(host: &str) -> PingResult {
             error: Some("host non valido".to_string()),
         };
     }
-    let output = run_ping(host, PING_COUNT, 1000).await;
+    let output = run_ping(host, count, 1000).await;
     match output {
         Ok(stdout) => {
             let times = parse_ping_times(&stdout);
@@ -77,7 +81,7 @@ pub async fn ping(host: &str) -> PingResult {
             let error = times.is_empty().then(|| "nessuna risposta".to_string());
             PingResult {
                 host: host.to_string(),
-                sent: PING_COUNT,
+                sent: count,
                 received: times.len() as u32,
                 times_ms: times,
                 avg_ms: avg.map(|a| (a * 10.0).round() / 10.0),
@@ -86,7 +90,7 @@ pub async fn ping(host: &str) -> PingResult {
         }
         Err(e) => PingResult {
             host: host.to_string(),
-            sent: PING_COUNT,
+            sent: count,
             received: 0,
             times_ms: Vec::new(),
             avg_ms: None,
@@ -163,6 +167,10 @@ pub async fn dns_lookup(name: &str) -> Result<Vec<DnsRecordSet>, String> {
         RecordType::MX,
         RecordType::TXT,
         RecordType::NS,
+        RecordType::SOA,
+        RecordType::CAA,
+        RecordType::SRV,
+        RecordType::TLSA,
     ];
     let mut sets = Vec::new();
     for rtype in types {
@@ -194,17 +202,28 @@ pub async fn dns_lookup(name: &str) -> Result<Vec<DnsRecordSet>, String> {
     Ok(sets)
 }
 
+/// Limite per chiamata: la UI spezza scansioni grandi (tutte le porte, porte
+/// note) in batch di questa dimensione, così può mostrare un progresso reale
+/// invece di aspettare un'unica risposta enorme.
+pub const MAX_PORTS_PER_CALL: usize = 1000;
+/// Connessioni TCP in volo contemporaneamente per batch: evita un burst di
+/// migliaia di connect() simultanee quando la UI chiede "tutte le porte".
+const MAX_CONCURRENT_PORT_CHECKS: usize = 200;
+
 pub async fn check_ports(host: &str, ports: &[u16]) -> Result<Vec<PortCheckResult>, String> {
     if !valid_host(host) {
         return Err("host non valido".to_string());
     }
-    if ports.is_empty() || ports.len() > 50 {
-        return Err("indica da 1 a 50 porte".to_string());
+    if ports.is_empty() || ports.len() > MAX_PORTS_PER_CALL {
+        return Err(format!("indica da 1 a {MAX_PORTS_PER_CALL} porte"));
     }
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PORT_CHECKS));
     let mut join_set = tokio::task::JoinSet::new();
     for &port in ports {
         let host = host.to_string();
+        let semaphore = semaphore.clone();
         join_set.spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
             let started = Instant::now();
             let attempt = tokio::time::timeout(
                 Duration::from_millis(1500),
@@ -241,6 +260,24 @@ pub async fn check_ports(host: &str, ports: &[u16]) -> Result<Vec<PortCheckResul
     }
     results.sort_by_key(|r| r.port);
     Ok(results)
+}
+
+/// Comando/argomenti per il traceroute di sistema (mac/linux `traceroute`,
+/// Windows `tracert`). Il reverse DNS per hop è disattivo di default (`-n` /
+/// `-d`): risolvere ogni hop può rallentare parecchio la traccia, quindi la
+/// UI lo lascia disattivo a meno che l'utente non lo riattivi esplicitamente.
+/// L'output va in streaming come gli altri task (vedi `tasks.rs`): niente
+/// parser custom, la UI mostra le righe grezze via `TaskLog`.
+pub fn traceroute_command(host: &str, resolve_hostnames: bool) -> (&'static str, Vec<String>) {
+    if cfg!(windows) {
+        let mut args = if resolve_hostnames { vec![] } else { vec!["-d".to_string()] };
+        args.push(host.to_string());
+        ("tracert", args)
+    } else {
+        let mut args = if resolve_hostnames { vec![] } else { vec!["-n".to_string()] };
+        args.push(host.to_string());
+        ("traceroute", args)
+    }
 }
 
 /// Scan del /24 dell'IP LAN primario: ping sweep (1 pacchetto, 500ms)

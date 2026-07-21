@@ -37,6 +37,7 @@ export function Services() {
   const [error, setError] = useState<string | null>(null);
   const [showConfig, setShowConfig] = useState(false);
   const [form, setForm] = useState({ label: "", target: "", kind: "http" as "http" | "tcp" });
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const loadDefs = async () => {
     const r = await api<{ services: ServiceDef[] }>("/api/services");
@@ -62,22 +63,38 @@ export function Services() {
   const remove = async (id: string) => {
     const r = await api<{ services: ServiceDef[] }>(`/api/services/${id}`, { method: "DELETE" });
     if (r.ok) setDefs(r.data.services);
+    if (id === editingId) cancelEdit();
   };
 
-  const addCustom = async (e: React.FormEvent) => {
+  const startEdit = (d: ServiceDef) => {
+    // I preset non sono editabili: il backend ignora label/target/kind e
+    // cambia solo "enabled" (già gestito dal toggle Attiva/Disattiva).
+    if (d.builtin) return;
+    setEditingId(d.id);
+    setForm({ label: d.label, target: d.target, kind: d.kind });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm({ label: "", target: "", kind: "http" });
+  };
+
+  const submitForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    const id = form.label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const existing = editingId ? defs.find((d) => d.id === editingId) : undefined;
+    const id = editingId ?? form.label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const r = await post<{ services: ServiceDef[] }>("/api/services", {
       id,
       label: form.label,
       kind: form.kind,
       target: form.target,
-      timeoutMs: 4000,
+      timeoutMs: existing?.timeoutMs ?? 4000,
       builtin: false,
-      enabled: true,
+      enabled: existing?.enabled ?? true,
     });
     if (r.ok) {
       setDefs(r.data.services);
+      setEditingId(null);
       setForm({ label: "", target: "", kind: "http" });
     }
   };
@@ -129,18 +146,35 @@ export function Services() {
           <table className="proc-table">
             <tbody>
               {defs.map((d) => (
-                <tr key={d.id} title={d.target}>
+                <tr
+                  key={d.id}
+                  title={d.builtin ? d.target : `${d.target} (clicca per modificare)`}
+                  className={d.id === editingId ? "row-editing" : d.builtin ? undefined : "row-clickable"}
+                  onClick={() => startEdit(d)}
+                >
                   <td>
                     {d.label}
                     {d.builtin && <span className="badge">preset</span>}
                     <span className="dim"> · {d.kind}</span>
                   </td>
                   <td className="num">
-                    <button className="small" onClick={() => toggle(d.id)}>
+                    <button
+                      className="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggle(d.id);
+                      }}
+                    >
                       {d.enabled ? "Disattiva" : "Attiva"}
                     </button>{" "}
                     {!d.builtin && (
-                      <button className="small danger" onClick={() => remove(d.id)}>
+                      <button
+                        className="small danger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          remove(d.id);
+                        }}
+                      >
                         Elimina
                       </button>
                     )}
@@ -149,7 +183,7 @@ export function Services() {
               ))}
             </tbody>
           </table>
-          <form className="service-form" onSubmit={addCustom}>
+          <form className="service-form" onSubmit={submitForm}>
             <input
               placeholder="Nome (es. Server casa)"
               value={form.label}
@@ -169,7 +203,12 @@ export function Services() {
               onChange={(e) => setForm({ ...form, target: e.target.value })}
               required
             />
-            <button type="submit">Aggiungi</button>
+            <button type="submit">{editingId ? "Salva" : "Aggiungi"}</button>
+            {editingId && (
+              <button type="button" className="small" onClick={cancelEdit}>
+                Annulla
+              </button>
+            )}
           </form>
           <p className="hint">
             Per i servizi dietro cloudflared usa l'hostname pubblico (meglio un endpoint

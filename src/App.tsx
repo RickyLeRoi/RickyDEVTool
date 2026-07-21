@@ -30,8 +30,8 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "dashboard", icon: "🖥", label: "Dashboard" },
   { id: "ports", icon: "🔌", label: "Porte" },
   { id: "projects", icon: "📁", label: "Progetti" },
-  { id: "services", icon: "🌐", label: "Servizi" },
-  { id: "net", icon: "📡", label: "Rete" },
+  { id: "services", icon: "📡", label: "Servizi" },
+  { id: "net", icon: "🌐", label: "Rete" },
   { id: "drop", icon: "📤", label: "Drop" },
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
