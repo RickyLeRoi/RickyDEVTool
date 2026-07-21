@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
+import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { DnsRecordSet, LanHost, PingResult, PortCheckResult } from "../../lib/types";
 
 type Tool = "ping" | "dns" | "ports" | "scan";
@@ -152,7 +153,7 @@ function Ports() {
   );
 }
 
-function Scan() {
+function Scan({ autoRunSeq }: { autoRunSeq: number }) {
   const [hosts, setHosts] = useState<LanHost[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -164,6 +165,13 @@ function Scan() {
     if (r.ok) setHosts(r.data.hosts);
     else setError(r.error.message);
   };
+
+  // "Scansiona rete locale..." scelto dal menu del tray.
+  useEffect(() => {
+    if (autoRunSeq === 0) return;
+    run();
+  }, [autoRunSeq]);
+
   return (
     <div className="net-tool">
       <button disabled={busy} onClick={run}>
@@ -201,6 +209,15 @@ function Scan() {
 
 export function NetTools() {
   const [tool, setTool] = useState<Tool>("ping");
+  const traySection = useTrayIntentStore((s) => s.section);
+  const trayExtra = useTrayIntentStore((s) => s.extra);
+  const traySeq = useTrayIntentStore((s) => s.seq);
+  const trayWantsScan = traySection === "net" && trayExtra === "scan";
+
+  useEffect(() => {
+    if (trayWantsScan) setTool("scan");
+  }, [trayWantsScan, traySeq]);
+
   return (
     <div>
       <div className="section-header">
@@ -216,7 +233,7 @@ export function NetTools() {
       {tool === "ping" && <Ping />}
       {tool === "dns" && <Dns />}
       {tool === "ports" && <Ports />}
-      {tool === "scan" && <Scan />}
+      {tool === "scan" && <Scan autoRunSeq={trayWantsScan ? traySeq : 0} />}
     </div>
   );
 }

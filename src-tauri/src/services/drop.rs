@@ -20,6 +20,9 @@ const PEER_TTL_MS: u64 = 45_000;
 /// I file in transito non ritirati vengono eliminati dopo 1h.
 const TRANSFER_TTL_MS: u64 = 3_600_000;
 const MAX_TEXT_LEN: usize = 64 * 1024;
+/// Limite per i file proxati integralmente in memoria verso un altro hub
+/// (sia dall'upload HTTP che dall'invio diretto da tray).
+pub const MAX_PROXY_BYTES: usize = 200 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -272,6 +275,91 @@ impl DropService {
             &format!("drop:{to_device}"),
             serde_json::json!({ "kind": "text", "text": text, "fromName": from_name }),
         );
+        Ok(())
+    }
+
+    /// Invia un file locale (path su disco di QUESTO processo, es. scelto da
+    /// un dialog nativo del tray) a un peer o a un altro hub. Verso un peer
+    /// locale/desktop copia senza passare da un buffer in memoria; verso un
+    /// hub remoto legge il file e lo proxa via HTTP multipart (limite
+    /// [`MAX_PROXY_BYTES`], come per l'upload dal browser).
+    pub async fn send_local_file(&self, to: &str, from_name: &str, source: &std::path::Path) -> Result<(), String> {
+        let file_name = source
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .ok_or("percorso file non valido")?;
+
+        if let Some(hub) = self.remote_hub(to) {
+            let bytes = tokio::fs::read(source).await.map_err(|e| e.to_string())?;
+            if bytes.len() > MAX_PROXY_BYTES {
+                return Err(format!(
+                    "file troppo grande per l'invio a un altro computer (max {}MB)",
+                    MAX_PROXY_BYTES / 1024 / 1024
+                ));
+            }
+            let size = bytes.len() as u64;
+            self.proxy_send_file(&hub, from_name, &file_name, bytes).await?;
+            tracing::info!(to, %file_name, size, "drop: file inviato da tray a hub remoto");
+            return Ok(());
+        }
+
+        let (id, path, saved_on_disk) = self.prepare_incoming(to, &file_name)?;
+        let size = tokio::fs::copy(source, &path).await.map_err(|e| e.to_string())?;
+        self.finish_incoming(&id, to, from_name, &file_name, path, size, saved_on_disk);
+        Ok(())
+    }
+
+    /// Inoltra un file all'hub remoto via HTTP (l'utente ha scelto un peer che
+    /// vive su un'altra macchina, scoperta via UDP broadcast). `to` per il
+    /// ricevente è il SUO hub_id: ogni hub riconosce sempre il proprio come
+    /// "il desktop", quindi non serve che il destinatario abbia fatto hello.
+    pub async fn proxy_send_file(
+        &self,
+        hub: &crate::services::hubdiscovery::RemoteHub,
+        from_name: &str,
+        file_name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<u64, String> {
+        let size = bytes.len() as u64;
+        let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.to_string());
+        let form = reqwest::multipart::Form::new()
+            .text("to", hub.hub_id.clone())
+            .text("fromName", from_name.to_string())
+            .part("file", part);
+        let url = format!("http://{}:{}/api/drop/send", hub.ip, hub.http_port);
+        let response = reqwest::Client::new()
+            .post(&url)
+            .header("X-RickyDev-Hub-Id", self.hub_id())
+            .multipart(form)
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|e| format!("invio a {} fallito: {e}", hub.name))?;
+        if !response.status().is_success() {
+            return Err(format!("{} ha rifiutato il file (HTTP {})", hub.name, response.status()));
+        }
+        Ok(size)
+    }
+
+    pub async fn proxy_send_text(
+        &self,
+        hub: &crate::services::hubdiscovery::RemoteHub,
+        from_name: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        let url = format!("http://{}:{}/api/drop/text", hub.ip, hub.http_port);
+        let body = serde_json::json!({ "to": hub.hub_id, "fromName": from_name, "text": text });
+        let response = reqwest::Client::new()
+            .post(&url)
+            .header("X-RickyDev-Hub-Id", self.hub_id())
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("invio a {} fallito: {e}", hub.name))?;
+        if !response.status().is_success() {
+            return Err(format!("{} ha rifiutato il messaggio (HTTP {})", hub.name, response.status()));
+        }
         Ok(())
     }
 

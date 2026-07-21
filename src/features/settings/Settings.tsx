@@ -4,6 +4,7 @@ import { ToolsPanel } from "./ToolsPanel";
 import { PushPanel } from "./PushPanel";
 import { Toggle } from "../../components/Toggle";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
+import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { AccessibilityStatus, LanInfo } from "../../lib/types";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -26,6 +27,13 @@ export function Settings() {
     });
     refreshAccess();
   }, []);
+
+  // "Mostra QR di abbinamento" dal menu del tray.
+  const traySeq = useTrayIntentStore((s) => s.seq);
+  useEffect(() => {
+    const { section, extra } = useTrayIntentStore.getState();
+    if (section === "settings" && extra === "qr") setShowQr(true);
+  }, [traySeq]);
 
   const refreshAccess = () =>
     api<AccessibilityStatus>("/api/system/accessibility").then((r) => {

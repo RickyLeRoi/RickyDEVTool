@@ -1,0 +1,402 @@
+//! Menu contestuale dell'icona nella barra applicazioni.
+//!
+//! Le voci che richiedono un'interazione ricca (testo libero, immagini) non
+//! sono realizzabili in un menu nativo: portano in primo piano la finestra
+//! principale e la navigano già sulla sezione/voce giusta via l'evento
+//! `tray-navigate` (ascoltato dal frontend). Le azioni distruttive (kill
+//! processo, eject disco) fanno lo stesso: il menu resta un pannello di
+//! lettura veloce, le conferme robuste restano solo nell'app — vedi
+//! `[[tray-decisioni]]` in PROJECT.md/QUESTIONS.md per il perché.
+//!
+//! I dati mostrati (CPU/RAM/porte/servizi/strumenti) vengono da uno snapshot
+//! rinfrescato in background (vedi `snapshot.rs`): il click sul tray non
+//! aspetta mai uno scan o un check servizi dal vivo.
+
+mod snapshot;
+
+use std::sync::Arc;
+
+use tauri::menu::{CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder};
+use tauri::tray::TrayIconEvent;
+use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri_plugin_dialog::DialogExt;
+
+use crate::config::ConfigHandle;
+use crate::server::ServerInfo;
+use crate::services::drop::DropService;
+
+use snapshot::{SharedSnapshot, TraySnapshot};
+
+const TRAY_ID: &str = "main-tray";
+/// Tool discovery id → può essere avviato direttamente (gli altri sono CLI
+/// senza una "apertura" diretta: si usano dai pannelli Node/.NET).
+const LAUNCHABLE_TOOLS: [&str; 3] = ["vscode", "visualstudio", "terminal"];
+
+pub fn setup(app: &AppHandle, info: ServerInfo) -> tauri::Result<()> {
+    let config = info.state.config.clone();
+    let drop = info.state.drop.clone();
+    let port = info.port;
+    let lan_enabled = info.lan_enabled;
+
+    let shared_snapshot = snapshot::start(config.clone());
+
+    let menu = build_menu(app, &shared_snapshot, &config, &drop, port, lan_enabled)?;
+
+    let config_for_menu = config.clone();
+    let drop_for_menu = drop.clone();
+    let snapshot_for_menu = shared_snapshot.clone();
+
+    let app_for_rebuild = app.clone();
+    let config_for_rebuild = config.clone();
+    let drop_for_rebuild = drop.clone();
+    let snapshot_for_rebuild = shared_snapshot.clone();
+
+    tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
+        .icon(app.default_window_icon().expect("icona app").clone())
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, event| {
+            handle_menu_event(app, event.id().as_ref(), &config_for_menu, &drop_for_menu, &snapshot_for_menu, port)
+        })
+        .on_tray_icon_event(move |tray, event| {
+            // Rinfresca SOLO al passaggio del mouse sull'icona (Enter), mai
+            // su un timer né al click stesso: un `set_menu` mentre il menu
+            // è aperto (o mentre l'OS lo sta aprendo, sul click) lo fa
+            // chiudere di scatto — bug osservato con entrambi gli approcci.
+            // Il mouse entra sempre nell'icona PRIMA del click, quindi
+            // arriviamo comunque con dati freschi.
+            if !matches!(event, TrayIconEvent::Enter { .. }) {
+                return;
+            }
+            match build_menu(&app_for_rebuild, &snapshot_for_rebuild, &config_for_rebuild, &drop_for_rebuild, port, lan_enabled) {
+                Ok(menu) => {
+                    let _ = tray.set_menu(Some(menu));
+                }
+                Err(e) => tracing::warn!(%e, "tray: rebuild del menu fallito"),
+            }
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
+fn build_menu(
+    app: &AppHandle,
+    snapshot: &SharedSnapshot,
+    config: &ConfigHandle,
+    drop: &DropService,
+    port: u16,
+    lan_enabled: bool,
+) -> tauri::Result<Menu<Wry>> {
+    let snap = snapshot.read().expect("tray snapshot lock").clone();
+    let cfg = config.get();
+
+    let system_submenu = build_system_submenu(app, &snap)?;
+    let ports_submenu = build_ports_submenu(app, &snap)?;
+    let services_submenu = build_services_submenu(app, &snap)?;
+    let net_submenu = build_net_submenu(app)?;
+    let drop_submenu = build_drop_submenu(app, drop)?;
+    let pairing_submenu = build_pairing_submenu(app, &cfg)?;
+    let anti_idle_item = CheckMenuItemBuilder::with_id("toggle:anti-idle", "Anti-inattività")
+        .checked(cfg.anti_idle_enabled)
+        .build(app)?;
+    let tools_submenu = build_tools_submenu(app, &snap)?;
+
+    let lan_label = match (lan_enabled, crate::netinfo::lan_ips().first()) {
+        (true, Some(ip)) => format!("LAN: http://{ip}:{port}"),
+        (true, None) => "LAN: nessun IP trovato".to_string(),
+        (false, _) => "LAN disattivata (solo localhost)".to_string(),
+    };
+    let open_item = MenuItemBuilder::with_id("open", "Apri RickyDEVTool").build(app)?;
+    let lan_item = MenuItemBuilder::with_id("lan", &lan_label).build(app)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "Esci").build(app)?;
+
+    MenuBuilder::new(app)
+        .item(&system_submenu)
+        .item(&ports_submenu)
+        .item(&services_submenu)
+        .item(&net_submenu)
+        .item(&drop_submenu)
+        .item(&pairing_submenu)
+        .item(&anti_idle_item)
+        .separator()
+        .item(&tools_submenu)
+        .separator()
+        .item(&open_item)
+        .item(&lan_item)
+        .separator()
+        .item(&quit_item)
+        .build()
+}
+
+// ---------- sezioni ----------
+
+fn build_system_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Submenu<Wry>> {
+    let cpu_item = MenuItemBuilder::new(format!("CPU: {:.0}%", snap.cpu_pct))
+        .enabled(false)
+        .build(app)?;
+    let ram_item = MenuItemBuilder::new(format!("RAM: {:.0}%", snap.ram_pct))
+        .enabled(false)
+        .build(app)?;
+    let mut builder = SubmenuBuilder::new(app, "Sistema")
+        .item(&cpu_item)
+        .item(&ram_item)
+        .separator();
+
+    if snap.disks.is_empty() {
+        let none = MenuItemBuilder::new("Dischi: in caricamento…").enabled(false).build(app)?;
+        builder = builder.item(&none);
+    }
+    for disk in &snap.disks {
+        let label = format!("{} — {:.0}% usato", disk.name, disk.used_pct);
+        if disk.is_removable && !disk.is_system {
+            let eject_id = format!("nav:dashboard:{}", disk.mount_point);
+            let eject = MenuItemBuilder::with_id(eject_id, "Espelli / gestisci…").build(app)?;
+            let sub = SubmenuBuilder::new(app, label).item(&eject).build()?;
+            builder = builder.item(&sub);
+        } else {
+            let item = MenuItemBuilder::new(label).enabled(false).build(app)?;
+            builder = builder.item(&item);
+        }
+    }
+    builder.build()
+}
+
+const MAX_LISTED: usize = 25;
+
+fn build_ports_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Submenu<Wry>> {
+    let mut builder = SubmenuBuilder::new(app, "Porte");
+    if snap.ports.is_empty() {
+        let none = MenuItemBuilder::new("Nessuna porta in ascolto").enabled(false).build(app)?;
+        return builder.item(&none).build();
+    }
+    for entry in snap.ports.iter().take(MAX_LISTED) {
+        let id = format!("nav:ports:{}", entry.port);
+        if entry.processes.len() <= 1 {
+            let proc_name = entry.processes.first().map(|p| p.name.as_str()).unwrap_or("?");
+            let item = MenuItemBuilder::with_id(id, format!(":{} — {proc_name}", entry.port)).build(app)?;
+            builder = builder.item(&item);
+        } else {
+            let mut sub = SubmenuBuilder::new(app, format!(":{} ({} processi)", entry.port, entry.processes.len()));
+            for p in &entry.processes {
+                let item = MenuItemBuilder::with_id(id.clone(), format!("{} (pid {})", p.name, p.pid)).build(app)?;
+                sub = sub.item(&item);
+            }
+            builder = builder.item(&sub.build()?);
+        }
+    }
+    if snap.ports.len() > MAX_LISTED {
+        let more = MenuItemBuilder::with_id("nav:ports", format!("… e altre {}", snap.ports.len() - MAX_LISTED))
+            .build(app)?;
+        builder = builder.item(&more);
+    }
+    builder.build()
+}
+
+fn build_services_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Submenu<Wry>> {
+    let mut builder = SubmenuBuilder::new(app, "Servizi");
+    if snap.services.is_empty() {
+        let none = MenuItemBuilder::new("Nessun servizio abilitato").enabled(false).build(app)?;
+        return builder.item(&none).build();
+    }
+    for status in &snap.services {
+        use crate::services::online::ServiceState;
+        let dot = match status.state {
+            ServiceState::Up => "🟢",
+            ServiceState::Degraded => "🟡",
+            ServiceState::Down => "🔴",
+        };
+        let detail = status.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "down".to_string());
+        let id = format!("nav:services:{}", status.id);
+        let item = MenuItemBuilder::with_id(id, format!("{dot} {} — {detail}", status.label)).build(app)?;
+        builder = builder.item(&item);
+    }
+    builder.build()
+}
+
+fn build_net_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
+    let scan_item = MenuItemBuilder::with_id("nav:net:scan", "Scansiona rete locale…").build(app)?;
+    SubmenuBuilder::new(app, "Rete").item(&scan_item).build()
+}
+
+fn build_drop_submenu(app: &AppHandle, drop: &DropService) -> tauri::Result<Submenu<Wry>> {
+    let peers = drop.peers_except("");
+    let mut builder = SubmenuBuilder::new(app, "Drop");
+    if peers.is_empty() {
+        let none = MenuItemBuilder::new("Nessun dispositivo online").enabled(false).build(app)?;
+        return builder.item(&none).build();
+    }
+    for peer in peers.iter().take(MAX_LISTED) {
+        let icon = if peer.remote {
+            "🌐"
+        } else if peer.is_desktop {
+            "🖥"
+        } else {
+            "📱"
+        };
+        let file_item =
+            MenuItemBuilder::with_id(format!("drop:file:{}", peer.device_id), "Invia file…").build(app)?;
+        let text_item =
+            MenuItemBuilder::with_id(format!("nav:drop:{}", peer.device_id), "Invia testo…").build(app)?;
+        let sub = SubmenuBuilder::new(app, format!("{icon} {}", peer.name))
+            .item(&file_item)
+            .item(&text_item)
+            .build()?;
+        builder = builder.item(&sub);
+    }
+    builder.build()
+}
+
+fn build_pairing_submenu(app: &AppHandle, cfg: &crate::config::AppConfig) -> tauri::Result<Submenu<Wry>> {
+    let qr_item = MenuItemBuilder::with_id("nav:settings:qr", "Mostra QR di abbinamento").build(app)?;
+    let remote_item = CheckMenuItemBuilder::with_id("toggle:remote-control", "Controllo remoto")
+        .checked(cfg.remote_control_enabled)
+        .build(app)?;
+    SubmenuBuilder::new(app, "Abbinamento")
+        .item(&qr_item)
+        .item(&remote_item)
+        .build()
+}
+
+fn build_tools_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Submenu<Wry>> {
+    let found: Vec<_> = snap.tools.iter().filter(|t| t.found).collect();
+    let mut builder = SubmenuBuilder::new(app, "Strumenti rilevati");
+    if found.is_empty() {
+        let none = MenuItemBuilder::new("Nessuno strumento rilevato").enabled(false).build(app)?;
+        return builder.item(&none).build();
+    }
+    for tool in found {
+        if LAUNCHABLE_TOOLS.contains(&tool.id) {
+            let label = format!("Apri {}", tool_label(tool.id));
+            let item = MenuItemBuilder::with_id(format!("tool:launch:{}", tool.id), label).build(app)?;
+            builder = builder.item(&item);
+        } else {
+            let label = match &tool.version {
+                Some(v) => format!("{} — {v}", tool_label(tool.id)),
+                None => tool_label(tool.id).to_string(),
+            };
+            let item = MenuItemBuilder::new(label).enabled(false).build(app)?;
+            builder = builder.item(&item);
+        }
+    }
+    builder.build()
+}
+
+fn tool_label(id: &str) -> &'static str {
+    match id {
+        "vscode" => "VS Code",
+        "visualstudio" => "Visual Studio",
+        "git" => "Git",
+        "node" => "Node",
+        "npm" => "npm",
+        "yarn" => "Yarn",
+        "pnpm" => "pnpm",
+        "dotnet" => ".NET",
+        "docker" => "Docker",
+        "terminal" => "Terminale",
+        _ => "Strumento",
+    }
+}
+
+// ---------- azioni ----------
+
+fn handle_menu_event(
+    app: &AppHandle,
+    id: &str,
+    config: &ConfigHandle,
+    drop: &Arc<DropService>,
+    snapshot: &SharedSnapshot,
+    port: u16,
+) {
+    match id {
+        "open" => focus_window(app),
+        "lan" => {
+            if let Some(ip) = crate::netinfo::lan_ips().into_iter().next() {
+                let _ = tauri_plugin_opener::open_url(format!("http://{ip}:{port}"), None::<String>);
+            }
+        }
+        "quit" => app.exit(0),
+        "toggle:remote-control" => {
+            let enabled = !config.get().remote_control_enabled;
+            config.update(|c| c.remote_control_enabled = enabled);
+            tracing::info!(enabled, "controllo remoto aggiornato dal tray");
+        }
+        "toggle:anti-idle" => {
+            let enabled = !config.get().anti_idle_enabled;
+            config.update(|c| c.anti_idle_enabled = enabled);
+            tracing::info!(enabled, "anti-inattività aggiornato dal tray");
+        }
+        _ if id.starts_with("nav:") => navigate(app, id),
+        _ if id.starts_with("tool:launch:") => {
+            let tool_id = id.trim_start_matches("tool:launch:").to_string();
+            launch_tool(snapshot, tool_id);
+        }
+        _ if id.starts_with("drop:file:") => {
+            let device_id = id.trim_start_matches("drop:file:").to_string();
+            pick_and_send_file(app, drop.clone(), config.clone(), device_id);
+        }
+        _ => {}
+    }
+}
+
+fn focus_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Porta in primo piano la finestra e la naviga sulla sezione giusta via un
+/// evento ascoltato dal frontend: le voci del tray che servono UI ricca
+/// (invio testo, QR) non possono farlo direttamente da un menu nativo.
+fn navigate(app: &AppHandle, id: &str) {
+    let mut parts = id.splitn(3, ':');
+    parts.next(); // "nav"
+    let Some(section) = parts.next() else { return };
+    let extra = parts.next();
+
+    focus_window(app);
+    let _ = app.emit("tray-navigate", serde_json::json!({ "section": section, "extra": extra }));
+}
+
+fn launch_tool(snapshot: &SharedSnapshot, tool_id: String) {
+    let tool = snapshot
+        .read()
+        .expect("tray snapshot lock")
+        .tools
+        .iter()
+        .find(|t| t.id == tool_id && t.found)
+        .cloned();
+    let Some(tool) = tool else { return };
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::adapters::tools::launch(&tool, None).await {
+            tracing::warn!(%e, tool = %tool.id, "tray: avvio strumento fallito");
+        }
+    });
+}
+
+/// Dialog nativo di selezione file → invio diretto (peer locale: copia su
+/// disco; hub remoto: proxy HTTP). Nessuna conferma nel tray: un eventuale
+/// errore viene solo loggato e mostrato in un avviso non bloccante.
+fn pick_and_send_file(app: &AppHandle, drop: Arc<DropService>, config: ConfigHandle, device_id: String) {
+    let app_for_error = app.clone();
+    app.dialog().file().pick_file(move |file_path| {
+        let Some(file_path) = file_path else { return };
+        let Ok(path) = file_path.into_path() else { return };
+        let drop = drop.clone();
+        let config = config.clone();
+        let app_for_error = app_for_error.clone();
+        tauri::async_runtime::spawn(async move {
+            let from_name = crate::services::hubdiscovery::hub_name(&config);
+            if let Err(e) = drop.send_local_file(&device_id, &from_name, &path).await {
+                tracing::warn!(%e, device_id, "tray: invio file fallito");
+                app_for_error
+                    .dialog()
+                    .message(e)
+                    .title("Invio fallito")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                    .show(|_| {});
+            }
+        });
+    });
+}

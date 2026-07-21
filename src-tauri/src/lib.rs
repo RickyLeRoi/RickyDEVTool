@@ -10,12 +10,11 @@ mod poller;
 mod server;
 mod services;
 mod tasks;
+mod tray;
 
 use std::sync::{Arc, OnceLock};
 
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::config::ConfigHandle;
 use crate::events::EventBus;
@@ -37,6 +36,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let info = tauri::async_runtime::block_on(server::start(
                 config.clone(),
@@ -57,7 +57,7 @@ pub fn run() {
                 .min_inner_size(900.0, 600.0)
                 .build()?;
 
-            setup_tray(app.handle(), info)?;
+            tray::setup(app.handle(), info)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -69,51 +69,6 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("errore in avvio dell'applicazione tauri");
-}
-
-fn setup_tray(app: &tauri::AppHandle, info: server::ServerInfo) -> tauri::Result<()> {
-    let lan_label = match (info.lan_enabled, netinfo::lan_ips().first()) {
-        (true, Some(ip)) => format!("LAN: http://{ip}:{}", info.port),
-        (true, None) => "LAN: nessun IP trovato".to_string(),
-        (false, _) => "LAN disattivata (solo localhost)".to_string(),
-    };
-
-    let open_item = MenuItemBuilder::with_id("open", "Apri RickyDEVTool").build(app)?;
-    let lan_item = MenuItemBuilder::with_id("lan", &lan_label).build(app)?;
-    let quit_item = MenuItemBuilder::with_id("quit", "Esci").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .item(&open_item)
-        .separator()
-        .item(&lan_item)
-        .separator()
-        .item(&quit_item)
-        .build()?;
-
-    let lan_url = netinfo::lan_ips()
-        .first()
-        .map(|ip| format!("http://{ip}:{}", info.port));
-
-    TrayIconBuilder::with_id("main-tray")
-        .icon(app.default_window_icon().expect("icona app").clone())
-        .menu(&menu)
-        .show_menu_on_left_click(true)
-        .on_menu_event(move |app, event| match event.id().as_ref() {
-            "open" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-            "lan" => {
-                if let Some(url) = &lan_url {
-                    let _ = tauri_plugin_opener::open_url(url.clone(), None::<String>);
-                }
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .build(app)?;
-    Ok(())
 }
 
 fn init_logging() {

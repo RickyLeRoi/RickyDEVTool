@@ -114,7 +114,7 @@ pub fn start(config: &ConfigHandle, http_port: u16) -> Arc<HubRegistry> {
     registry
 }
 
-fn hub_name(config: &ConfigHandle) -> String {
+pub(crate) fn hub_name(config: &ConfigHandle) -> String {
     let cfg = config.get();
     if !cfg.drop_hub_name.trim().is_empty() {
         return cfg.drop_hub_name.clone();

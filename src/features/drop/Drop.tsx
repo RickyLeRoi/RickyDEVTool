@@ -3,13 +3,23 @@ import { api, API_BASE, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
 import { getDeviceName, setDeviceName } from "../../lib/device";
 import { useDropStore } from "../../stores/dropStore";
+import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { DropPeer, ReceivedFile } from "../../lib/types";
 
-function PeerCard({ peer }: { peer: DropPeer }) {
+function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
+  const cardRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
+
+  // "Invia testo..." scelto dal menu del tray per QUESTO dispositivo
+  // (focusSeq cambia a ogni click, anche ripetuto sulla stessa voce).
+  useEffect(() => {
+    if (focusSeq === 0) return;
+    setShowText(true);
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusSeq]);
 
   const sendFile = async (file: File) => {
     setStatus(`Invio ${file.name}…`);
@@ -43,7 +53,7 @@ function PeerCard({ peer }: { peer: DropPeer }) {
   };
 
   return (
-    <div className="peer-card">
+    <div className="peer-card" ref={cardRef}>
       <div className="peer-head">
         <span className="peer-icon">{peer.remote ? "🌐" : peer.isDesktop ? "🖥" : "📱"}</span>
         <span className="peer-name">{peer.name}</span>
@@ -173,6 +183,9 @@ function ReceivedPanel() {
 export function Drop() {
   const peers = useDropStore((s) => s.peers);
   const [name, setName] = useState(getDeviceName());
+  const traySection = useTrayIntentStore((s) => s.section);
+  const trayDeviceId = useTrayIntentStore((s) => s.extra);
+  const traySeq = useTrayIntentStore((s) => s.seq);
 
   const saveName = () => setDeviceName(name);
 
@@ -199,7 +212,11 @@ export function Drop() {
       ) : (
         <div className="peer-grid">
           {peers.map((p) => (
-            <PeerCard key={p.deviceId} peer={p} />
+            <PeerCard
+              key={p.deviceId}
+              peer={p}
+              focusSeq={traySection === "drop" && trayDeviceId === p.deviceId ? traySeq : 0}
+            />
           ))}
         </div>
       )}

@@ -46,10 +46,13 @@ fn write_allowed(state: &ServerState, peer: SocketAddr) -> bool {
     peer.ip().is_loopback() || state.config.get().remote_control_enabled
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct ServerInfo {
     pub port: u16,
     pub lan_enabled: bool,
+    /// Handle condiviso col resto del backend: usato dal tray per costruire i
+    /// menu (dischi/porte/servizi/strumenti) e per l'invio diretto via Drop.
+    pub state: ServerState,
 }
 
 /// Binda su config.port con fallback alle porte successive, poi serve in background.
@@ -182,7 +185,7 @@ pub async fn start(
     let mut app = Router::new()
         .merge(api)
         .fallback(static_assets)
-        .with_state(state);
+        .with_state(state.clone());
 
     // In dev il frontend gira su Vite (porta 1420): serve CORS permissivo.
     if cfg!(debug_assertions) {
@@ -203,7 +206,7 @@ pub async fn start(
         }
     });
 
-    Ok(ServerInfo { port, lan_enabled })
+    Ok(ServerInfo { port, lan_enabled, state })
 }
 
 /// Localhost: sempre autorizzato. LAN: serve il cookie di pairing.
@@ -1500,61 +1503,7 @@ async fn drop_hubs(State(state): State<ServerState>) -> Json<serde_json::Value> 
     Json(json!({ "ok": true, "data": { "hubs": state.drop.remote_hubs() } }))
 }
 
-const MAX_PROXY_BYTES: usize = 200 * 1024 * 1024;
-
-/// Inoltra un file all'hub remoto via HTTP (l'utente ha scelto un peer che
-/// vive su un'altra macchina, scoperta via UDP broadcast). `to` per il
-/// ricevente è il SUO hub_id: ogni hub riconosce sempre il proprio come "il
-/// desktop", quindi non serve che il destinatario abbia fatto hello.
-async fn proxy_send_file(
-    hub: &crate::services::hubdiscovery::RemoteHub,
-    own_hub_id: &str,
-    from_name: &str,
-    file_name: &str,
-    bytes: Vec<u8>,
-) -> Result<u64, String> {
-    let size = bytes.len() as u64;
-    let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.to_string());
-    let form = reqwest::multipart::Form::new()
-        .text("to", hub.hub_id.clone())
-        .text("fromName", from_name.to_string())
-        .part("file", part);
-    let url = format!("http://{}:{}/api/drop/send", hub.ip, hub.http_port);
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header("X-RickyDev-Hub-Id", own_hub_id)
-        .multipart(form)
-        .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| format!("invio a {} fallito: {e}", hub.name))?;
-    if !response.status().is_success() {
-        return Err(format!("{} ha rifiutato il file (HTTP {})", hub.name, response.status()));
-    }
-    Ok(size)
-}
-
-async fn proxy_send_text(
-    hub: &crate::services::hubdiscovery::RemoteHub,
-    own_hub_id: &str,
-    from_name: &str,
-    text: &str,
-) -> Result<(), String> {
-    let url = format!("http://{}:{}/api/drop/text", hub.ip, hub.http_port);
-    let body = json!({ "to": hub.hub_id, "fromName": from_name, "text": text });
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header("X-RickyDev-Hub-Id", own_hub_id)
-        .json(&body)
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| format!("invio a {} fallito: {e}", hub.name))?;
-    if !response.status().is_success() {
-        return Err(format!("{} ha rifiutato il messaggio (HTTP {})", hub.name, response.status()));
-    }
-    Ok(())
-}
+const MAX_PROXY_BYTES: usize = crate::services::drop::MAX_PROXY_BYTES;
 
 /// Upload multipart: campi `to`, `fromName` e poi `file` (l'ordine conta,
 /// i campi testo devono precedere il file).
@@ -1597,8 +1546,7 @@ async fn drop_send(
                             MAX_PROXY_BYTES / 1024 / 1024
                         ));
                     }
-                    let own_hub_id = state.drop.hub_id();
-                    return match proxy_send_file(&hub, &own_hub_id, &from_name, &file_name, bytes.to_vec()).await {
+                    return match state.drop.proxy_send_file(&hub, &from_name, &file_name, bytes.to_vec()).await {
                         Ok(size) => Json(json!({
                             "ok": true,
                             "data": { "transferId": format!("proxy-{}", crate::events::now_ms()), "sizeBytes": size }
@@ -1660,8 +1608,7 @@ struct DropTextBody {
 
 async fn drop_text(State(state): State<ServerState>, Json(body): Json<DropTextBody>) -> Response {
     if let Some(hub) = state.drop.remote_hub(&body.to) {
-        let own_hub_id = state.drop.hub_id();
-        return match proxy_send_text(&hub, &own_hub_id, &body.from_name, &body.text).await {
+        return match state.drop.proxy_send_text(&hub, &body.from_name, &body.text).await {
             Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
             Err(message) => internal_error(message),
         };

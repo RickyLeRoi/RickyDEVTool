@@ -14,6 +14,7 @@ import { ws } from "./lib/ws";
 import { useStatsStore } from "./stores/statsStore";
 import { useDisksStore } from "./stores/disksStore";
 import { useDropStore } from "./stores/dropStore";
+import { useTrayIntentStore } from "./stores/trayIntentStore";
 import type { DiskInfo, MachineStats } from "./lib/types";
 
 type Section =
@@ -44,6 +45,29 @@ export default function App() {
 
   // Presenza drop attiva sempre: sei visibile e ricevi da qualsiasi sezione.
   usePresence();
+
+  // Click su una voce del menu del tray: naviga sulla sezione giusta.
+  // Il bridge Tauri non esiste quando la pagina è aperta da un browser
+  // normale (telefono/LAN): l'evento semplicemente non arriva mai.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<{ section: Section; extra?: string | null }>("tray-navigate", (event) => {
+        const { section, extra } = event.payload;
+        setSection(section);
+        useTrayIntentStore.getState().apply(section, extra ?? null);
+      }),
+    ).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Il pannello vital signs è sempre visibile, quindi il topic "stats"
   // resta sottoscritto per tutta la vita della UI.
