@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
 import { BranchPicker } from "./BranchPicker";
+import { CommitList } from "./CommitList";
 import type { ApiError, GitRepoInfo, GitWarning } from "../../lib/types";
 
 function warningText(w: GitWarning): string {
@@ -110,6 +111,18 @@ export function GitPanel({ path }: { path: string }) {
             onCheckout={(updated) => {
               setInfo(updated);
               setSummary(`Checkout su ${updated.currentBranch ?? "detached"}`);
+            }}
+          />
+          <CommitList
+            path={path}
+            dirty={info.dirty}
+            onCheckout={(updated) => {
+              setInfo(updated);
+              setSummary(
+                updated.currentBranch
+                  ? `Checkout su ${updated.currentBranch}`
+                  : `Detached HEAD @ ${updated.detachedAt ?? "?"}`,
+              );
             }}
           />
         </>

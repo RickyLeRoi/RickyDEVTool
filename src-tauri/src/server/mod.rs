@@ -38,6 +38,7 @@ pub struct ServerState {
     pub alerts: Arc<crate::alerts::AlertService>,
     pub tails: Arc<crate::services::logtail::TailRegistry>,
     pub drop: Arc<crate::services::drop::DropService>,
+    pub metrics: Arc<crate::services::metrics::MetricsService>,
 }
 
 /// Le azioni che modificano il sistema sono locali, oppure LAN se l'utente
@@ -97,6 +98,8 @@ pub async fn start(
     ));
     // Avviato qui perché serve il runtime tokio (attivo dentro server::start).
     crate::jiggler::start(config.clone());
+    // Campionamento metriche sempre attivo (thread OS dedicato).
+    let metrics = crate::services::metrics::MetricsService::start();
     let state = ServerState {
         config,
         bus,
@@ -107,6 +110,7 @@ pub async fn start(
         alerts,
         tails,
         drop: drop_service,
+        metrics,
     };
 
     let api = Router::new()
@@ -117,9 +121,14 @@ pub async fn start(
         .route("/api/log", post(client_log))
         .route("/api/pollers/{topic}/interval", post(set_interval))
         .route("/api/processes/heavy", get(heavy_processes))
+        .route("/api/metrics/history", get(metrics_history))
         .route("/api/processes/kill", post(kill_process))
         .route("/api/ports", get(list_ports))
         .route("/api/disks", get(list_disks))
+        .route("/api/docker", get(docker_state))
+        .route("/api/docker/images", get(docker_images))
+        .route("/api/docker/{id}/action", post(docker_action))
+        .route("/api/docker/{id}/logs", post(docker_logs))
         .route("/api/disks/eject", post(disk_eject))
         .route("/api/disks/format", post(disk_format))
         .route("/api/tools", get(list_tools))
@@ -133,11 +142,14 @@ pub async fn start(
         .route("/api/git/pull", post(git_pull))
         .route("/api/git/branches", get(git_branches))
         .route("/api/git/checkout", post(git_checkout))
+        .route("/api/git/commits", get(git_commits))
+        .route("/api/git/checkout-commit", post(git_checkout_commit))
         .route("/api/node/info", get(node_info))
         .route("/api/node/pm", post(node_set_pm))
         .route("/api/node/run", post(node_run))
         .route("/api/tasks", get(tasks_list))
         .route("/api/tasks/{id}/stop", post(task_stop))
+        .route("/api/tasks/{id}/log", get(task_log))
         .route("/api/tasks/clear-finished", post(tasks_clear_finished))
         .route("/api/dotnet/info", get(dotnet_info))
         .route("/api/dotnet/select", post(dotnet_select))
@@ -371,6 +383,25 @@ async fn heavy_processes(
     )
     .await;
     Json(json!({ "ok": true, "data": result }))
+}
+
+#[derive(Deserialize)]
+struct MetricsHistoryQuery {
+    hours: Option<u32>,
+}
+
+/// Storico metriche (CPU/RAM/disco di sistema) delle ultime `hours` ore.
+/// La query SQLite è bloccante: fuori dal runtime async.
+async fn metrics_history(
+    State(state): State<ServerState>,
+    axum::extract::Query(query): axum::extract::Query<MetricsHistoryQuery>,
+) -> Json<serde_json::Value> {
+    let hours = query.hours.unwrap_or(24);
+    let metrics = state.metrics.clone();
+    let samples = tokio::task::spawn_blocking(move || metrics.history(hours))
+        .await
+        .unwrap_or_default();
+    Json(json!({ "ok": true, "data": { "samples": samples, "hours": hours } }))
 }
 
 #[derive(Deserialize)]
@@ -759,6 +790,45 @@ async fn git_checkout(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitsQuery {
+    path: String,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    skip: Option<u32>,
+}
+
+async fn git_commits(
+    axum::extract::Query(query): axum::extract::Query<CommitsQuery>,
+) -> Response {
+    match crate::services::git::commits(&query.path, query.limit.unwrap_or(50), query.skip.unwrap_or(0)).await {
+        Ok(commits) => Json(json!({ "ok": true, "data": { "commits": commits } })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct CheckoutCommitBody {
+    path: String,
+    hash: String,
+}
+
+async fn git_checkout_commit(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<CheckoutCommitBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::git::checkout_commit(&body.path, &body.hash).await {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
 // ---------- node ----------
 
 async fn node_info(
@@ -1031,6 +1101,64 @@ async fn disk_format(
     }
 }
 
+// ---------- docker ----------
+
+/// Stato Docker + lista container: read-only, aperto come la lista porte.
+async fn docker_state() -> Json<serde_json::Value> {
+    let state = crate::adapters::docker::state().await;
+    Json(json!({ "ok": true, "data": state }))
+}
+
+/// Immagini locali: read-only.
+async fn docker_images() -> Json<serde_json::Value> {
+    let images = crate::adapters::docker::images().await;
+    Json(json!({ "ok": true, "data": { "images": images } }))
+}
+
+#[derive(Deserialize)]
+struct DockerActionBody {
+    action: String, // start | stop | restart
+}
+
+/// start/stop/restart di un container: azione di scrittura (guardia write_allowed).
+async fn docker_action(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    Json(body): Json<DockerActionBody>,
+) -> Response {
+    use crate::adapters::docker::DockerError;
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::adapters::docker::action(&id, &body.action).await {
+        Ok(()) => Json(json!({ "ok": true, "data": { "done": true } })).into_response(),
+        Err(DockerError::InvalidRef) => internal_error("id container non valido".into()),
+        Err(DockerError::InvalidAction) => internal_error("azione non valida".into()),
+        Err(DockerError::Failed(msg)) => internal_error(msg),
+    }
+}
+
+/// Log del container in streaming come task (topic WS `task:{id}`): read
+/// sensibile, dietro la stessa guardia degli altri comandi che spawnano processi.
+async fn docker_logs(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let Some((program, args)) = crate::adapters::docker::logs_command(&id) else {
+        return internal_error("id container non valido".into());
+    };
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    match state.tasks.spawn(&format!("docker logs {id}"), program, &arg_refs, ".") {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
 // ---------- servizi online / alerts / remote control ----------
 
 async fn services_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
@@ -1162,6 +1290,22 @@ async fn tasks_list(State(state): State<ServerState>) -> Json<serde_json::Value>
 async fn tasks_clear_finished(State(state): State<ServerState>) -> Json<serde_json::Value> {
     state.tasks.clear_finished();
     Json(json!({ "ok": true, "data": { "tasks": state.tasks.list() } }))
+}
+
+/// Log bufferizzato di un task (per riaprirlo dopo la fine o da un'altra
+/// sezione). 404 se il task è stato ripulito.
+async fn task_log(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
+    match state.tasks.log(&id) {
+        Some(lines) => Json(json!({ "ok": true, "data": { "lines": lines } })).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": "task non trovato", "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
 }
 
 async fn task_stop(

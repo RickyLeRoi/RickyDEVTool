@@ -43,6 +43,9 @@ futures-util = "0.3"
 # SO_REUSEADDR/SO_REUSEPORT per il beacon UDP di discovery: permette a più
 # istanze sulla stessa macchina di condividere la porta (utile anche nei test).
 socket2 = { version = "0.5", features = ["all"] }
+# Storico metriche 24h: SQLite embedded (feature "bundled" = niente libsqlite
+# di sistema, compila la sua). File in data_dir, campionamento sempre attivo.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

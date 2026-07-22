@@ -337,6 +337,107 @@ input {
 }
 
 /* ---------- dischi ---------- */
+.metrics-history {
+  margin-top: 18px;
+}
+.metrics-legend {
+  display: flex;
+  gap: 14px;
+  margin: 4px 0 8px;
+  font-size: 12px;
+}
+.metrics-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.metrics-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.metrics-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.metrics-axis-label {
+  fill: var(--text-dim);
+  font-size: 9px;
+}
+
+/* ---------- docker ---------- */
+.docker-table {
+  margin-top: 12px;
+}
+.docker-state {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 7px;
+  vertical-align: middle;
+  background: var(--text-dim);
+}
+.docker-state.running {
+  background: var(--ok);
+}
+.docker-state.warn {
+  background: var(--warn);
+}
+.docker-state.stopped {
+  background: var(--text-dim);
+}
+.docker-name {
+  font-weight: 600;
+}
+.docker-image,
+.docker-ports {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.docker-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.docker-row-error {
+  flex-basis: 100%;
+  margin-top: 4px;
+}
+.docker-logs {
+  margin-top: 16px;
+}
+.docker-images-wrap {
+  margin-top: 16px;
+}
+.docker-images {
+  margin-top: 8px;
+}
+
+/* ---------- task section ---------- */
+.task-table {
+  margin-top: 8px;
+}
+.task-label {
+  font-weight: 600;
+}
+.task-cwd {
+  font-size: 11px;
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-open-log {
+  margin-top: 14px;
+}
+
 .disks {
   margin-top: 18px;
 }
@@ -777,6 +878,54 @@ button.small {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.commit-list-wrap {
+  margin-top: 4px;
+}
+.commit-list {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.commit-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--bg-hover);
+}
+.commit-row:last-child {
+  border-bottom: none;
+}
+.commit-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.commit-subject {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.commit-sub {
+  color: var(--text-dim);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.commit-ref {
+  font-size: 10px;
+}
+.commit-more {
+  margin: 8px 10px;
 }
 
 /* ---------- node panel / task log ---------- */

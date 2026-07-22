@@ -26,6 +26,37 @@ export interface MachineStats {
   intervalMs: number;
 }
 
+export interface MetricSample {
+  ts: number;
+  cpuPct: number;
+  memPct: number;
+  diskPct: number | null;
+}
+
+export interface DockerContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  ports: string[];
+}
+
+export interface DockerState {
+  available: boolean;
+  daemonDown: boolean;
+  containers: DockerContainer[];
+  error?: string;
+}
+
+export interface DockerImage {
+  id: string;
+  repository: string;
+  tag: string;
+  size: string;
+  created: string;
+}
+
 export interface ProcessInfo {
   pid: number;
   ppid: number | null;
@@ -168,6 +199,16 @@ export interface GitBranch {
     subject: string;
   };
   staleWeeks: number;
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  authorName: string;
+  authorEmail: string;
+  date: number;
+  subject: string;
+  refs: string[];
 }
 
 export interface NodeProject {

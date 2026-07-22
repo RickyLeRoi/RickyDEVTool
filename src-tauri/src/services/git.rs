@@ -245,6 +245,86 @@ pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
     Ok(result)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub date: u64, // epoch ms
+    pub subject: String,
+    /// Decorazioni (branch/tag che puntano al commit), già ripulite.
+    pub refs: Vec<String>,
+}
+
+const MAX_COMMITS: u32 = 200;
+
+/// Log dei commit di HEAD, dal più recente. `skip` per la paginazione ("carica altri").
+pub async fn commits(path: &str, limit: u32, skip: u32) -> Result<Vec<GitCommit>, GitError> {
+    let limit = limit.clamp(1, MAX_COMMITS).to_string();
+    let skip = skip.to_string();
+    // Campi separati da \x1f; ogni commit sta su una riga (nessun campo del
+    // formato contiene newline).
+    let output = run_git(
+        path,
+        &[
+            "log",
+            "--max-count",
+            &limit,
+            "--skip",
+            &skip,
+            "--format=%H\x1f%h\x1f%an\x1f%ae\x1f%ct\x1f%s\x1f%D",
+        ],
+        INFO_TIMEOUT,
+    )
+    .await?;
+
+    let mut commits = Vec::new();
+    for line in output.lines() {
+        let fields: Vec<&str> = line.split('\x1f').collect();
+        if fields.len() != 7 {
+            continue;
+        }
+        let date_s: u64 = fields[4].parse().unwrap_or(0);
+        let refs = parse_decorations(fields[6]);
+        commits.push(GitCommit {
+            hash: fields[0].to_string(),
+            short_hash: fields[1].to_string(),
+            author_name: fields[2].to_string(),
+            author_email: fields[3].to_string(),
+            date: date_s * 1000,
+            subject: fields[5].to_string(),
+            refs,
+        });
+    }
+    Ok(commits)
+}
+
+/// "HEAD -> main, origin/main, tag: v1.0" → ["main", "origin/main", "tag: v1.0"]
+fn parse_decorations(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|d| d.trim().trim_start_matches("HEAD -> ").trim().to_string())
+        .filter(|d| !d.is_empty() && d != "HEAD")
+        .collect()
+}
+
+/// Checkout di un commit specifico: porta in detached HEAD. Rifiutato se dirty.
+pub async fn checkout_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitError> {
+    if hash.is_empty() || hash.len() > 40 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(GitError::Failed("hash commit non valido".to_string()));
+    }
+    let info = repo_info(path).await?;
+    if info.dirty {
+        return Err(GitError::Failed(
+            "working tree non pulito: committa o stasha prima del checkout".to_string(),
+        ));
+    }
+    // Un hash grezzo mette git in detached HEAD (nessun branch creato).
+    run_git(path, &["checkout", hash], INFO_TIMEOUT).await?;
+    repo_info(path).await
+}
+
 /// Checkout di un branch. Rifiutato se il working tree è dirty.
 /// Per i branch remote-only usa il nome corto: git crea il tracking locale.
 pub async fn checkout(path: &str, branch: &str) -> Result<GitRepoInfo, GitError> {
@@ -321,5 +401,53 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = repo_info(dir.path().to_str().unwrap()).await;
         assert!(matches!(result, Err(GitError::NotARepo)));
+    }
+
+    #[test]
+    fn decorazioni_ripulite() {
+        assert_eq!(
+            parse_decorations("HEAD -> main, origin/main, tag: v1.0"),
+            vec!["main", "origin/main", "tag: v1.0"]
+        );
+        assert_eq!(parse_decorations(""), Vec::<String>::new());
+        assert_eq!(parse_decorations("HEAD"), Vec::<String>::new());
+    }
+
+    async fn git_in(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("git");
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[tokio::test]
+    async fn commits_e_checkout_detached() {
+        let dir = init_repo().await;
+        let path = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "1").unwrap();
+        git_in(dir.path(), &["add", "."]).await;
+        git_in(dir.path(), &["commit", "-m", "secondo commit"]).await;
+
+        let commits = commits(path, 10, 0).await.expect("commits");
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].subject, "secondo commit");
+        assert!(commits[0].refs.iter().any(|r| r == "main"));
+
+        // Checkout del commit iniziale → detached HEAD.
+        let initial = &commits[1].hash;
+        let info = checkout_commit(path, initial).await.expect("checkout");
+        assert!(info.current_branch.is_none());
+        assert!(info.detached_at.is_some());
+        assert!(info.warnings.iter().any(|w| matches!(w, GitWarning::DetachedHead)));
+    }
+
+    #[tokio::test]
+    async fn checkout_commit_rifiuta_hash_invalido() {
+        let dir = init_repo().await;
+        let result = checkout_commit(dir.path().to_str().unwrap(), "non-esadecimale!").await;
+        assert!(matches!(result, Err(GitError::Failed(_))));
     }
 }

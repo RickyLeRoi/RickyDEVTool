@@ -8,6 +8,8 @@ import { Services } from "./features/services/Services";
 import { Settings } from "./features/settings/Settings";
 import { Drop } from "./features/drop/Drop";
 import { NetTools } from "./features/nettools/NetTools";
+import { Docker } from "./features/docker/Docker";
+import { Tasks } from "./features/tasks/Tasks";
 import { DropToasts } from "./features/drop/DropToasts";
 import { usePresence } from "./features/drop/usePresence";
 import { ws } from "./lib/ws";
@@ -23,6 +25,8 @@ type Section =
   | "projects"
   | "services"
   | "net"
+  | "docker"
+  | "tasks"
   | "drop"
   | "settings";
 
@@ -32,6 +36,8 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "projects", icon: "📁", label: "Progetti" },
   { id: "services", icon: "📡", label: "Servizi" },
   { id: "net", icon: "🌐", label: "Rete" },
+  { id: "docker", icon: "🐳", label: "Docker" },
+  { id: "tasks", icon: "🧾", label: "Task" },
   { id: "drop", icon: "📤", label: "Drop" },
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
@@ -117,6 +123,8 @@ export default function App() {
           {section === "projects" && <Projects />}
           {section === "services" && <Services />}
           {section === "net" && <NetTools />}
+          {section === "docker" && <Docker />}
+          {section === "tasks" && <Tasks />}
           {section === "drop" && <Drop />}
           {section === "settings" && <Settings />}
         </main>

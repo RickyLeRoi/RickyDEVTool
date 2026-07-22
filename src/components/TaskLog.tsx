@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { post } from "../lib/api";
+import { api, post } from "../lib/api";
 import { ws } from "../lib/ws";
 import type { TaskEvent, TaskInfo } from "../lib/types";
 
@@ -17,11 +17,27 @@ export function TaskLog({ task, onDone }: TaskLogProps) {
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
 
+  // Backfill dello storico bufferizzato lato server: riaprendo un task (anche
+  // già terminato) si rivede tutto l'output, non solo ciò che è arrivato via
+  // WS dal momento dell'apertura. Si usa solo se non è ancora arrivato nulla
+  // in streaming, per non duplicare le righe di un task appena avviato.
+  useEffect(() => {
+    let active = true;
+    api<{ lines: { stream: "out" | "err"; line: string }[] }>(`/api/tasks/${task.id}/log`).then(
+      (r) => {
+        if (active && r.ok) setLines((prev) => (prev.length === 0 ? r.data.lines : prev));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [task.id]);
+
   useEffect(() => {
     return ws.subscribe(`task:${task.id}`, (event) => {
       const payload = event.payload as TaskEvent;
       if (payload.event === "line") {
-        setLines((prev) => [...prev.slice(-499), { stream: payload.stream, line: payload.line }]);
+        setLines((prev) => [...prev.slice(-4999), { stream: payload.stream, line: payload.line }]);
       } else if (payload.event === "exit") {
         setRunning(false);
         setExitCode(payload.exitCode);

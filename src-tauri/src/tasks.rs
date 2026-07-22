@@ -29,8 +29,22 @@ pub enum TaskState {
     Failed,
 }
 
+/// Una riga di output bufferizzata: permette di riaprire il log di un task
+/// (anche già terminato) senza aver seguito lo stream WS dall'inizio.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogLine {
+    pub stream: &'static str, // "out" | "err"
+    pub line: String,
+}
+
+/// Tetto al buffer per task: oltre, si scartano le righe più vecchie.
+const MAX_LOG_LINES: usize = 5000;
+
 struct TaskHandle {
     info: TaskInfo,
+    /// Output completo bufferizzato (condiviso con i task di streaming).
+    log: Arc<Mutex<Vec<LogLine>>>,
     #[cfg(unix)]
     pgid: i32,
     #[cfg(not(unix))]
@@ -57,6 +71,19 @@ impl TaskRegistry {
         let mut list: Vec<TaskInfo> = tasks.values().map(|h| h.info.clone()).collect();
         list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
         list
+    }
+
+    /// Output bufferizzato di un task (per riaprirne il log). None se il task
+    /// non esiste (mai avviato o già ripulito con clear_finished).
+    pub fn log(&self, id: &str) -> Option<Vec<LogLine>> {
+        // Clona l'Arc del buffer e rilascia subito il lock della mappa, così
+        // non si tengono due lock insieme.
+        let buffer = {
+            let tasks = self.tasks.lock().expect("task lock");
+            tasks.get(id).map(|h| h.log.clone())
+        }?;
+        let lines = buffer.lock().expect("log lock").clone();
+        Some(lines)
     }
 
     /// Avvia `program args` in `cwd`. Su Windows passa da `cmd /C` per risolvere
@@ -101,12 +128,14 @@ impl TaskRegistry {
             exit_code: None,
             started_at: now_ms(),
         };
+        let log = Arc::new(Mutex::new(Vec::<LogLine>::new()));
         {
             let mut tasks = self.tasks.lock().expect("task lock");
             tasks.insert(
                 id.clone(),
                 TaskHandle {
                     info: info.clone(),
+                    log: log.clone(),
                     #[cfg(unix)]
                     pgid: pid as i32,
                     #[cfg(not(unix))]
@@ -120,10 +149,10 @@ impl TaskRegistry {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         if let Some(out) = stdout {
-            tokio::spawn(stream_lines(self.bus.clone(), id.clone(), out, "out"));
+            tokio::spawn(stream_lines(self.bus.clone(), log.clone(), id.clone(), out, "out"));
         }
         if let Some(err) = stderr {
-            tokio::spawn(stream_lines(self.bus.clone(), id.clone(), err, "err"));
+            tokio::spawn(stream_lines(self.bus.clone(), log.clone(), id.clone(), err, "err"));
         }
 
         // Watcher di uscita.
@@ -198,12 +227,22 @@ impl TaskRegistry {
 
 async fn stream_lines<R: tokio::io::AsyncRead + Unpin>(
     bus: EventBus,
+    log: Arc<Mutex<Vec<LogLine>>>,
     task_id: String,
     reader: R,
     stream: &'static str,
 ) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
+        {
+            let mut buf = log.lock().expect("log lock");
+            buf.push(LogLine { stream, line: line.clone() });
+            // Ring buffer: scarta le righe più vecchie oltre il tetto.
+            if buf.len() > MAX_LOG_LINES {
+                let excess = buf.len() - MAX_LOG_LINES;
+                buf.drain(..excess);
+            }
+        }
         bus.publish(
             &format!("task:{task_id}"),
             serde_json::json!({ "event": "line", "stream": stream, "line": line }),
@@ -249,6 +288,12 @@ mod tests {
         let final_state = registry.list().into_iter().find(|t| t.id == info.id).unwrap();
         assert_eq!(final_state.state, TaskState::Exited);
         assert_eq!(final_state.exit_code, Some(0));
+
+        // Il log resta bufferizzato e riconsultabile dopo la fine del task.
+        let log = registry.log(&info.id).expect("log presente");
+        let buffered: Vec<&str> = log.iter().map(|l| l.line.as_str()).collect();
+        assert_eq!(buffered, vec!["riga1", "riga2"]);
+        assert!(log.iter().all(|l| l.stream == "out"));
     }
 
     #[tokio::test]

@@ -5,6 +5,7 @@ pub mod env;
 pub mod git;
 pub mod hubdiscovery;
 pub mod logtail;
+pub mod metrics;
 pub mod nettools;
 pub mod node;
 pub mod online;
