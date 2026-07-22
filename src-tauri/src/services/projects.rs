@@ -14,6 +14,10 @@ pub enum ProjectKind {
     Git,
     Node,
     Dotnet,
+    Python,
+    Rust,
+    Tauri,
+    Flutter,
 }
 
 #[derive(Debug, Serialize)]
@@ -228,6 +232,9 @@ fn walk(
 
     let detected = detect_dir(dir);
     let is_git_root = detected.kinds.contains(&ProjectKind::Git);
+    // Un progetto Tauri ha un crate Rust in src-tauri: è parte del progetto, non
+    // un progetto Rust a sé — non va ri-scoperto scendendo in quella cartella.
+    let is_tauri = detected.kinds.contains(&ProjectKind::Tauri);
     slns.extend(detected.slns);
     if !detected.kinds.is_empty() {
         projects.push((
@@ -255,6 +262,9 @@ fn walk(
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') || IGNORED_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+        if is_tauri && name == "src-tauri" {
             continue;
         }
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -299,7 +309,33 @@ fn detect_dir(dir: &Path) -> DirDetect {
     if !slns.is_empty() {
         csprojs.clear();
     }
+    // Python: uno qualsiasi dei marker d'ecosistema.
+    if ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile", "manage.py"]
+        .iter()
+        .any(|f| dir.join(f).is_file())
+    {
+        kinds.push(ProjectKind::Python);
+    }
+    // Rust (il crate/workspace è identificato dal Cargo.toml).
+    if dir.join("Cargo.toml").is_file() {
+        kinds.push(ProjectKind::Rust);
+    }
+    // Tauri: src-tauri/ con un tauri.conf.* accanto al frontend.
+    if is_tauri_dir(dir) {
+        kinds.push(ProjectKind::Tauri);
+    }
+    // Flutter/Dart.
+    if dir.join("pubspec.yaml").is_file() {
+        kinds.push(ProjectKind::Flutter);
+    }
     DirDetect { kinds, slns, csprojs }
+}
+
+fn is_tauri_dir(dir: &Path) -> bool {
+    let src_tauri = dir.join("src-tauri");
+    ["tauri.conf.json", "tauri.conf.json5", "tauri.conf.toml"]
+        .iter()
+        .any(|f| src_tauri.join(f).is_file())
 }
 
 #[cfg(test)]
@@ -361,6 +397,42 @@ EndProject
         assert!(names.contains(&"Indipendente"), "{names:?}");
         assert!(!names.contains(&"Share.Algorithms"), "{names:?}");
         assert!(!names.contains(&"Share.Dto"), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn rileva_python_rust_tauri_flutter() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        std::fs::create_dir_all(root.join("py")).unwrap();
+        std::fs::write(root.join("py/requirements.txt"), "flask").unwrap();
+
+        std::fs::create_dir_all(root.join("rustlib")).unwrap();
+        std::fs::write(root.join("rustlib/Cargo.toml"), "[package]").unwrap();
+
+        std::fs::create_dir_all(root.join("flut")).unwrap();
+        std::fs::write(root.join("flut/pubspec.yaml"), "name: x").unwrap();
+
+        // Progetto Tauri: package.json + src-tauri con tauri.conf.json e Cargo.toml.
+        std::fs::create_dir_all(root.join("app/src-tauri")).unwrap();
+        std::fs::write(root.join("app/package.json"), "{}").unwrap();
+        std::fs::write(root.join("app/src-tauri/tauri.conf.json"), "{}").unwrap();
+        std::fs::write(root.join("app/src-tauri/Cargo.toml"), "[package]").unwrap();
+
+        let scan = scan(root.to_string_lossy().to_string()).await.expect("scan");
+        let by = |n: &str| scan.projects.iter().find(|p| p.name == n).unwrap();
+        assert!(by("py").kinds.contains(&ProjectKind::Python));
+        assert!(by("rustlib").kinds.contains(&ProjectKind::Rust));
+        assert!(by("flut").kinds.contains(&ProjectKind::Flutter));
+        let app = by("app");
+        assert!(app.kinds.contains(&ProjectKind::Tauri));
+        assert!(app.kinds.contains(&ProjectKind::Node));
+        // src-tauri NON deve comparire come progetto Rust a sé.
+        assert!(
+            !scan.projects.iter().any(|p| p.name == "src-tauri"),
+            "{:?}",
+            scan.projects.iter().map(|p| &p.name).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]

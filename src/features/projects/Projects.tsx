@@ -3,6 +3,7 @@ import { api, post } from "../../lib/api";
 import { GitPanel } from "./GitPanel";
 import { NodePanel } from "./NodePanel";
 import { DotnetPanel } from "./DotnetPanel";
+import { RunnerPanel } from "./RunnerPanel";
 import { EnvPanel } from "./EnvPanel";
 import { LogTail } from "./LogTail";
 import type { DirListing, FolderScan, ProjectRef } from "../../lib/types";
@@ -11,6 +12,10 @@ const KIND_LABELS: Record<string, string> = {
   git: " git",
   node: "⬢ node",
   dotnet: ".NET",
+  python: "🐍 Python",
+  rust: "🦀 Rust",
+  tauri: "🖥️ Tauri",
+  flutter: "🐦 Flutter",
 };
 
 function CommonActions({ path }: { path: string }) {
@@ -149,7 +154,8 @@ export function Projects() {
           </div>
           {scan.projects.length === 0 && (
             <div className="empty">
-              Nessun progetto riconosciuto (git, Node.js, .NET) entro 3 livelli.
+              Nessun progetto riconosciuto (git, Node.js, .NET, Python, Rust, Tauri, Flutter)
+              entro 3 livelli.
             </div>
           )}
           <div className="project-layout">
@@ -184,6 +190,18 @@ export function Projects() {
                 {selected.kinds.includes("git") && <GitPanel path={selected.path} />}
                 {selected.kinds.includes("node") && <NodePanel path={selected.path} />}
                 {selected.kinds.includes("dotnet") && <DotnetPanel path={selected.path} />}
+                {selected.kinds.includes("python") && (
+                  <RunnerPanel key={`py-${selected.path}`} kind="python" path={selected.path} />
+                )}
+                {selected.kinds.includes("rust") && (
+                  <RunnerPanel key={`rs-${selected.path}`} kind="rust" path={selected.path} />
+                )}
+                {selected.kinds.includes("tauri") && (
+                  <RunnerPanel key={`tauri-${selected.path}`} kind="tauri" path={selected.path} />
+                )}
+                {selected.kinds.includes("flutter") && (
+                  <RunnerPanel key={`flutter-${selected.path}`} kind="flutter" path={selected.path} />
+                )}
                 <EnvPanel key={`env-${selected.path}`} path={selected.path} />
                 <LogTail key={`tail-${selected.path}`} projectPath={selected.path} />
               </div>

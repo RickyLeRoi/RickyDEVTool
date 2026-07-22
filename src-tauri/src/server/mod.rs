@@ -154,6 +154,8 @@ pub async fn start(
         .route("/api/dotnet/info", get(dotnet_info))
         .route("/api/dotnet/select", post(dotnet_select))
         .route("/api/dotnet/run", post(dotnet_run))
+        .route("/api/runner/info", get(runner_info))
+        .route("/api/runner/run", post(runner_run))
         .route("/api/services", get(services_get).post(services_upsert))
         .route("/api/services/{id}", axum::routing::delete(services_delete))
         .route("/api/services/{id}/toggle", post(services_toggle))
@@ -1026,6 +1028,61 @@ async fn dotnet_run(
 
 fn short_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+// ---------- runner generico (python / rust / tauri / flutter) ----------
+
+#[derive(Deserialize)]
+struct RunnerQuery {
+    path: Option<String>,
+    kind: Option<String>,
+}
+
+async fn runner_info(axum::extract::Query(query): axum::extract::Query<RunnerQuery>) -> Response {
+    let (Some(path), Some(kind)) = (query.path, query.kind) else {
+        return internal_error("parametri path/kind mancanti".into());
+    };
+    match crate::services::runners::inspect(&kind, &path) {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": message, "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunnerRunBody {
+    path: String,
+    kind: String,
+    action_id: String,
+}
+
+async fn runner_run(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<RunnerRunBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    // Il client manda solo l'id: il server rigenera lo spec verificato, così il
+    // programma eseguito non è mai controllato dal chiamante.
+    let spec = match crate::services::runners::resolve(&body.kind, &body.path, &body.action_id) {
+        Ok(s) => s,
+        Err(message) => return internal_error(message),
+    };
+    let arg_refs: Vec<&str> = spec.args.iter().map(String::as_str).collect();
+    let label = format!("{} {} — {}", body.kind, spec.label, short_name(&body.path));
+    match state.tasks.spawn(&label, &spec.program, &arg_refs, &body.path) {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => internal_error(message),
+    }
 }
 
 // ---------- dischi ----------

@@ -155,7 +155,32 @@ export interface DirListing {
   dirs: DirEntryInfo[];
 }
 
-export type ProjectKind = "git" | "node" | "dotnet";
+export type ProjectKind =
+  | "git"
+  | "node"
+  | "dotnet"
+  | "python"
+  | "rust"
+  | "tauri"
+  | "flutter";
+
+export type RunnerCategory = "env" | "install" | "build" | "run" | "test" | "clean";
+
+export interface RunnerAction {
+  id: string;
+  label: string;
+  category: RunnerCategory;
+  program: string;
+  args: string[];
+}
+
+export interface RunnerInfo {
+  kind: string;
+  path: string;
+  tool: string;
+  notes: string[];
+  actions: RunnerAction[];
+}
 
 export interface ProjectRef {
   path: string;
