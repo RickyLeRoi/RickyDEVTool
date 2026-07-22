@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
+import { DeleteBranchDialog } from "./DeleteBranchDialog";
 import type { ApiError, GitBranch, GitRepoInfo } from "../../lib/types";
 
 interface BranchPickerProps {
   path: string;
   dirty: boolean;
   onCheckout: (info: GitRepoInfo) => void;
+  /** Branch di cui si stanno mostrando i commit (per evidenziarlo). */
+  selectedRef: string | null;
+  /** Click sulla riga: mostra i commit di quel branch (null = torna a HEAD). */
+  onSelectBranch: (name: string | null) => void;
 }
 
 function fmtDate(ms: number) {
@@ -16,11 +21,18 @@ function fmtDate(ms: number) {
   });
 }
 
-export function BranchPicker({ path, dirty, onCheckout }: BranchPickerProps) {
+export function BranchPicker({
+  path,
+  dirty,
+  onCheckout,
+  selectedRef,
+  onSelectBranch,
+}: BranchPickerProps) {
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<GitBranch[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [deleting, setDeleting] = useState<GitBranch | null>(null);
 
   useEffect(() => {
     setBranches(null);
@@ -70,12 +82,44 @@ export function BranchPicker({ path, dirty, onCheckout }: BranchPickerProps) {
           {!branches && <div className="empty">Carico i branch…</div>}
           {branches?.map((b) => (
             <div key={b.name} className="branch-row">
-              <div className="branch-main">
+              <div className="git-row-actions">
+                <button
+                  className="git-act"
+                  disabled={b.isCurrent || dirty || busy !== null}
+                  title={
+                    b.isCurrent
+                      ? "branch corrente"
+                      : dirty
+                        ? "working tree non pulito"
+                        : "Checkout di questo branch"
+                  }
+                  onClick={() => checkout(b)}
+                >
+                  {busy === b.name ? "…" : "⤓"}
+                </button>
+                {!b.isRemoteOnly && (
+                  <button
+                    className="git-act danger"
+                    disabled={b.isCurrent || busy !== null}
+                    title={
+                      b.isCurrent ? "non puoi eliminare il branch corrente" : "Elimina branch"
+                    }
+                    onClick={() => setDeleting(b)}
+                  >
+                    🗑
+                  </button>
+                )}
+              </div>
+              <button
+                className={`branch-main branch-select ${selectedRef === b.name ? "active" : ""}`}
+                title="Mostra i commit di questo branch"
+                onClick={() => onSelectBranch(b.name)}
+              >
                 <span
                   className={`branch-name ${b.staleWeeks >= 4 ? "stale" : ""}`}
                   title={
                     b.staleWeeks >= 4
-                      ? `ultima commit ${b.staleWeeks} settimane fa`
+                      ? `ultima commit remota ${b.staleWeeks} settimane fa`
                       : undefined
                   }
                 >
@@ -87,21 +131,26 @@ export function BranchPicker({ path, dirty, onCheckout }: BranchPickerProps) {
                   {b.lastCommit.shortHash} · {fmtDate(b.lastCommit.date)} ·{" "}
                   {b.lastCommit.authorName} — {b.lastCommit.subject}
                 </span>
-              </div>
-              {!b.isCurrent && (
-                <button
-                  className="small"
-                  disabled={dirty || busy !== null}
-                  title={dirty ? "working tree non pulito" : undefined}
-                  onClick={() => checkout(b)}
-                >
-                  {busy === b.name ? "…" : "Checkout"}
-                </button>
-              )}
+              </button>
             </div>
           ))}
           {branches?.length === 0 && <div className="empty">Nessun branch.</div>}
         </div>
+      )}
+
+      {deleting && (
+        <DeleteBranchDialog
+          branch={deleting}
+          path={path}
+          onClose={(updated) => {
+            setDeleting(null);
+            if (updated) {
+              setBranches(updated);
+              // Se stavo mostrando i commit del branch eliminato, torna a HEAD.
+              if (selectedRef === deleting.name) onSelectBranch(null);
+            }
+          }}
+        />
       )}
     </div>
   );

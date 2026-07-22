@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
 import type { ApiError, GitCommit, GitRepoInfo } from "../../lib/types";
 
@@ -6,6 +6,8 @@ interface CommitListProps {
   path: string;
   dirty: boolean;
   onCheckout: (info: GitRepoInfo) => void;
+  /** Branch/ref di cui elencare i commit; null = HEAD (branch corrente). */
+  refName: string | null;
 }
 
 const PAGE = 50;
@@ -18,7 +20,7 @@ function fmtDate(ms: number) {
   });
 }
 
-export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
+export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps) {
   const [open, setOpen] = useState(false);
   const [commits, setCommits] = useState<GitCommit[] | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -27,8 +29,9 @@ export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
   const [error, setError] = useState<ApiError | null>(null);
 
   const fetchPage = async (skip: number): Promise<GitCommit[]> => {
+    const refQ = refName ? `&ref=${encodeURIComponent(refName)}` : "";
     const r = await api<{ commits: GitCommit[] }>(
-      `/api/git/commits?path=${encodeURIComponent(path)}&limit=${PAGE}&skip=${skip}`,
+      `/api/git/commits?path=${encodeURIComponent(path)}&limit=${PAGE}&skip=${skip}${refQ}`,
     );
     if (r.ok) {
       setError(null);
@@ -37,6 +40,32 @@ export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
     setError(r.error);
     return [];
   };
+
+  // Selezionare un branch (refName != null) apre la lista sui suoi commit;
+  // tornare a null (dopo un checkout o cambio progetto) la richiude.
+  useEffect(() => {
+    let cancelled = false;
+    setCommits(null);
+    setAtEnd(false);
+    setError(null);
+    if (refName == null) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    (async () => {
+      const first = await fetchPage(0);
+      if (!cancelled) {
+        setCommits(first);
+        setAtEnd(first.length < PAGE);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // fetchPage dipende da path/refName, catturati qui.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refName, path]);
 
   const toggle = async () => {
     if (!open && !commits) {
@@ -56,6 +85,12 @@ export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
     if (next.length < PAGE) setAtEnd(true);
   };
 
+  const reloadFromTop = async () => {
+    const first = await fetchPage(0);
+    setCommits(first);
+    setAtEnd(first.length < PAGE);
+  };
+
   const checkout = async (c: GitCommit) => {
     setBusy(c.hash);
     setError(null);
@@ -69,9 +104,34 @@ export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
     } else setError(r.error);
   };
 
+  // Revert e cherry-pick creano un nuovo commit: aggiorno lo stato repo e
+  // ricarico la lista dall'alto (il nuovo commit compare in cima).
+  const runAndReload = async (endpoint: string, c: GitCommit, confirmMsg: string) => {
+    if (!window.confirm(confirmMsg)) return;
+    setBusy(c.hash);
+    setError(null);
+    const r = await post<GitRepoInfo>(endpoint, { path, hash: c.hash });
+    setBusy(null);
+    if (r.ok) {
+      onCheckout(r.data);
+      await reloadFromTop();
+    } else setError(r.error);
+  };
+
+  const revert = (c: GitCommit) =>
+    runAndReload("/api/git/revert", c, `Creare un commit che annulla «${c.subject}»?`);
+  const cherryPick = (c: GitCommit) =>
+    runAndReload("/api/git/cherry-pick", c, `Applicare (cherry-pick) «${c.subject}» su HEAD?`);
+
+  const rowDisabled = dirty || busy !== null;
+  const dirtyTitle = dirty ? "working tree non pulito" : undefined;
+
   return (
     <div className="commit-list-wrap">
-      <button onClick={toggle}>{open ? "▾" : "▸"} Cronologia commit</button>
+      <button onClick={toggle}>
+        {open ? "▾" : "▸"} Cronologia commit
+        {refName && <span className="dim"> — {refName}</span>}
+      </button>
       {error && (
         <div className="banner banner-error">
           {error.message}
@@ -83,6 +143,32 @@ export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
           {!commits && <div className="empty">Carico i commit…</div>}
           {commits?.map((c) => (
             <div key={c.hash} className="commit-row">
+              <div className="git-row-actions">
+                <button
+                  className="git-act"
+                  disabled={rowDisabled}
+                  title={dirtyTitle ?? "Checkout (detached HEAD) su questo commit"}
+                  onClick={() => checkout(c)}
+                >
+                  {busy === c.hash ? "…" : "⤓"}
+                </button>
+                <button
+                  className="git-act"
+                  disabled={rowDisabled}
+                  title={dirtyTitle ?? "Revert: crea un commit che annulla questo"}
+                  onClick={() => revert(c)}
+                >
+                  ↩
+                </button>
+                <button
+                  className="git-act"
+                  disabled={rowDisabled}
+                  title={dirtyTitle ?? "Cherry-pick: applica questo commit su HEAD"}
+                  onClick={() => cherryPick(c)}
+                >
+                  🍒
+                </button>
+              </div>
               <div className="commit-main">
                 <span className="commit-subject" title={c.subject}>
                   {c.subject}
@@ -96,18 +182,6 @@ export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
                   ))}
                 </span>
               </div>
-              <button
-                className="small"
-                disabled={dirty || busy !== null}
-                title={
-                  dirty
-                    ? "working tree non pulito"
-                    : "Checkout in detached HEAD su questo commit"
-                }
-                onClick={() => checkout(c)}
-              >
-                {busy === c.hash ? "…" : "Checkout"}
-              </button>
             </div>
           ))}
           {commits && commits.length === 0 && <div className="empty">Nessun commit.</div>}
@@ -118,8 +192,7 @@ export function CommitList({ path, dirty, onCheckout }: CommitListProps) {
           )}
           {dirty && (
             <div className="hint">
-              Checkout disabilitato: working tree non pulito (il detached HEAD scarterebbe le
-              modifiche).
+              Azioni git disabilitate: working tree non pulito (committa o stasha prima).
             </div>
           )}
         </div>

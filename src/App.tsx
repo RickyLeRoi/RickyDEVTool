@@ -10,6 +10,9 @@ import { Drop } from "./features/drop/Drop";
 import { NetTools } from "./features/nettools/NetTools";
 import { Docker } from "./features/docker/Docker";
 import { Tasks } from "./features/tasks/Tasks";
+import { Calc } from "./features/calc/Calc";
+import { Color } from "./features/color/Color";
+import { Clipboard } from "./features/clipboard/Clipboard";
 import { DropToasts } from "./features/drop/DropToasts";
 import { usePresence } from "./features/drop/usePresence";
 import { ws } from "./lib/ws";
@@ -27,6 +30,9 @@ type Section =
   | "net"
   | "docker"
   | "tasks"
+  | "calc"
+  | "color"
+  | "clipboard"
   | "drop"
   | "settings";
 
@@ -38,6 +44,9 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "net", icon: "🌐", label: "Rete" },
   { id: "docker", icon: "🐳", label: "Docker" },
   { id: "tasks", icon: "🧾", label: "Task" },
+  { id: "calc", icon: "🧮", label: "Calcolatrice" },
+  { id: "color", icon: "🎨", label: "Colori" },
+  { id: "clipboard", icon: "📋", label: "Appunti" },
   { id: "drop", icon: "📤", label: "Drop" },
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
@@ -125,6 +134,9 @@ export default function App() {
           {section === "net" && <NetTools />}
           {section === "docker" && <Docker />}
           {section === "tasks" && <Tasks />}
+          {section === "calc" && <Calc />}
+          {section === "color" && <Color />}
+          {section === "clipboard" && <Clipboard />}
           {section === "drop" && <Drop />}
           {section === "settings" && <Settings />}
         </main>

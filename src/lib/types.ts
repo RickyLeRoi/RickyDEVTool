@@ -217,6 +217,8 @@ export interface GitBranch {
   name: string;
   isCurrent: boolean;
   isRemoteOnly: boolean;
+  /** Ref remoto corrispondente (es. "origin/main"), se esiste. */
+  remoteRef?: string | null;
   lastCommit: {
     shortHash: string;
     authorName: string;
@@ -368,6 +370,20 @@ export interface TailInfo {
   id: string;
   path: string;
   startedAt: number;
+}
+
+export interface ClipEntry {
+  id: number;
+  text: string;
+  bytes: number;
+  copiedAt: number;
+  pinned: boolean;
+}
+
+export interface ClipboardHistory {
+  entries: ClipEntry[];
+  enabled: boolean;
+  supported: boolean;
 }
 
 export interface AccessibilityStatus {

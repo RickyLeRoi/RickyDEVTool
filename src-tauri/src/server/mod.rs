@@ -39,6 +39,7 @@ pub struct ServerState {
     pub tails: Arc<crate::services::logtail::TailRegistry>,
     pub drop: Arc<crate::services::drop::DropService>,
     pub metrics: Arc<crate::services::metrics::MetricsService>,
+    pub clipboard: Arc<crate::services::clipboard::ClipboardHistory>,
 }
 
 /// Le azioni che modificano il sistema sono locali, oppure LAN se l'utente
@@ -100,6 +101,8 @@ pub async fn start(
     crate::jiggler::start(config.clone());
     // Campionamento metriche sempre attivo (thread OS dedicato).
     let metrics = crate::services::metrics::MetricsService::start();
+    // Storico appunti sempre attivo (solo in memoria), thread OS dedicato.
+    let clipboard = crate::services::clipboard::ClipboardHistory::start();
     let state = ServerState {
         config,
         bus,
@@ -111,6 +114,7 @@ pub async fn start(
         tails,
         drop: drop_service,
         metrics,
+        clipboard,
     };
 
     let api = Router::new()
@@ -142,8 +146,11 @@ pub async fn start(
         .route("/api/git/pull", post(git_pull))
         .route("/api/git/branches", get(git_branches))
         .route("/api/git/checkout", post(git_checkout))
+        .route("/api/git/delete-branch", post(git_delete_branch))
         .route("/api/git/commits", get(git_commits))
         .route("/api/git/checkout-commit", post(git_checkout_commit))
+        .route("/api/git/revert", post(git_revert))
+        .route("/api/git/cherry-pick", post(git_cherry_pick))
         .route("/api/node/info", get(node_info))
         .route("/api/node/pm", post(node_set_pm))
         .route("/api/node/run", post(node_run))
@@ -156,6 +163,12 @@ pub async fn start(
         .route("/api/dotnet/run", post(dotnet_run))
         .route("/api/runner/info", get(runner_info))
         .route("/api/runner/run", post(runner_run))
+        .route("/api/clipboard/history", get(clipboard_history))
+        .route("/api/clipboard/copy", post(clipboard_copy))
+        .route("/api/clipboard/pin", post(clipboard_pin))
+        .route("/api/clipboard/delete", post(clipboard_delete))
+        .route("/api/clipboard/clear", post(clipboard_clear))
+        .route("/api/clipboard/enabled", post(clipboard_set_enabled))
         .route("/api/services", get(services_get).post(services_upsert))
         .route("/api/services/{id}", axum::routing::delete(services_delete))
         .route("/api/services/{id}/toggle", post(services_toggle))
@@ -793,6 +806,39 @@ async fn git_checkout(
 }
 
 #[derive(Deserialize)]
+struct DeleteBranchBody {
+    path: String,
+    branch: String,
+    #[serde(default)]
+    force: bool,
+    /// Nome del remote (es. "origin") da cui eliminare anche il branch; assente
+    /// = solo locale.
+    #[serde(default)]
+    remote: Option<String>,
+}
+
+async fn git_delete_branch(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<DeleteBranchBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::git::delete_branch(
+        &body.path,
+        &body.branch,
+        body.force,
+        body.remote.as_deref(),
+    )
+    .await
+    {
+        Ok(branches) => Json(json!({ "ok": true, "data": { "branches": branches } })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CommitsQuery {
     path: String,
@@ -800,12 +846,22 @@ struct CommitsQuery {
     limit: Option<u32>,
     #[serde(default)]
     skip: Option<u32>,
+    /// Ref (branch/tag/hash) di cui elencare i commit; assente = HEAD.
+    #[serde(default, rename = "ref")]
+    git_ref: Option<String>,
 }
 
 async fn git_commits(
     axum::extract::Query(query): axum::extract::Query<CommitsQuery>,
 ) -> Response {
-    match crate::services::git::commits(&query.path, query.limit.unwrap_or(50), query.skip.unwrap_or(0)).await {
+    match crate::services::git::commits(
+        &query.path,
+        query.git_ref.as_deref(),
+        query.limit.unwrap_or(50),
+        query.skip.unwrap_or(0),
+    )
+    .await
+    {
         Ok(commits) => Json(json!({ "ok": true, "data": { "commits": commits } })).into_response(),
         Err(e) => git_error_response(e),
     }
@@ -826,6 +882,34 @@ async fn git_checkout_commit(
         return remote_forbidden();
     }
     match crate::services::git::checkout_commit(&body.path, &body.hash).await {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+async fn git_revert(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<CheckoutCommitBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::git::revert_commit(&body.path, &body.hash).await {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(e) => git_error_response(e),
+    }
+}
+
+async fn git_cherry_pick(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<CheckoutCommitBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::git::cherry_pick_commit(&body.path, &body.hash).await {
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(e) => git_error_response(e),
     }
@@ -1083,6 +1167,96 @@ async fn runner_run(
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(message) => internal_error(message),
     }
+}
+
+// ---------- storico appunti ----------
+
+fn clipboard_payload(state: &ServerState) -> serde_json::Value {
+    json!({
+        "entries": state.clipboard.list(),
+        "enabled": state.clipboard.enabled(),
+        "supported": crate::adapters::clipboard::supported(),
+    })
+}
+
+async fn clipboard_history(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": clipboard_payload(&state) }))
+}
+
+#[derive(Deserialize)]
+struct ClipIdBody {
+    id: u64,
+}
+
+async fn clipboard_copy(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<ClipIdBody>,
+) -> Response {
+    // Scrivere negli appunti tocca lo stato del sistema: stessa guardia delle
+    // altre scritture (locale, o LAN col controllo remoto attivo).
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let Some(text) = state.clipboard.text_of(body.id) else {
+        return internal_error("voce non trovata".into());
+    };
+    match crate::adapters::clipboard::write_text(&text) {
+        Ok(()) => {
+            state.clipboard.mark_written(&text);
+            Json(json!({ "ok": true, "data": { "copied": true } })).into_response()
+        }
+        Err(message) => internal_error(message),
+    }
+}
+
+#[derive(Deserialize)]
+struct ClipPinBody {
+    id: u64,
+    pinned: bool,
+}
+
+async fn clipboard_pin(
+    State(state): State<ServerState>,
+    Json(body): Json<ClipPinBody>,
+) -> Json<serde_json::Value> {
+    let ok = state.clipboard.set_pinned(body.id, body.pinned);
+    Json(json!({ "ok": ok, "data": clipboard_payload(&state) }))
+}
+
+async fn clipboard_delete(
+    State(state): State<ServerState>,
+    Json(body): Json<ClipIdBody>,
+) -> Json<serde_json::Value> {
+    let ok = state.clipboard.delete(body.id);
+    Json(json!({ "ok": ok, "data": clipboard_payload(&state) }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipClearBody {
+    keep_pinned: Option<bool>,
+}
+
+async fn clipboard_clear(
+    State(state): State<ServerState>,
+    Json(body): Json<ClipClearBody>,
+) -> Json<serde_json::Value> {
+    state.clipboard.clear(body.keep_pinned.unwrap_or(false));
+    Json(json!({ "ok": true, "data": clipboard_payload(&state) }))
+}
+
+#[derive(Deserialize)]
+struct ClipEnabledBody {
+    enabled: bool,
+}
+
+async fn clipboard_set_enabled(
+    State(state): State<ServerState>,
+    Json(body): Json<ClipEnabledBody>,
+) -> Json<serde_json::Value> {
+    state.clipboard.set_enabled(body.enabled);
+    Json(json!({ "ok": true, "data": { "enabled": state.clipboard.enabled() } }))
 }
 
 // ---------- dischi ----------

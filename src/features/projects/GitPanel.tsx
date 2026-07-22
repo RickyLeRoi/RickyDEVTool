@@ -24,6 +24,8 @@ export function GitPanel({ path }: { path: string }) {
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState<"fetch" | "pull" | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
+  // Branch di cui mostrare i commit; null = HEAD (branch corrente).
+  const [commitsRef, setCommitsRef] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const r = await api<GitRepoInfo>(`/api/git/info?path=${encodeURIComponent(path)}`);
@@ -36,6 +38,7 @@ export function GitPanel({ path }: { path: string }) {
   useEffect(() => {
     setInfo(null);
     setSummary(null);
+    setCommitsRef(null);
     load();
   }, [load]);
 
@@ -108,16 +111,21 @@ export function GitPanel({ path }: { path: string }) {
           <BranchPicker
             path={path}
             dirty={info.dirty}
+            selectedRef={commitsRef}
+            onSelectBranch={setCommitsRef}
             onCheckout={(updated) => {
               setInfo(updated);
+              setCommitsRef(null);
               setSummary(`Checkout su ${updated.currentBranch ?? "detached"}`);
             }}
           />
           <CommitList
             path={path}
             dirty={info.dirty}
+            refName={commitsRef}
             onCheckout={(updated) => {
               setInfo(updated);
+              setCommitsRef(null);
               setSummary(
                 updated.currentBranch
                   ? `Checkout su ${updated.currentBranch}`

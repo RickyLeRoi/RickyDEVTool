@@ -1,4 +1,5 @@
 // Servizi applicativi OS-agnostici (parlano solo con CLI cross-platform o std).
+pub mod clipboard;
 pub mod dotnet;
 pub mod drop;
 pub mod env;
