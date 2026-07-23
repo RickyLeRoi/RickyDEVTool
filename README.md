@@ -47,4 +47,48 @@ Tauri 2 come shell (finestra, tray, autostart); tutto il resto è un core Rust c
 
 ## CI / release
 
-GitHub Actions ([.github/workflows/build.yml](.github/workflows/build.yml)): test matrix sui 3 OS a ogni push; su tag `v*` bundla gli installer e crea una release draft. Firma codice e auto-updater non ancora attivi (uso personale) — su macOS Gatekeeper e su Windows SmartScreen mostrano l'avviso "sviluppatore non verificato".
+GitHub Actions ([.github/workflows/build.yml](.github/workflows/build.yml)): a ogni push gira la test matrix sui 3 OS (`cargo test` + i contract test `--ignored`) e lo smoke test Playwright; su tag `v*` il job `bundle` compila gli installer, firma gli artefatti dell'updater e crea una **release draft**.
+
+Firma codice OS (Apple/Authenticode) **non** attiva (uso personale) → su macOS Gatekeeper e su Windows SmartScreen mostrano "sviluppatore non verificato" (aggirabile: click destro > Apri).
+
+### Auto-updater
+
+L'app controlla all'avvio la release più recente su GitHub (endpoint in [tauri.conf.json](src-tauri/tauri.conf.json)) e, se ce n'è una nuova, mostra un banner per scaricarla e riavviare. La firma usa **minisign** (chiave dedicata, indipendente dalla notarizzazione Apple), quindi funziona anche senza account Apple Developer.
+
+Perché la CI possa firmare gli artefatti servono due **secret** nel repo, corrispondenti alla `pubkey` in [tauri.conf.json](src-tauri/tauri.conf.json):
+
+- `TAURI_SIGNING_PRIVATE_KEY` — la chiave privata (contenuto del file `.key`, o la sua stringa base64);
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — la password scelta al `tauri signer generate` (vuota se non impostata).
+
+**Impostarli da CLI** — usa `printf %s` (NON `echo` né l'incolla nel prompt interattivo: aggiungono un `\n` finale che rompe la decodifica base64 → `Invalid padding` in fase di firma):
+
+```bash
+printf %s 'LA_TUA_CHIAVE_PRIVATA' | gh secret set TAURI_SIGNING_PRIVATE_KEY --repo <owner>/<repo>
+printf %s 'LA_TUA_PASSWORD'      | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo <owner>/<repo>
+# senza password:
+printf '' | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo <owner>/<repo>
+```
+
+**Oppure dalla UI web**: Settings → Secrets and variables → Actions → New repository secret. Incolla il valore **su una riga sola, senza premere Invio** (un newline finale dà lo stesso `Invalid padding`).
+
+> La chiave privata deve stare **solo** nei secret, mai committata nel repo. Se rigeneri la coppia (`tauri signer generate`), aggiorna anche la `pubkey` nel config con `base64 -i chiave.key.pub`.
+>
+> ⚠️ La `pubkey` nel config deve essere base64 **completa** (padding `=` incluso): una stringa troncata dà `failed to decode pubkey: Invalid padding` in fase di build. Verifica con `python3 -c "import base64,json;base64.b64decode(json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey'],validate=True)"` (nessun errore = ok).
+
+### Pubblicare una release
+
+1. Bump di `version` in [tauri.conf.json](src-tauri/tauri.conf.json) e [Cargo.toml](src-tauri/Cargo.toml), commit;
+2. tag e push: `git tag v0.2.0 && git push origin v0.2.0`;
+3. la CI builda, firma e carica gli installer + `latest.json` su una release **draft**;
+4. su GitHub premi **Publish**: solo così l'endpoint `releases/latest/download/latest.json` diventa raggiungibile e i client vedono l'aggiornamento.
+
+### Ri-eseguire i job falliti
+
+I secret vengono letti a runtime, quindi dopo aver corretto un secret **non serve ri-taggare**: basta ri-eseguire i job falliti della stessa run.
+
+```bash
+gh run list --repo <owner>/<repo> --limit 5          # trova il RUN_ID
+gh run rerun --failed --repo <owner>/<repo> <RUN_ID>  # rilancia solo i job falliti
+```
+
+In alternativa, dalla pagina della run su GitHub: **Re-run failed jobs**.
