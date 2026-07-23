@@ -46,6 +46,9 @@ pub struct AppConfig {
     pub drop_hub_name: String,
     /// Profili di avvio composito (più task lanciati insieme).
     pub launch_bundles: Vec<crate::services::launch::LaunchBundle>,
+    /// Host Docker remoto (es. "ssh://user@host" o "tcp://ip:2375"); vuoto = daemon locale.
+    #[serde(default)]
+    pub docker_host: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -70,6 +73,7 @@ impl Default for AppConfig {
             drop_hub_id: String::new(),
             drop_hub_name: String::new(),
             launch_bundles: Vec::new(),
+            docker_host: None,
         }
     }
 }

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, API_BASE, post } from "../../lib/api";
 import { ToolsPanel } from "./ToolsPanel";
-import { PushPanel } from "./PushPanel";
 import { Toggle } from "../../components/Toggle";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
@@ -13,12 +12,17 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: "dark", label: "Scuro" },
 ];
 
+const isTauri = "__TAURI_INTERNALS__" in window;
+
 export function Settings() {
   const [lan, setLan] = useState<LanInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
   const [theme, setTheme] = useState<Theme>(getTheme());
   const [access, setAccess] = useState<AccessibilityStatus | null>(null);
+  // true dopo un "Ricontrolla" che trova il permesso ancora non concesso: su
+  // macOS spesso serve riavviare l'app perché il processo veda il cambio.
+  const [recheckedStillOff, setRecheckedStillOff] = useState(false);
 
   useEffect(() => {
     api<LanInfo>("/api/lan").then((r) => {
@@ -38,7 +42,19 @@ export function Settings() {
   const refreshAccess = () =>
     api<AccessibilityStatus>("/api/system/accessibility").then((r) => {
       if (r.ok) setAccess(r.data);
+      return r.ok ? r.data : null;
     });
+
+  // Ricontrolla su richiesta esplicita: se ancora spento, mostra l'avviso "riavvia".
+  const recheckAccess = async () => {
+    const data = await refreshAccess();
+    setRecheckedStillOff(!!data && data.supported && !data.trusted);
+  };
+
+  const relaunchApp = async () => {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  };
 
   const chooseTheme = (t: Theme) => {
     setTheme(t);
@@ -58,9 +74,16 @@ export function Settings() {
     const r = await post<{ antiIdleEnabled: boolean }>("/api/config/anti-idle", { enabled });
     if (r.ok) {
       setLan({ ...lan, antiIdleEnabled: r.data.antiIdleEnabled });
-      if (enabled) refreshAccess(); // il permesso potrebbe essere cambiato
+      if (enabled) {
+        setRecheckedStillOff(false);
+        refreshAccess(); // il permesso potrebbe essere cambiato
+      }
     }
   };
+
+  // Dal telefono i toggle di comportamento restano bloccati finché non è attivo
+  // il controllo remoto: sbloccarlo (qui sotto) li rende operativi.
+  const locked = !!lan?.remote && !lan?.remoteControlEnabled;
 
   // Avvisa solo se serve davvero: anti-idle attivo, permesso rilevante e non concesso.
   const needsAccessibility =
@@ -98,22 +121,39 @@ export function Settings() {
           <Toggle
             checked={lan?.antiIdleEnabled ?? false}
             onChange={toggleAntiIdle}
-            disabled={!lan}
+            disabled={!lan || locked}
             label="Anti-inattività"
           />
         </div>
+        {locked && (
+          <div className="hint hint-locked">
+            🔒 Dal telefono i comandi sono in sola lettura: attiva il <strong>Controllo
+            remoto</strong> qui sotto per gestire questo interruttore.
+          </div>
+        )}
         {needsAccessibility && (
           <div className="banner banner-warn">
             <div>
               <strong>Permesso Accessibilità richiesto.</strong> Per muovere il mouse, macOS
               chiede di autorizzare RickyDEVTool in Impostazioni di Sistema → Privacy e sicurezza
               → Accessibilità. Finché non lo concedi, l'anti-inattività resta senza effetto.
+              {recheckedStillOff && (
+                <div className="banner-subnote">
+                  Risulta ancora non concesso. Se l'hai appena attivato, macOS spesso applica il
+                  permesso solo dopo aver <strong>riavviato l'app</strong>.
+                </div>
+              )}
             </div>
             <div className="banner-actions">
               <button onClick={() => post("/api/system/open-accessibility", {})}>
                 Apri Accessibilità
               </button>
-              <button onClick={refreshAccess}>Ho attivato, ricontrolla</button>
+              <button onClick={recheckAccess}>Ho attivato, ricontrolla</button>
+              {recheckedStillOff && isTauri && (
+                <button className="primary" onClick={relaunchApp}>
+                  Riavvia RickyDEVTool
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -164,8 +204,6 @@ export function Settings() {
           </>
         )}
       </section>
-
-      <PushPanel />
 
       <ToolsPanel />
 

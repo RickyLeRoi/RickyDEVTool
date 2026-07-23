@@ -70,11 +70,39 @@ pub fn kill_protection_for(name: &str) -> &'static str {
 /// App note: non sono porte zombie.
 const LEGIT_DAEMONS: &[&str] = &["postgres", "mysql", "redis", "docker", "nginx", "plex", "ssh", "samba"];
 
-/// "porta zombie": un listener non di sistema il cui processo padre non è più vivo
+/// Runtime/interpreti tipici dei dev server: sono i processi che restano
+/// "appesi" quando chiudi il terminale che li aveva avviati. Solo per questi ha
+/// senso l'euristica zombie (vedi `is_zombie_listener`).
+const DEV_SERVER_APPS: &[&str] = &["node", "python", "dotnet", "java"];
+const DEV_SERVER_NAMES: &[&str] = &[
+    "node", "deno", "bun", "python", "python3", "ruby", "php", "dotnet",
+    "vite", "next", "webpack", "nodemon", "rails", "flask", "gunicorn",
+    "uvicorn", "cargo", "esbuild", "http-server", "ng",
+];
+
+/// Il processo somiglia a un dev server (runtime effimero avviato da terminale)?
+fn looks_like_dev_server(known_app: Option<&str>, name: &str) -> bool {
+    if matches!(known_app, Some(app) if DEV_SERVER_APPS.contains(&app)) {
+        return true;
+    }
+    let lower = name.to_lowercase();
+    let base = lower.strip_suffix(".exe").unwrap_or(&lower);
+    DEV_SERVER_NAMES.iter().any(|n| base == *n || base.starts_with(&format!("{n} ")))
+}
+
+/// "porta zombie": un dev server orfano, cioè un runtime effimero (node, vite,
+/// python…) il cui processo che l'ha avviato non è più vivo.
+///
+/// Perché limitarsi ai dev server: su macOS QUALSIASI app GUI e servizio lanciato
+/// da launchd ha `ppid == 1`, così come la stessa RickyDEVTool (porta 6969).
+/// Segnalarli tutti come zombie riempiva la lista di falsi positivi. L'orfano che
+/// interessa davvero è il dev server rimasto appeso: solo per quelli applichiamo
+/// il segnale di orfanità.
 /// - `ppid == 1`: reparentato a init/launchd → il padre originale è morto (mac/Linux).
 pub fn is_zombie_listener(
     is_system: bool,
     known_app: Option<&str>,
+    name: &str,
     ppid: Option<u32>,
     parent_alive: bool,
 ) -> bool {
@@ -85,6 +113,9 @@ pub fn is_zombie_listener(
         if LEGIT_DAEMONS.contains(&app) {
             return false;
         }
+    }
+    if !looks_like_dev_server(known_app, name) {
+        return false;
     }
     match ppid {
         None | Some(0) => false,
@@ -133,7 +164,7 @@ pub async fn scan_tcp_listen(include_system: bool) -> Result<PortScan, String> {
         let known_app = classify_known_app(&name, exe_path.as_deref());
         let ppid = p.parent().map(|pp| pp.as_u32());
         let parent_alive = ppid.is_some_and(|pp| sys.process(sysinfo::Pid::from_u32(pp)).is_some());
-        let zombie = is_zombie_listener(is_system, known_app, ppid, parent_alive);
+        let zombie = is_zombie_listener(is_system, known_app, &name, ppid, parent_alive);
 
         if is_system && !include_system {
             hidden_system += 1;
@@ -327,22 +358,26 @@ mod tests {
     #[test]
     fn zombie_listener_euristica() {
         // Dev server reparentato a init/launchd (padre morto): zombie.
-        assert!(is_zombie_listener(false, Some("node"), Some(1), true));
+        assert!(is_zombie_listener(false, Some("node"), "node", Some(1), true));
         // Padre ancora vivo: non zombie.
-        assert!(!is_zombie_listener(false, Some("node"), Some(4821), true));
-        // Padre assente dalla tabella (tipico Windows, niente reparenting): zombie.
-        assert!(!is_zombie_listener(false, Some("node"), Some(4821), true));
-        assert!(is_zombie_listener(false, Some("node"), Some(4821), false));
+        assert!(!is_zombie_listener(false, Some("node"), "node", Some(4821), true));
+        // Padre assente dalla tabella (padre morto): zombie.
+        assert!(is_zombie_listener(false, Some("node"), "node", Some(4821), false));
         // Processo di sistema: mai zombie.
-        assert!(!is_zombie_listener(true, None, Some(1), false));
+        assert!(!is_zombie_listener(true, None, "kernel_task", Some(1), false));
         // Daemon noto avviato al login (orfano per costruzione): non zombie.
-        assert!(!is_zombie_listener(false, Some("postgres"), Some(1), false));
-        assert!(!is_zombie_listener(false, Some("docker"), Some(1), false));
+        assert!(!is_zombie_listener(false, Some("postgres"), "postgres", Some(1), false));
+        assert!(!is_zombie_listener(false, Some("docker"), "docker", Some(1), false));
         // ppid sconosciuto o kernel (0): non decidibile → non zombie.
-        assert!(!is_zombie_listener(false, None, None, false));
-        assert!(!is_zombie_listener(false, None, Some(0), false));
-        // App generica sconosciuta orfana: zombie.
-        assert!(is_zombie_listener(false, None, Some(1), false));
+        assert!(!is_zombie_listener(false, Some("node"), "node", None, false));
+        assert!(!is_zombie_listener(false, Some("node"), "node", Some(0), false));
+        // Dev server riconosciuto solo dal nome (nessun known_app): zombie se orfano.
+        assert!(is_zombie_listener(false, None, "vite", Some(1), false));
+        // App GUI generica orfana (NON un dev server): NON zombie. È il caso della
+        // stessa RickyDEVTool sulla 6969, reparentata a launchd (ppid=1).
+        assert!(!is_zombie_listener(false, None, "RickyDEVTool", Some(1), false));
+        // App generica sconosciuta orfana: non zombie (troppi falsi positivi).
+        assert!(!is_zombie_listener(false, None, "SomeGuiApp", Some(1), false));
     }
 
     #[tokio::test]

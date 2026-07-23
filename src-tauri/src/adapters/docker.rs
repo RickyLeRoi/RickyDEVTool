@@ -15,6 +15,23 @@ fn valid_ref(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
+/// Host Docker remoto accettabile per `-H`: deve avere uno schema noto (così non
+/// può iniziare con `-` e farsi interpretare come flag). Vuoto = daemon locale.
+pub fn valid_host(s: &str) -> bool {
+    const SCHEMES: &[&str] = &["tcp://", "ssh://", "unix://", "npipe://", "http://", "https://"];
+    s.len() <= 255 && SCHEMES.iter().any(|scheme| s.starts_with(scheme))
+}
+
+/// Costruisce `docker [-H <host>]` pronto per aggiungere i suoi argomenti. La CLI
+/// resta locale: l'host cambia solo il daemon a cui si connette (es. la VM Docker).
+fn docker_cmd(host: Option<&str>) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("docker");
+    if let Some(h) = host.filter(|h| valid_host(h)) {
+        cmd.arg("-H").arg(h);
+    }
+    cmd
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Container {
@@ -53,7 +70,7 @@ async fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
-pub async fn state() -> DockerState {
+pub async fn state(host: Option<&str>) -> DockerState {
     if !docker_available().await {
         return DockerState {
             available: false,
@@ -63,7 +80,7 @@ pub async fn state() -> DockerState {
         };
     }
 
-    let output = tokio::process::Command::new("docker")
+    let output = docker_cmd(host)
         .args(["ps", "-a", "--no-trunc", "--format", "{{json .}}"])
         .output()
         .await;
@@ -138,11 +155,11 @@ pub struct Image {
 }
 
 /// Immagini locali (`docker images`). Vuoto se docker manca o il demone è giù.
-pub async fn images() -> Vec<Image> {
+pub async fn images(host: Option<&str>) -> Vec<Image> {
     if !docker_available().await {
         return Vec::new();
     }
-    let output = tokio::process::Command::new("docker")
+    let output = docker_cmd(host)
         .args(["images", "--format", "{{json .}}"])
         .output()
         .await;
@@ -180,7 +197,7 @@ pub enum DockerError {
 }
 
 /// start | stop | restart su un container. Azione di scrittura.
-pub async fn action(id: &str, action: &str) -> Result<(), DockerError> {
+pub async fn action(host: Option<&str>, id: &str, action: &str) -> Result<(), DockerError> {
     if !valid_ref(id) {
         return Err(DockerError::InvalidRef);
     }
@@ -189,7 +206,7 @@ pub async fn action(id: &str, action: &str) -> Result<(), DockerError> {
         _ => return Err(DockerError::InvalidAction),
     };
     tracing::info!(container = id, action = verb, "docker action");
-    let output = tokio::process::Command::new("docker")
+    let output = docker_cmd(host)
         .args([verb, id])
         .output()
         .await
@@ -205,14 +222,17 @@ pub async fn action(id: &str, action: &str) -> Result<(), DockerError> {
 
 /// Comando per lo streaming dei log (ultime 200 righe + follow), avviato via
 /// il task runner come traceroute/npm. Ritorna None se l'id non è valido.
-pub fn logs_command(id: &str) -> Option<(&'static str, Vec<String>)> {
+pub fn logs_command(host: Option<&str>, id: &str) -> Option<(&'static str, Vec<String>)> {
     if !valid_ref(id) {
         return None;
     }
-    Some((
-        "docker",
-        vec!["logs".into(), "--tail".into(), "200".into(), "-f".into(), id.to_string()],
-    ))
+    let mut args = Vec::new();
+    if let Some(h) = host.filter(|h| valid_host(h)) {
+        args.push("-H".into());
+        args.push(h.to_string());
+    }
+    args.extend(["logs".into(), "--tail".into(), "200".into(), "-f".into(), id.to_string()]);
+    Some(("docker", args))
 }
 
 #[cfg(test)]
@@ -257,14 +277,31 @@ mod tests {
 
     #[tokio::test]
     async fn action_rifiuta_ref_e_azioni_invalide() {
-        assert!(matches!(action("bad id", "stop").await, Err(DockerError::InvalidRef)));
-        assert!(matches!(action("valid", "delete").await, Err(DockerError::InvalidAction)));
+        assert!(matches!(action(None, "bad id", "stop").await, Err(DockerError::InvalidRef)));
+        assert!(matches!(action(None, "valid", "delete").await, Err(DockerError::InvalidAction)));
     }
 
     #[test]
     fn logs_command_valida_ref() {
-        assert!(logs_command("abc123").is_some());
-        assert!(logs_command("-rf").is_none());
+        assert!(logs_command(None, "abc123").is_some());
+        assert!(logs_command(None, "-rf").is_none());
+    }
+
+    #[test]
+    fn logs_command_include_host_remoto() {
+        let (_, args) = logs_command(Some("ssh://ricky@192.168.1.50"), "abc123").unwrap();
+        assert_eq!(&args[0], "-H");
+        assert_eq!(&args[1], "ssh://ricky@192.168.1.50");
+        assert!(args.contains(&"abc123".to_string()));
+    }
+
+    #[test]
+    fn host_validation() {
+        assert!(valid_host("tcp://192.168.1.50:2375"));
+        assert!(valid_host("ssh://ricky@192.168.1.50"));
+        assert!(!valid_host("192.168.1.50:2375")); // senza schema
+        assert!(!valid_host("--privileged")); // niente flag travestiti da host
+        assert!(!valid_host(""));
     }
 
     #[test]

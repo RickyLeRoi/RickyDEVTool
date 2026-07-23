@@ -210,8 +210,10 @@ pub async fn start(
         .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
         .route("/api/config/anti-idle", post(set_anti_idle))
+        .route("/api/config/docker-host", get(docker_host_get).post(docker_host_set))
         .route("/api/system/accessibility", get(accessibility_status))
         .route("/api/system/open-accessibility", post(open_accessibility))
+        .route("/api/system/open-url", post(open_url))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -309,7 +311,10 @@ async fn health(State(state): State<ServerState>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn lan_info(State(state): State<ServerState>) -> Json<serde_json::Value> {
+async fn lan_info(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Json<serde_json::Value> {
     let cfg = state.config.get();
     let urls: Vec<String> = netinfo::lan_ips()
         .into_iter()
@@ -317,7 +322,9 @@ async fn lan_info(State(state): State<ServerState>) -> Json<serde_json::Value> {
         .collect();
     Json(json!({
         "ok": true,
-        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled, "antiIdleEnabled": cfg.anti_idle_enabled }
+        // `remote`: la richiesta arriva da un device LAN (non dal desktop). La UI
+        // lo usa per disabilitare i toggle finché il controllo remoto non è attivo.
+        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled, "antiIdleEnabled": cfg.anti_idle_enabled, "remote": !peer.ip().is_loopback() }
     }))
 }
 
@@ -1484,15 +1491,54 @@ async fn disk_format(
 // ---------- docker ----------
 
 /// Stato Docker + lista container: read-only, aperto come la lista porte.
-async fn docker_state() -> Json<serde_json::Value> {
-    let state = crate::adapters::docker::state().await;
-    Json(json!({ "ok": true, "data": state }))
+/// Include l'host configurato (vuoto = daemon locale) così la UI lo mostra.
+async fn docker_state(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    let host = state.config.get().docker_host;
+    let docker = crate::adapters::docker::state(host.as_deref()).await;
+    let mut data = serde_json::to_value(&docker).unwrap_or_else(|_| json!({}));
+    data["host"] = json!(host);
+    Json(json!({ "ok": true, "data": data }))
 }
 
 /// Immagini locali: read-only.
-async fn docker_images() -> Json<serde_json::Value> {
-    let images = crate::adapters::docker::images().await;
+async fn docker_images(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    let host = state.config.get().docker_host;
+    let images = crate::adapters::docker::images(host.as_deref()).await;
     Json(json!({ "ok": true, "data": { "images": images } }))
+}
+
+/// Host Docker remoto configurato (vuoto = locale).
+async fn docker_host_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "host": state.config.get().docker_host } }))
+}
+
+#[derive(Deserialize)]
+struct DockerHostBody {
+    /// Vuoto/null = torna al daemon locale.
+    host: Option<String>,
+}
+
+/// Configura l'host Docker remoto. Solo dal desktop: cambia dove puntano tutte
+/// le azioni Docker.
+async fn docker_host_set(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<DockerHostBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let host = body.host.map(|h| h.trim().to_string()).filter(|h| !h.is_empty());
+    if let Some(h) = &host {
+        if !crate::adapters::docker::valid_host(h) {
+            return internal_error(
+                "Host non valido: usa uno schema come tcp://, ssh:// o unix://".into(),
+            );
+        }
+    }
+    state.config.update(|c| c.docker_host = host.clone());
+    tracing::info!(host = ?host, "docker host aggiornato");
+    Json(json!({ "ok": true, "data": { "host": host } })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -1511,7 +1557,8 @@ async fn docker_action(
     if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
-    match crate::adapters::docker::action(&id, &body.action).await {
+    let host = state.config.get().docker_host;
+    match crate::adapters::docker::action(host.as_deref(), &id, &body.action).await {
         Ok(()) => Json(json!({ "ok": true, "data": { "done": true } })).into_response(),
         Err(DockerError::InvalidRef) => internal_error("id container non valido".into()),
         Err(DockerError::InvalidAction) => internal_error("azione non valida".into()),
@@ -1529,7 +1576,8 @@ async fn docker_logs(
     if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
-    let Some((program, args)) = crate::adapters::docker::logs_command(&id) else {
+    let host = state.config.get().docker_host;
+    let Some((program, args)) = crate::adapters::docker::logs_command(host.as_deref(), &id) else {
         return internal_error("id container non valido".into());
     };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1619,26 +1667,26 @@ struct RemoteControlBody {
     enabled: bool,
 }
 
-/// Attivabile solo dal desktop: un telefono non può auto-promuoversi.
+/// Attivabile anche da un device LAN abbinato: è il toggle che sblocca gli altri
+/// dal telefono. Il pairing (cookie) è già la barriera di fiducia; parte comunque
+/// spento, così azioni distruttive non capitano per un tocco accidentale.
 async fn set_remote_control(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<RemoteControlBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     state.config.update(|c| c.remote_control_enabled = body.enabled);
     tracing::info!(enabled = body.enabled, "remote control aggiornato");
     Json(json!({ "ok": true, "data": { "remoteControlEnabled": body.enabled } })).into_response()
 }
 
+/// Come le altre scritture: locale, oppure LAN col controllo remoto attivo. Così
+/// dal telefono si può gestire l'anti-inattività una volta sbloccato il remoto.
 async fn set_anti_idle(
     State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<RemoteControlBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
+    if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
     state.config.update(|c| c.anti_idle_enabled = body.enabled);
@@ -1658,6 +1706,30 @@ async fn open_accessibility(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Respo
     match crate::adapters::accessibility::open_settings() {
         Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
         Err(message) => internal_error(message),
+    }
+}
+
+#[derive(Deserialize)]
+struct OpenUrlBody {
+    url: String,
+}
+
+/// Apre un URL nel browser di sistema del desktop. Serve alla webview Tauri
+/// (dove `window.open` è un no-op): i browser LAN aprono da soli con window.open.
+async fn open_url(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<OpenUrlBody>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let url = body.url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return internal_error("URL non valido".into());
+    }
+    match tauri_plugin_opener::open_url(url, None::<String>) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
+        Err(e) => internal_error(e.to_string()),
     }
 }
 

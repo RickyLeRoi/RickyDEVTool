@@ -160,13 +160,18 @@ impl ClipboardHistory {
 
     /// Svuota la cronologia. Con `keep_pinned` conserva le voci fissate.
     pub fn clear(&self, keep_pinned: bool) {
+        // Allinea `last_seen` alla clipboard di sistema attuale (letta fuori dal
+        // lock): senza questo, il prossimo giro del sampler rivedrebbe lo stesso
+        // contenuto come "nuovo" e farebbe ricomparire l'ultimo elemento appena
+        // svuotato. Così la lista resta vuota finché non copi qualcosa di diverso.
+        let current = crate::adapters::clipboard::read_text();
         let mut st = self.state.lock().unwrap();
         if keep_pinned {
             st.entries.retain(|e| e.pinned);
         } else {
             st.entries.clear();
         }
-        st.last_seen = None;
+        st.last_seen = current;
     }
 
     /// Testo di una voce (per la re-copia lato server).

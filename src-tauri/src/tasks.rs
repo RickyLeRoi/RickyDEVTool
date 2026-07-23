@@ -251,8 +251,12 @@ impl TaskRegistry {
 
     /// Rimuove dalla lista i task terminati (i log restano nel pannello finché aperto).
     pub fn clear_finished(&self) {
-        let mut tasks = self.tasks.lock().expect("task lock");
-        tasks.retain(|_, h| h.info.state == TaskState::Running);
+        {
+            let mut tasks = self.tasks.lock().expect("task lock");
+            tasks.retain(|_, h| h.info.state == TaskState::Running);
+        }
+        // Notifica i client (barra laterale / pannello Task) della lista aggiornata.
+        self.bus.publish("tasks", serde_json::json!({ "tasks": self.list() }));
     }
 
     fn publish_state(&self, _info: &TaskInfo) {

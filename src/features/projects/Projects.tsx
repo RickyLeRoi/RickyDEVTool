@@ -44,7 +44,9 @@ export function Projects() {
   const [listing, setListing] = useState<DirListing | null>(null);
   const [scan, setScan] = useState<FolderScan | null>(null);
   const [selected, setSelected] = useState<ProjectRef | null>(null);
-  const [browsing, setBrowsing] = useState(false);
+  // Niente aperto all'avvio: parte già col browser "Apri cartella" attivo, così
+  // c'è subito da dove iniziare invece di una schermata vuota.
+  const [browsing, setBrowsing] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

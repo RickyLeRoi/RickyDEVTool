@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ws } from "../../lib/ws";
-import { API_BASE } from "../../lib/api";
+import { API_BASE, post } from "../../lib/api";
 import { usePortsStore } from "../../stores/portsStore";
 import { KillDialog } from "./KillDialog";
 import type { PortEntry, PortProcess, PortScan } from "../../lib/types";
@@ -35,8 +35,15 @@ function PortRow({ entry }: { entry: PortEntry }) {
 
   const openInBrowser = () => {
     const base = API_BASE || window.location.origin;
-    const host = new URL(base).hostname === "127.0.0.1" ? "localhost" : new URL(base).hostname;
-    window.open(`http://${host}:${entry.port}`, "_blank");
+    const hostname = new URL(base).hostname;
+    const host = hostname === "127.0.0.1" ? "localhost" : hostname;
+    const url = `http://${host}:${entry.port}`;
+    if ("__TAURI_INTERNALS__" in window) {
+      // Nella webview Tauri window.open è un no-op: apri nel browser di sistema.
+      post("/api/system/open-url", { url });
+    } else {
+      window.open(url, "_blank");
+    }
   };
 
   return (

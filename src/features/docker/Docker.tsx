@@ -53,6 +53,54 @@ function stateClass(state: string): string {
   return "docker-state stopped";
 }
 
+// Configurazione dell'host Docker: vuoto = daemon locale; altrimenti si punta a
+// un Docker remoto (es. una VM sul server di casa) via ssh:// o tcp://.
+function HostBar({ host, onSaved }: { host: string | null; onSaved: () => void }) {
+  const [value, setValue] = useState(host ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => setValue(host ?? ""), [host]);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    const r = await post<{ host: string | null }>("/api/config/docker-host", {
+      host: value.trim() || null,
+    });
+    setSaving(false);
+    if (r.ok) onSaved();
+    else setError(r.error.message);
+  };
+
+  const dirty = value.trim() !== (host ?? "");
+
+  return (
+    <div className="docker-host">
+      <label className="form-row">
+        <span title="Vuoto = daemon locale">Host Docker</span>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="ssh://user@host  ·  tcp://ip:2375  (vuoto = locale)"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+          }}
+        />
+        <button className="small" onClick={save} disabled={saving || !dirty}>
+          {saving ? "Salvo…" : "Salva"}
+        </button>
+      </label>
+      {error && <div className="banner banner-error">{error}</div>}
+      <div className="hint">
+        {host
+          ? `Puntando a un host remoto: ${host}`
+          : "Daemon locale. Per un Docker su un'altra macchina (es. VM Proxmox) inserisci ssh:// o tcp:// (serve comunque la CLI docker su questo computer)."}
+      </div>
+    </div>
+  );
+}
+
 function ContainerRow({
   container,
   onChanged,
@@ -153,6 +201,8 @@ export function Docker() {
         </button>
       </div>
 
+      <HostBar host={state?.host ?? null} onSaved={load} />
+
       {!state && <div className="empty">Controllo Docker…</div>}
 
       {state && !state.available && (
@@ -163,8 +213,9 @@ export function Docker() {
 
       {state && state.available && state.daemonDown && (
         <div className="banner banner-error">
-          Docker è installato ma il demone non risponde. Avvia Docker Desktop (o il tuo runtime)
-          e riprova.
+          {state.host
+            ? `Non riesco a contattare il Docker remoto (${state.host}). Verifica che l'host sia raggiungibile e che il daemon sia attivo.`
+            : "Docker è installato ma il demone non risponde. Avvia Docker Desktop (o il tuo runtime) e riprova."}
         </div>
       )}
 

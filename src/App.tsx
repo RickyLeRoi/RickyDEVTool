@@ -18,11 +18,13 @@ import { DropToasts } from "./features/drop/DropToasts";
 import { UpdateBanner } from "./features/update/UpdateBanner";
 import { usePresence } from "./features/drop/usePresence";
 import { ws } from "./lib/ws";
+import { api } from "./lib/api";
 import { useStatsStore } from "./stores/statsStore";
 import { useDisksStore } from "./stores/disksStore";
 import { useDropStore } from "./stores/dropStore";
 import { useTrayIntentStore } from "./stores/trayIntentStore";
-import type { DiskInfo, MachineStats } from "./lib/types";
+import { useTasksStore } from "./stores/tasksStore";
+import type { DiskInfo, MachineStats, TaskInfo } from "./lib/types";
 
 type Section =
   | "dashboard"
@@ -39,6 +41,10 @@ type Section =
   | "drop"
   | "settings";
 
+// Task NON è nella rail fissa: compare come voce sopra Impostazioni solo se ci
+// sono task nella sessione corrente (vedi rendering più sotto).
+const TASK_SECTION = { id: "tasks" as Section, icon: "🧾", label: "Task" };
+
 const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "dashboard", icon: "🖥", label: "Dashboard" },
   { id: "ports", icon: "🔌", label: "Porte" },
@@ -46,7 +52,6 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "services", icon: "📡", label: "Servizi" },
   { id: "net", icon: "🌐", label: "Rete" },
   { id: "docker", icon: "🐳", label: "Docker" },
-  { id: "tasks", icon: "🧾", label: "Task" },
   { id: "launch", icon: "🚀", label: "Avvii" },
   { id: "calc", icon: "🧮", label: "Calcolatrice" },
   { id: "color", icon: "🎨", label: "Colori" },
@@ -55,7 +60,8 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
 
-const SECTION_IDS = new Set<string>(SECTIONS.map((s) => s.id));
+// Task resta indirizzabile via hash/tray anche se non è nella rail fissa.
+const SECTION_IDS = new Set<string>([...SECTIONS.map((s) => s.id), TASK_SECTION.id]);
 
 // URL tipo http://<ip>:6969/#/services). Ignora `#pair=…` (gestito da PairGate).
 function sectionFromHash(): Section | null {
@@ -69,9 +75,22 @@ export default function App() {
   const setError = useStatsStore((s) => s.setError);
   const setDisks = useDisksStore((s) => s.setDisks);
   const peerCount = useDropStore((s) => s.peers.length);
+  const setTasks = useTasksStore((s) => s.setTasks);
+  const taskCount = useTasksStore((s) => s.tasks.length);
 
   // Presenza drop attiva sempre: sei visibile e ricevi da qualsiasi sezione.
   usePresence();
+
+  // Conteggio task sempre monitorato: decide se mostrare la voce Task nella rail.
+  // Il topic "tasks" è a eventi (spawn/uscita/pulizia), non un poller.
+  useEffect(() => {
+    api<{ tasks: TaskInfo[] }>("/api/tasks").then((r) => {
+      if (r.ok) setTasks(r.data.tasks);
+    });
+    return ws.subscribe("tasks", (event) => {
+      if (event.topic === "tasks") setTasks((event.payload as { tasks: TaskInfo[] }).tasks);
+    });
+  }, [setTasks]);
 
   // Click su una voce del menu del tray: naviga sulla sezione giusta.
   // Il bridge Tauri non esiste quando la pagina è aperta da un browser
@@ -133,22 +152,44 @@ export default function App() {
     <PairGate>
       <div className="shell">
         <nav className="rail">
-          {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              className={`rail-btn ${section === s.id ? "active" : ""}`}
-              title={s.label}
-              onClick={() => setSection(s.id)}
-            >
-              <span className="rail-icon">
-                {s.icon}
-                {s.id === "drop" && peerCount > 0 && (
-                  <span className="rail-dot" title={`${peerCount} dispositivi online`} />
-                )}
-              </span>
-              <span className="rail-label">{s.label}</span>
-            </button>
-          ))}
+          {SECTIONS.flatMap((s) => {
+            const items = [];
+            // La voce Task appare qui (sopra Impostazioni) solo se ci sono task
+            // nella sessione corrente.
+            if (s.id === "settings" && taskCount > 0) {
+              items.push(
+                <button
+                  key={TASK_SECTION.id}
+                  className={`rail-btn ${section === TASK_SECTION.id ? "active" : ""}`}
+                  title={`${TASK_SECTION.label} (${taskCount})`}
+                  onClick={() => setSection(TASK_SECTION.id)}
+                >
+                  <span className="rail-icon">
+                    {TASK_SECTION.icon}
+                    <span className="rail-dot" title={`${taskCount} task`} />
+                  </span>
+                  <span className="rail-label">{TASK_SECTION.label}</span>
+                </button>,
+              );
+            }
+            items.push(
+              <button
+                key={s.id}
+                className={`rail-btn ${section === s.id ? "active" : ""}`}
+                title={s.label}
+                onClick={() => setSection(s.id)}
+              >
+                <span className="rail-icon">
+                  {s.icon}
+                  {s.id === "drop" && peerCount > 0 && (
+                    <span className="rail-dot" title={`${peerCount} dispositivi online`} />
+                  )}
+                </span>
+                <span className="rail-label">{s.label}</span>
+              </button>,
+            );
+            return items;
+          })}
         </nav>
 
         <main className="main">

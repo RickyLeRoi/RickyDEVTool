@@ -419,6 +419,20 @@ input {
 .docker-images {
   margin-top: 8px;
 }
+.docker-host {
+  margin: 4px 0 14px;
+  padding: 10px 12px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  border-radius: 8px;
+}
+.docker-host .form-row {
+  margin: 0;
+}
+.docker-host .hint {
+  margin-top: 6px;
+  max-width: none;
+}
 
 /* ---------- task section ---------- */
 .task-table {
@@ -1615,6 +1629,19 @@ button.ghost:hover {
   display: flex;
   gap: 8px;
   margin-top: 8px;
+  flex-wrap: wrap;
+}
+.banner-subnote {
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.hint-locked {
+  margin-top: 8px;
+  max-width: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
 }
 
 .qr-dialog {

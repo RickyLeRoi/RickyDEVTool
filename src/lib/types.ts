@@ -47,6 +47,8 @@ export interface DockerState {
   daemonDown: boolean;
   containers: DockerContainer[];
   error?: string;
+  /** Host Docker remoto configurato (null/"" = daemon locale). */
+  host?: string | null;
 }
 
 export interface DockerImage {
@@ -292,6 +294,8 @@ export interface LanInfo {
   lanEnabled: boolean;
   remoteControlEnabled: boolean;
   antiIdleEnabled: boolean;
+  /** La richiesta arriva da un device LAN (non dal desktop). */
+  remote: boolean;
 }
 
 // ---------- net tools ----------

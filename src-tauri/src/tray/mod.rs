@@ -91,6 +91,7 @@ fn build_menu(
     let anti_idle_item = CheckMenuItemBuilder::with_id("toggle:anti-idle", "Anti-inattività")
         .checked(cfg.anti_idle_enabled)
         .build(app)?;
+    let sections_submenu = build_sections_submenu(app)?;
     let tools_submenu = build_tools_submenu(app, &snap)?;
 
     let lan_label = match (lan_enabled, crate::netinfo::lan_ips().first()) {
@@ -111,6 +112,7 @@ fn build_menu(
         .item(&pairing_submenu)
         .item(&anti_idle_item)
         .separator()
+        .item(&sections_submenu)
         .item(&tools_submenu)
         .separator()
         .item(&open_item)
@@ -270,6 +272,29 @@ fn build_pairing_submenu(app: &AppHandle, cfg: &crate::config::AppConfig) -> tau
         .item(&qr_item)
         .item(&remote_item)
         .build()
+}
+
+/// Scorciatoie che aprono l'app direttamente sulla sezione scelta: dà al tray
+/// accesso rapido anche alle sezioni senza un proprio sottomenu di dati
+/// (Progetti, Docker, Avvii, Appunti, Colori, Calcolatrice, Task, Dashboard).
+fn build_sections_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
+    const SECTIONS: &[(&str, &str)] = &[
+        ("dashboard", "🖥 Dashboard"),
+        ("projects", "📁 Progetti"),
+        ("docker", "🐳 Docker"),
+        ("tasks", "🧾 Task"),
+        ("launch", "🚀 Avvii"),
+        ("clipboard", "📋 Appunti"),
+        ("color", "🎨 Colori"),
+        ("calc", "🧮 Calcolatrice"),
+        ("settings", "⚙️ Impostazioni"),
+    ];
+    let mut builder = SubmenuBuilder::new(app, "Apri sezione");
+    for (id, label) in SECTIONS {
+        let item = MenuItemBuilder::with_id(format!("nav:{id}"), *label).build(app)?;
+        builder = builder.item(&item);
+    }
+    builder.build()
 }
 
 fn build_tools_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Submenu<Wry>> {
