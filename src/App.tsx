@@ -54,8 +54,16 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
 
+const SECTION_IDS = new Set<string>(SECTIONS.map((s) => s.id));
+
+// URL tipo http://<ip>:6969/#/services). Ignora `#pair=…` (gestito da PairGate).
+function sectionFromHash(): Section | null {
+  const m = window.location.hash.match(/^#\/([a-z]+)/);
+  return m && SECTION_IDS.has(m[1]) ? (m[1] as Section) : null;
+}
+
 export default function App() {
-  const [section, setSection] = useState<Section>("dashboard");
+  const [section, setSection] = useState<Section>(() => sectionFromHash() ?? "dashboard");
   const push = useStatsStore((s) => s.push);
   const setError = useStatsStore((s) => s.setError);
   const setDisks = useDisksStore((s) => s.setDisks);
@@ -86,6 +94,19 @@ export default function App() {
       unlisten?.();
     };
   }, []);
+
+  // Deep-link
+  useEffect(() => {
+    if (sectionFromHash() !== section) {
+      history.replaceState(null, "", `#/${section}`);
+    }
+    const onHashChange = () => {
+      const next = sectionFromHash();
+      if (next) setSection(next);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [section]);
 
   // Il pannello vital signs è sempre visibile, quindi il topic "stats"
   // resta sottoscritto per tutta la vita della UI.

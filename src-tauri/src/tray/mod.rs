@@ -1,13 +1,4 @@
 //! Menu contestuale dell'icona nella barra applicazioni.
-//!
-//! Le voci che richiedono un'interazione ricca (testo libero, immagini) non
-//! sono realizzabili in un menu nativo: portano in primo piano la finestra
-//! principale e la navigano già sulla sezione/voce giusta via l'evento
-//! `tray-navigate` (ascoltato dal frontend). Le azioni distruttive (kill
-//! processo, eject disco) fanno lo stesso: il menu resta un pannello di
-//! lettura veloce, le conferme robuste restano solo nell'app — vedi
-//! `[[tray-decisioni]]` in PROJECT.md/QUESTIONS.md per il perché.
-//!
 //! I dati mostrati (CPU/RAM/porte/servizi/strumenti) vengono da uno snapshot
 //! rinfrescato in background (vedi `snapshot.rs`): il click sul tray non
 //! aspetta mai uno scan o un check servizi dal vivo.

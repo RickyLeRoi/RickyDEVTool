@@ -396,4 +396,18 @@ mod tests {
         assert_eq!(git.source, "userConfig");
         assert!(!git.found);
     }
+
+    #[tokio::test]
+    #[ignore = "contract test per-OS: risolve git nel PATH e ne legge la versione (--ignored)"]
+    async fn contract_discovery_git_reale() {
+        let git = discover_cli("git").await;
+        assert!(git.found, "git non risolto nel PATH");
+        assert_eq!(git.source, "PATH");
+        assert!(git.path.is_some());
+        let version = git.version.expect("versione di git");
+        assert!(
+            version.to_lowercase().contains("git version"),
+            "output versione inatteso: {version:?}"
+        );
+    }
 }

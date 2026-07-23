@@ -50,6 +50,14 @@ function PortRow({ entry }: { entry: PortEntry }) {
             <span key={p.pid} className="proc-chip">
               {p.name}
               <AppBadge app={p.knownApp} />
+              {p.zombie && (
+                <span
+                  className="badge badge-warn"
+                  title="Porta zombie: il processo che l'ha avviata non è più attivo (probabile dev server rimasto appeso)."
+                >
+                  zombie
+                </span>
+              )}
             </span>
           ))}
         </td>
@@ -73,6 +81,14 @@ function PortRow({ entry }: { entry: PortEntry }) {
                       <AppBadge app={p.knownApp} />
                       {p.killProtection === "typed-confirm" && (
                         <span className="badge badge-warn">protetto</span>
+                      )}
+                      {p.zombie && (
+                        <span
+                          className="badge badge-warn"
+                          title="Porta zombie: il processo padre non è più attivo. Probabile dev server orfano da terminare."
+                        >
+                          zombie
+                        </span>
                       )}
                     </td>
                     <td className="num">PID {p.pid}</td>

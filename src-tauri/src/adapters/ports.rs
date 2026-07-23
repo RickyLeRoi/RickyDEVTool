@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 
 use super::procs::{classify_known_app, is_system_process};
 
-/// Nomi che richiedono conferma rafforzata prima del kill (bozza Q7 in QUESTIONS.md).
+/// Nomi che richiedono conferma rafforzata prima del kill.
 pub const PROTECTED_NAMES: &[&str] = &[
     "sshd",
     "dockerd",
@@ -40,6 +40,7 @@ pub struct PortProcess {
     pub is_system: bool,
     pub known_app: Option<&'static str>,
     pub kill_protection: &'static str, // "confirm" | "typed-confirm"
+    pub zombie: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,6 +64,32 @@ pub fn kill_protection_for(name: &str) -> &'static str {
         "typed-confirm"
     } else {
         "confirm"
+    }
+}
+
+/// App note: non sono porte zombie.
+const LEGIT_DAEMONS: &[&str] = &["postgres", "mysql", "redis", "docker", "nginx", "plex", "ssh", "samba"];
+
+/// "porta zombie": un listener non di sistema il cui processo padre non è più vivo
+/// - `ppid == 1`: reparentato a init/launchd → il padre originale è morto (mac/Linux).
+pub fn is_zombie_listener(
+    is_system: bool,
+    known_app: Option<&str>,
+    ppid: Option<u32>,
+    parent_alive: bool,
+) -> bool {
+    if is_system {
+        return false;
+    }
+    if let Some(app) = known_app {
+        if LEGIT_DAEMONS.contains(&app) {
+            return false;
+        }
+    }
+    match ppid {
+        None | Some(0) => false,
+        Some(1) => true,
+        Some(_) => !parent_alive,
     }
 }
 
@@ -103,6 +130,10 @@ pub async fn scan_tcp_listen(include_system: bool) -> Result<PortScan, String> {
             .map(|u| u.name().to_string());
         let uid_num: Option<u32> = p.user_id().and_then(|uid| uid.to_string().parse().ok());
         let is_system = is_system_process(&name, exe_path.as_deref(), user.as_deref(), uid_num);
+        let known_app = classify_known_app(&name, exe_path.as_deref());
+        let ppid = p.parent().map(|pp| pp.as_u32());
+        let parent_alive = ppid.is_some_and(|pp| sys.process(sysinfo::Pid::from_u32(pp)).is_some());
+        let zombie = is_zombie_listener(is_system, known_app, ppid, parent_alive);
 
         if is_system && !include_system {
             hidden_system += 1;
@@ -121,13 +152,14 @@ pub async fn scan_tcp_listen(include_system: bool) -> Result<PortScan, String> {
         if seen.insert((listener.port, listener.pid), ()).is_none() {
             entry.processes.push(PortProcess {
                 pid: listener.pid,
-                known_app: classify_known_app(&name, exe_path.as_deref()),
+                known_app,
                 kill_protection: kill_protection_for(&name),
                 started_at: match p.start_time() {
                     0 => None,
                     secs => Some(secs * 1000),
                 },
                 is_system,
+                zombie,
                 name,
                 exe_path,
                 user,
@@ -292,6 +324,27 @@ mod tests {
         assert_eq!(kill_protection_for("node"), "confirm");
     }
 
+    #[test]
+    fn zombie_listener_euristica() {
+        // Dev server reparentato a init/launchd (padre morto): zombie.
+        assert!(is_zombie_listener(false, Some("node"), Some(1), true));
+        // Padre ancora vivo: non zombie.
+        assert!(!is_zombie_listener(false, Some("node"), Some(4821), true));
+        // Padre assente dalla tabella (tipico Windows, niente reparenting): zombie.
+        assert!(!is_zombie_listener(false, Some("node"), Some(4821), true));
+        assert!(is_zombie_listener(false, Some("node"), Some(4821), false));
+        // Processo di sistema: mai zombie.
+        assert!(!is_zombie_listener(true, None, Some(1), false));
+        // Daemon noto avviato al login (orfano per costruzione): non zombie.
+        assert!(!is_zombie_listener(false, Some("postgres"), Some(1), false));
+        assert!(!is_zombie_listener(false, Some("docker"), Some(1), false));
+        // ppid sconosciuto o kernel (0): non decidibile → non zombie.
+        assert!(!is_zombie_listener(false, None, None, false));
+        assert!(!is_zombie_listener(false, None, Some(0), false));
+        // App generica sconosciuta orfana: zombie.
+        assert!(is_zombie_listener(false, None, Some(1), false));
+    }
+
     #[tokio::test]
     #[cfg(unix)]
     async fn scan_trova_un_listener_reale() {
@@ -304,5 +357,22 @@ mod tests {
             .find(|p| p.port == port)
             .unwrap_or_else(|| panic!("porta {port} non trovata nello scan"));
         assert!(found.processes.iter().any(|p| p.pid == std::process::id()));
+    }
+
+    #[tokio::test]
+    #[ignore = "contract test per-OS: apre un socket reale e shella su lsof/netstat (--ignored)"]
+    async fn contract_scan_trova_listener_reale() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let scan = scan_tcp_listen(true).await.expect("scan ok");
+        let entry = scan
+            .ports
+            .iter()
+            .find(|p| p.port == port)
+            .unwrap_or_else(|| panic!("porta {port} non trovata nello scan"));
+        assert!(
+            entry.processes.iter().any(|p| p.pid == std::process::id()),
+            "il PID del test non compare tra i processi in ascolto sulla porta"
+        );
     }
 }

@@ -218,4 +218,83 @@ mod tests {
         .await;
         assert!(matches!(result, Err(KillError::ProcessGone)));
     }
+
+    /// Avvia un processo di lunga durata cross-platform e ne restituisce il PID,
+    /// l'handle e il nome **come lo vede sysinfo** (es. "ping.exe" su Windows):
+    /// passare il nome reale rende il test robusto alla verifica d'identità.
+    #[allow(dead_code)]
+    async fn spawn_long_child() -> (u32, tokio::process::Child, String) {
+        #[cfg(unix)]
+        let mut cmd = {
+            let mut c = tokio::process::Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        #[cfg(windows)]
+        let mut cmd = {
+            // ping attende ~29s senza bisogno di una console (a differenza di
+            // `timeout`, che fallisce senza stdin/console).
+            let mut c = tokio::process::Command::new("ping");
+            c.args(["-n", "30", "127.0.0.1"]);
+            c
+        };
+        let child = cmd.spawn().expect("spawn del processo figlio");
+        let pid = child.id().expect("pid");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let name = real_process_name(pid).expect("nome del processo figlio");
+        (pid, child, name)
+    }
+
+    #[allow(dead_code)]
+    fn real_process_name(pid: u32) -> Option<String> {
+        let p = Pid::from_u32(pid);
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[p]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        sys.process(p).map(|pr| pr.name().to_string_lossy().to_string())
+    }
+
+    #[tokio::test]
+    #[ignore = "contract test per-OS: spawna e termina un processo reale (--ignored)"]
+    async fn contract_force_kill_child_reale() {
+        let (pid, mut child, name) = spawn_long_child().await;
+        // force=true per un esito deterministico su entrambi gli OS: su Windows
+        // un kill "gentile" (WM_CLOSE) non chiuderebbe un processo console.
+        let outcome = kill_process(KillRequest {
+            pid,
+            expected_name: name,
+            expected_started_at: None,
+            force: true,
+            confirm_name: None,
+        })
+        .await
+        .expect("kill ok");
+        assert!(outcome.killed && outcome.forced);
+        let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+            .await
+            .expect("il figlio dovrebbe essere terminato entro 5s")
+            .expect("wait");
+        assert!(!status.success(), "processo terminato da segnale/kill");
+    }
+
+    #[tokio::test]
+    #[ignore = "contract test per-OS: rifiuto su identità PID non coerente (--ignored)"]
+    async fn contract_kill_rifiuta_nome_diverso_reale() {
+        let (pid, mut child, _name) = spawn_long_child().await;
+        // Nome atteso sbagliato → il PID è "un altro processo" → rifiuto, il
+        // figlio resta vivo.
+        let result = kill_process(KillRequest {
+            pid,
+            expected_name: "processo-che-non-esiste".into(),
+            expected_started_at: None,
+            force: true,
+            confirm_name: None,
+        })
+        .await;
+        assert!(matches!(result, Err(KillError::ProcessGone)));
+        child.kill().await.expect("cleanup del figlio");
+    }
 }

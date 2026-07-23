@@ -14,8 +14,8 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
@@ -29,9 +29,23 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: npm ci
       - run: npm run build
-      # I contract test (kill, port scan, discovery) girano su runner reali per OS
       - run: cargo test
         working-directory: src-tauri
+      - run: cargo test -- --ignored
+        working-directory: src-tauri
+
+  e2e:
+    # Smoke test Playwright della SPA contro il backend fake. Solo su Linux con
+    # Chromium: valida shell, badge porte zombie e deep-link a ogni push.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
 
   bundle:
     # Bundle solo su tag v*
@@ -49,8 +63,8 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
@@ -68,7 +82,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Firma macOS/Windows: aggiungere qui i secret quando disponibili
-          # (APPLE_CERTIFICATE, APPLE_ID... / WINDOWS_CERTIFICATE). Vedi QUESTIONS.md Q9.
+          # (APPLE_CERTIFICATE, APPLE_ID... / WINDOWS_CERTIFICATE).
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "RickyDEVTool ${{ github.ref_name }}"

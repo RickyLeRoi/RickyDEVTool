@@ -1,4 +1,4 @@
-// Modello dati condiviso col backend (vedi PROJECT.md §4).
+// Modello dati condiviso col backend.
 // Quando i tipi cresceranno (M1+) verranno generati dalle struct Rust con ts-rs.
 
 export type ApiResult<T> =
@@ -99,6 +99,8 @@ export interface PortProcess {
   isSystem: boolean;
   knownApp: string | null;
   killProtection: "confirm" | "typed-confirm";
+  /** Listener orfano: il processo che l'ha avviato non è più attivo. */
+  zombie: boolean;
 }
 
 export interface PortEntry {

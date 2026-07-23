@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# Playwright
+test-results
+playwright-report
+/playwright/.cache
+
+# Documento di lavoro locale (piano/stato personale, fuori da git)
+PLAN.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
