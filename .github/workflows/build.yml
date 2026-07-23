@@ -51,6 +51,8 @@ jobs:
     # Bundle solo su tag v*
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
