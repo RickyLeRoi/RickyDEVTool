@@ -15,6 +15,7 @@ import { Color } from "./features/color/Color";
 import { Clipboard } from "./features/clipboard/Clipboard";
 import { Launch } from "./features/launch/Launch";
 import { DropToasts } from "./features/drop/DropToasts";
+import { UpdateBanner } from "./features/update/UpdateBanner";
 import { usePresence } from "./features/drop/usePresence";
 import { ws } from "./lib/ws";
 import { useStatsStore } from "./stores/statsStore";
@@ -168,6 +169,7 @@ export default function App() {
 
         <VitalsPanel />
         <DropToasts />
+        <UpdateBanner />
       </div>
     </PairGate>
   );

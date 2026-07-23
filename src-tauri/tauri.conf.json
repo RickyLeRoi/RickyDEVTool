@@ -18,6 +18,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -28,7 +29,10 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJGNkI0QTY5NkU5NUEwClJXU2dsVzVwU211L0FJZmlaZmZFODdMNGlna1NGait4eHQyK09lbnNUTXIyWUVPTG9wa09oeEtuCg"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJGNkI0QTY5NkU5NUEwClJXU2dsVzVwU211L0FJZmlaZmZFODdMNGlna1NGait4eHQyK09lbnNUTXIyWUVPTG9wa09oeEtuCg",
+      "endpoints": [
+        "https://github.com/RickyLeRoi/RickyDEVTool/releases/latest/download/latest.json"
+      ]
     }
   }
 }

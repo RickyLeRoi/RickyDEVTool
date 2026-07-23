@@ -81,8 +81,12 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Firma macOS/Windows: aggiungere qui i secret quando disponibili
-          # (APPLE_CERTIFICATE, APPLE_ID... / WINDOWS_CERTIFICATE).
+          # Firma degli artefatti dell'updater (minisign). Necessaria perché il
+          # client verifica la firma contro la pubkey in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Firma macOS/Windows (codesign/notarizzazione): aggiungere qui i secret
+          # quando disponibili (APPLE_CERTIFICATE, APPLE_ID... / WINDOWS_CERTIFICATE).
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "RickyDEVTool ${{ github.ref_name }}"
