@@ -56,8 +56,15 @@ export function DropToasts() {
               </>
             ) : (
               <>
-                <div className="drop-toast-title">💬 Testo da {d.fromName}</div>
+                <div className="drop-toast-title">
+                  {d.kind === "clipboard"
+                    ? `📋 Appunti da ${d.fromName}`
+                    : `💬 Testo da ${d.fromName}`}
+                </div>
                 <div className="drop-toast-body drop-text">{d.text}</div>
+                {d.kind === "clipboard" && (
+                  <div className="hint">Aggiunto allo storico appunti.</div>
+                )}
                 <button
                   className="drop-toast-action"
                   onClick={() => {

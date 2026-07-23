@@ -278,6 +278,22 @@ impl DropService {
         Ok(())
     }
 
+    /// Come [`send_text`] ma con `kind: "clipboard"`: il ricevente lo registra
+    /// nel proprio storico appunti (clipboard di rete) invece di trattarlo come
+    /// un semplice testo ricevuto.
+    pub fn send_clipboard(&self, to_device: &str, from_name: &str, text: &str) -> Result<(), String> {
+        if text.is_empty() || text.len() > MAX_TEXT_LEN {
+            return Err("testo vuoto o troppo lungo".to_string());
+        }
+        self.peer_is_desktop(to_device)
+            .ok_or("destinatario non più connesso")?;
+        self.bus.publish(
+            &format!("drop:{to_device}"),
+            serde_json::json!({ "kind": "clipboard", "text": text, "fromName": from_name }),
+        );
+        Ok(())
+    }
+
     /// Invia un file locale (path su disco di QUESTO processo, es. scelto da
     /// un dialog nativo del tray) a un peer o a un altro hub. Verso un peer
     /// locale/desktop copia senza passare da un buffer in memoria; verso un
@@ -490,6 +506,20 @@ mod tests {
     fn testo_verso_peer_sconosciuto() {
         let service = test_service();
         assert!(service.send_text("nessuno", "X", "ciao").is_err());
+    }
+
+    #[test]
+    fn clipboard_pubblica_kind_dedicato() {
+        let service = test_service();
+        service.hello("b", "Desktop", true);
+        let mut rx = service.bus.subscribe();
+        service.send_clipboard("b", "iPhone", "segreto").expect("send");
+        let event = rx.try_recv().expect("evento pubblicato");
+        assert_eq!(event.topic, "drop:b");
+        assert_eq!(event.payload.get("kind").and_then(|v| v.as_str()), Some("clipboard"));
+        assert_eq!(event.payload.get("text").and_then(|v| v.as_str()), Some("segreto"));
+        // peer inesistente → errore
+        assert!(service.send_clipboard("nessuno", "X", "ciao").is_err());
     }
 
     #[test]

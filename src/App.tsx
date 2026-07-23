@@ -13,6 +13,7 @@ import { Tasks } from "./features/tasks/Tasks";
 import { Calc } from "./features/calc/Calc";
 import { Color } from "./features/color/Color";
 import { Clipboard } from "./features/clipboard/Clipboard";
+import { Launch } from "./features/launch/Launch";
 import { DropToasts } from "./features/drop/DropToasts";
 import { usePresence } from "./features/drop/usePresence";
 import { ws } from "./lib/ws";
@@ -30,6 +31,7 @@ type Section =
   | "net"
   | "docker"
   | "tasks"
+  | "launch"
   | "calc"
   | "color"
   | "clipboard"
@@ -44,6 +46,7 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "net", icon: "🌐", label: "Rete" },
   { id: "docker", icon: "🐳", label: "Docker" },
   { id: "tasks", icon: "🧾", label: "Task" },
+  { id: "launch", icon: "🚀", label: "Avvii" },
   { id: "calc", icon: "🧮", label: "Calcolatrice" },
   { id: "color", icon: "🎨", label: "Colori" },
   { id: "clipboard", icon: "📋", label: "Appunti" },
@@ -134,6 +137,7 @@ export default function App() {
           {section === "net" && <NetTools />}
           {section === "docker" && <Docker />}
           {section === "tasks" && <Tasks />}
+          {section === "launch" && <Launch />}
           {section === "calc" && <Calc />}
           {section === "color" && <Color />}
           {section === "clipboard" && <Clipboard />}

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
+import { getDeviceName } from "../../lib/device";
+import { useDropStore } from "../../stores/dropStore";
 import type { ClipboardHistory, ClipEntry } from "../../lib/types";
 
 const REFRESH_MS = 2000;
@@ -28,6 +30,8 @@ function Entry({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const peers = useDropStore((s) => s.peers);
   const long = entry.text.length > PREVIEW_CHARS;
   const shown = expanded || !long ? entry.text : entry.text.slice(0, PREVIEW_CHARS) + "…";
 
@@ -36,6 +40,18 @@ function Entry({
     if (r.ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
+    }
+  };
+
+  const send = async (to: string, name: string) => {
+    const r = await post<{ sent: boolean }>("/api/clipboard/send", {
+      to,
+      fromName: getDeviceName(),
+      id: entry.id,
+    });
+    if (r.ok) {
+      setSentTo(name);
+      setTimeout(() => setSentTo(null), 1500);
     }
   };
   const pin = async () => {
@@ -59,6 +75,30 @@ function Entry({
           <button className="small" onClick={copy} title="Copia negli appunti">
             {copied ? "Copiato ✓" : "Copia"}
           </button>
+          {peers.length > 0 &&
+            (sentTo ? (
+              <span className="badge badge-ok">inviato a {sentTo}</span>
+            ) : (
+              <select
+                className="clip-send small"
+                defaultValue=""
+                title="Invia questi appunti a un dispositivo"
+                onChange={(e) => {
+                  const p = peers.find((x) => x.deviceId === e.target.value);
+                  if (p) send(p.deviceId, p.name);
+                  e.target.value = "";
+                }}
+              >
+                <option value="" disabled>
+                  Invia a…
+                </option>
+                {peers.map((p) => (
+                  <option key={p.deviceId} value={p.deviceId}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            ))}
           <button
             className={`small ${entry.pinned ? "" : "ghost"}`}
             onClick={pin}

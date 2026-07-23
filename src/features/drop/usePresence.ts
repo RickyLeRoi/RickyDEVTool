@@ -26,10 +26,20 @@ export function usePresence() {
     let stopped = false;
     let unsubHub: (() => void) | null = null;
 
+    // La clipboard di rete arriva come Drop di tipo "clipboard": oltre a
+    // mostrare il toast, la registra nello storico appunti locale (senza
+    // sovrascrivere la clipboard di sistema: la applica l'utente con Copia).
+    const handleIncoming = (data: DropIncoming) => {
+      if (data.kind === "clipboard") {
+        post("/api/clipboard/record", { text: data.text });
+      }
+      addIncoming(data);
+    };
+
     api<{ hubId: string }>("/api/drop/self").then((r) => {
       if (!stopped && r.ok) {
         unsubHub = ws.subscribe(`drop:${r.data.hubId}`, (event) => {
-          addIncoming(event.payload as DropIncoming);
+          handleIncoming(event.payload as DropIncoming);
         });
       }
     });
@@ -50,7 +60,7 @@ export function usePresence() {
       setPeers(all.filter((p) => p.deviceId !== deviceId));
     });
     const unsubMine = ws.subscribe(`drop:${deviceId}`, (event) => {
-      addIncoming(event.payload as DropIncoming);
+      handleIncoming(event.payload as DropIncoming);
     });
 
     return () => {

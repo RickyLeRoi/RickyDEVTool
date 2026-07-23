@@ -96,20 +96,58 @@ impl TaskRegistry {
         args: &[&str],
         cwd: &str,
     ) -> Result<TaskInfo, String> {
-        let id = format!("t{}", self.counter.fetch_add(1, Ordering::Relaxed));
-
         #[cfg(windows)]
-        let mut cmd = {
+        let cmd = {
             let mut c = tokio::process::Command::new("cmd");
             c.arg("/C").arg(program).args(args);
             c
         };
         #[cfg(not(windows))]
-        let mut cmd = {
+        let cmd = {
             let mut c = tokio::process::Command::new(program);
             c.args(args);
             c
         };
+        self.launch(label, cwd, cmd)
+    }
+
+    /// Avvia una riga di comando completa tramite la shell di sistema (`sh -c`
+    /// su unix, `cmd /C` su Windows): serve ai profili di avvio composito, dove
+    /// lo step è una stringa con pipe/`&&`/redirezioni scritta dall'utente.
+    pub fn spawn_shell(
+        self: &Arc<Self>,
+        label: &str,
+        command: &str,
+        cwd: &str,
+    ) -> Result<TaskInfo, String> {
+        if command.trim().is_empty() {
+            return Err("comando vuoto".to_string());
+        }
+        #[cfg(windows)]
+        let cmd = {
+            let mut c = tokio::process::Command::new("cmd");
+            c.arg("/C").arg(command);
+            c
+        };
+        #[cfg(not(windows))]
+        let cmd = {
+            let mut c = tokio::process::Command::new("sh");
+            c.arg("-c").arg(command);
+            c
+        };
+        self.launch(label, cwd, cmd)
+    }
+
+    /// Parte comune di [`spawn`]/[`spawn_shell`]: prepara stdio, registra il
+    /// task, avvia lo streaming e il watcher di uscita.
+    fn launch(
+        self: &Arc<Self>,
+        label: &str,
+        cwd: &str,
+        mut cmd: tokio::process::Command,
+    ) -> Result<TaskInfo, String> {
+        let id = format!("t{}", self.counter.fetch_add(1, Ordering::Relaxed));
+
         cmd.current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -294,6 +332,32 @@ mod tests {
         let buffered: Vec<&str> = log.iter().map(|l| l.line.as_str()).collect();
         assert_eq!(buffered, vec!["riga1", "riga2"]);
         assert!(log.iter().all(|l| l.stream == "out"));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn spawn_shell_usa_la_shell() {
+        let bus = EventBus::new();
+        let registry = Arc::new(TaskRegistry::new(bus));
+        let dir = tempfile::tempdir().unwrap();
+        // `&&` e la variabile richiedono una shell: se `spawn_shell` non la
+        // usasse, il comando fallirebbe.
+        let info = registry
+            .spawn_shell("compound", "echo uno && echo $((1+1))", dir.path().to_str().unwrap())
+            .expect("spawn_shell");
+        // attende la fine
+        for _ in 0..50 {
+            if registry.list().iter().find(|t| t.id == info.id).unwrap().state
+                != TaskState::Running
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let log = registry.log(&info.id).expect("log");
+        let lines: Vec<&str> = log.iter().map(|l| l.line.as_str()).collect();
+        assert_eq!(lines, vec!["uno", "2"]);
+        assert!(registry.spawn_shell("vuoto", "   ", dir.path().to_str().unwrap()).is_err());
     }
 
     #[tokio::test]

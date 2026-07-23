@@ -44,6 +44,8 @@ pub struct AppConfig {
     pub drop_hub_id: String,
     /// Nome mostrato agli altri hub; vuoto = usa l'hostname di sistema.
     pub drop_hub_name: String,
+    /// Profili di avvio composito (più task lanciati insieme).
+    pub launch_bundles: Vec<crate::services::launch::LaunchBundle>,
 }
 
 impl Default for AppConfig {
@@ -67,6 +69,7 @@ impl Default for AppConfig {
             push_min_severity: "warning".to_string(),
             drop_hub_id: String::new(),
             drop_hub_name: String::new(),
+            launch_bundles: Vec::new(),
         }
     }
 }

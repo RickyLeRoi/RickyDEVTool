@@ -5,6 +5,7 @@ pub mod drop;
 pub mod env;
 pub mod git;
 pub mod hubdiscovery;
+pub mod launch;
 pub mod logtail;
 pub mod metrics;
 pub mod nettools;

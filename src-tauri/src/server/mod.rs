@@ -163,8 +163,13 @@ pub async fn start(
         .route("/api/dotnet/run", post(dotnet_run))
         .route("/api/runner/info", get(runner_info))
         .route("/api/runner/run", post(runner_run))
+        .route("/api/launch/bundles", get(launch_bundles_list).post(launch_bundle_upsert))
+        .route("/api/launch/bundles/delete", post(launch_bundle_delete))
+        .route("/api/launch/run", post(launch_run))
         .route("/api/clipboard/history", get(clipboard_history))
         .route("/api/clipboard/copy", post(clipboard_copy))
+        .route("/api/clipboard/send", post(clipboard_send))
+        .route("/api/clipboard/record", post(clipboard_record))
         .route("/api/clipboard/pin", post(clipboard_pin))
         .route("/api/clipboard/delete", post(clipboard_delete))
         .route("/api/clipboard/clear", post(clipboard_clear))
@@ -1169,6 +1174,91 @@ async fn runner_run(
     }
 }
 
+// ---------- profili di avvio composito ----------
+
+#[derive(Deserialize)]
+struct LaunchIdBody {
+    id: String,
+}
+
+async fn launch_bundles_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "bundles": state.config.get().launch_bundles } }))
+}
+
+#[derive(Deserialize)]
+struct LaunchBundleBody {
+    /// Assente = nuovo profilo (id generato dal server).
+    #[serde(default)]
+    id: Option<String>,
+    name: String,
+    steps: Vec<crate::services::launch::LaunchStep>,
+}
+
+async fn launch_bundle_upsert(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<LaunchBundleBody>,
+) -> Response {
+    // Un profilo contiene comandi che verranno eseguiti: un remoto non deve
+    // poterne piantare uno senza il controllo remoto attivo.
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let bundle = crate::services::launch::LaunchBundle {
+        id: body.id.unwrap_or_else(crate::services::launch::new_id),
+        name: body.name,
+        steps: body.steps,
+    };
+    let bundle = match bundle.sanitized() {
+        Ok(b) => b,
+        Err(message) => return internal_error(message),
+    };
+    state.config.update(|c| {
+        if let Some(existing) = c.launch_bundles.iter_mut().find(|b| b.id == bundle.id) {
+            *existing = bundle.clone();
+        } else {
+            c.launch_bundles.push(bundle.clone());
+        }
+    });
+    Json(json!({ "ok": true, "data": { "bundles": state.config.get().launch_bundles } })).into_response()
+}
+
+async fn launch_bundle_delete(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<LaunchIdBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    state.config.update(|c| c.launch_bundles.retain(|b| b.id != body.id));
+    Json(json!({ "ok": true, "data": { "bundles": state.config.get().launch_bundles } })).into_response()
+}
+
+async fn launch_run(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<LaunchIdBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let Some(bundle) = state.config.get().launch_bundles.into_iter().find(|b| b.id == body.id)
+    else {
+        return internal_error("profilo non trovato".into());
+    };
+    let mut tasks = Vec::new();
+    let mut errors = Vec::new();
+    for step in &bundle.steps {
+        let label = format!("{} · {}", bundle.name, step.label);
+        match state.tasks.spawn_shell(&label, &step.command, &step.cwd) {
+            Ok(info) => tasks.push(info),
+            Err(e) => errors.push(format!("{}: {e}", step.label)),
+        }
+    }
+    Json(json!({ "ok": true, "data": { "tasks": tasks, "errors": errors } })).into_response()
+}
+
 // ---------- storico appunti ----------
 
 fn clipboard_payload(state: &ServerState) -> serde_json::Value {
@@ -1208,6 +1298,65 @@ async fn clipboard_copy(
         }
         Err(message) => internal_error(message),
     }
+}
+
+/// Invia il testo di una voce (o l'attuale clipboard di sistema) a un peer come
+/// "clipboard di rete": sul ricevente finisce nel suo storico appunti.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipSendBody {
+    to: String,
+    from_name: String,
+    /// Voce dello storico da inviare; assente = clipboard di sistema attuale.
+    #[serde(default)]
+    id: Option<u64>,
+}
+
+async fn clipboard_send(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<ClipSendBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let text = match body.id {
+        Some(id) => match state.clipboard.text_of(id) {
+            Some(t) => t,
+            None => return internal_error("voce non trovata".into()),
+        },
+        None => match crate::adapters::clipboard::read_text() {
+            Some(t) => t,
+            None => return internal_error("clipboard di sistema vuota".into()),
+        },
+    };
+    // Verso un hub remoto non c'è il canale "clipboard": ripiega sul testo Drop
+    // normale (arriva comunque, come testo ricevuto).
+    if let Some(hub) = state.drop.remote_hub(&body.to) {
+        return match state.drop.proxy_send_text(&hub, &body.from_name, &text).await {
+            Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
+            Err(message) => internal_error(message),
+        };
+    }
+    match state.drop.send_clipboard(&body.to, &body.from_name, &text) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+/// Registra nello storico locale un testo ricevuto via clipboard di rete
+/// (nessuna scrittura sulla clipboard di sistema: la applica l'utente con Copia).
+#[derive(Deserialize)]
+struct ClipTextBody {
+    text: String,
+}
+
+async fn clipboard_record(
+    State(state): State<ServerState>,
+    Json(body): Json<ClipTextBody>,
+) -> Json<serde_json::Value> {
+    state.clipboard.record(body.text);
+    Json(json!({ "ok": true, "data": clipboard_payload(&state) }))
 }
 
 #[derive(Deserialize)]

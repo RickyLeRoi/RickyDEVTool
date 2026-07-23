@@ -2067,3 +2067,121 @@ button.ghost:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================ Avvii compositi ============================ */
+.launch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.launch-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  padding: 10px 12px;
+}
+.launch-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.launch-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.launch-card-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.launch-card-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  overflow: hidden;
+}
+.launch-card-steps code {
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.launch-step-label {
+  flex: 0 0 auto;
+  min-width: 70px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.launch-step-cwd {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.launch-editor {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  padding: 12px;
+}
+.launch-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0;
+}
+.launch-step-edit {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.launch-step-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.launch-step-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 6px;
+}
+.launch-editor input {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.launch-cmd,
+.launch-cwd {
+  font-family: ui-monospace, Menlo, monospace;
+}
+.launch-run {
+  margin-top: 14px;
+}
+.launch-run-task {
+  margin-bottom: 10px;
+}
+.clip-send {
+  max-width: 120px;
+}
+@media (max-width: 640px) {
+  .launch-step-row {
+    grid-template-columns: 1fr;
+  }
+}

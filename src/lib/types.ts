@@ -340,7 +340,8 @@ export type DropIncoming =
       fromName: string;
       savedPath: string | null;
     }
-  | { kind: "text"; text: string; fromName: string };
+  | { kind: "text"; text: string; fromName: string }
+  | { kind: "clipboard"; text: string; fromName: string };
 
 export interface ReceivedFile {
   name: string;
@@ -370,6 +371,18 @@ export interface TailInfo {
   id: string;
   path: string;
   startedAt: number;
+}
+
+export interface LaunchStep {
+  label: string;
+  command: string;
+  cwd: string;
+}
+
+export interface LaunchBundle {
+  id: string;
+  name: string;
+  steps: LaunchStep[];
 }
 
 export interface ClipEntry {
