@@ -34,37 +34,34 @@ type Section =
   | "services"
   | "net"
   | "docker"
-  | "tasks"
   | "launch"
   | "calc"
   | "color"
   | "clipboard"
   | "drop"
+  | "tasks"
   | "about"
   | "settings";
 
-// Task NON è nella rail fissa: compare come voce sopra Impostazioni solo se ci
-// sono task nella sessione corrente (vedi rendering più sotto).
-const TASK_SECTION = { id: "tasks" as Section, icon: "🧾", label: "Task" };
 
-const SECTIONS: { id: Section; icon: string; label: string }[] = [
-  { id: "dashboard", icon: "🖥", label: "Dashboard" },
-  { id: "ports", icon: "🔌", label: "Porte" },
-  { id: "projects", icon: "📁", label: "Progetti" },
-  { id: "services", icon: "📡", label: "Servizi" },
-  { id: "net", icon: "🌐", label: "Rete" },
-  { id: "docker", icon: "🐳", label: "Docker" },
-  { id: "launch", icon: "🚀", label: "Avvii" },
-  { id: "calc", icon: "🧮", label: "Calcolatrice" },
-  { id: "color", icon: "🎨", label: "Colori" },
-  { id: "clipboard", icon: "📋", label: "Appunti" },
-  { id: "drop", icon: "📤", label: "Drop" },
-  { id: "about", icon: "ℹ️", label: "About" },
-  { id: "settings", icon: "⚙️", label: "Impostazioni" },
+const SECTIONS: { id: Section; icon: string; label: string; position: "top" | "bottom" }[] = [
+  { id: "dashboard", icon: "🖥", label: "Dashboard", position: "top" },
+  { id: "ports", icon: "🔌", label: "Porte", position: "top" },
+  { id: "projects", icon: "📁", label: "Progetti", position: "top" },
+  { id: "services", icon: "📡", label: "Servizi", position: "top" },
+  { id: "net", icon: "🌐", label: "Rete", position: "top" },
+  { id: "docker", icon: "🐳", label: "Docker", position: "top" },
+  { id: "launch", icon: "🚀", label: "Avvii", position: "top" },
+  { id: "calc", icon: "🧮", label: "Calcolatrice", position: "top" },
+  { id: "color", icon: "🎨", label: "Colori", position: "top" },
+  { id: "clipboard", icon: "📋", label: "Appunti", position: "top" },
+  { id: "drop", icon: "📤", label: "Drop", position: "top" },
+  { id: "tasks", icon: "🧾", label: "Task", position: "bottom" },
+  { id: "about", icon: "ℹ️", label: "About", position: "bottom" },
+  { id: "settings", icon: "⚙️", label: "Impostazioni", position: "bottom" },
 ];
 
-// Task resta indirizzabile via hash/tray anche se non è nella rail fissa.
-const SECTION_IDS = new Set<string>([...SECTIONS.map((s) => s.id), TASK_SECTION.id]);
+const SECTION_IDS = new Set<string>(SECTIONS.map((s) => s.id));
 
 // URL tipo http://<ip>:6969/#/services). Ignora `#pair=…` (gestito da PairGate).
 function sectionFromHash(): Section | null {
@@ -151,48 +148,46 @@ export default function App() {
     });
   }, [section, setDisks]);
 
+  // Pallino/badge delle voci che ne hanno uno: peer drop online, task attivi.
+  const railDot = (id: Section): { count: number; title: string } | undefined => {
+    if (id === "drop") return { count: peerCount, title: `${peerCount} dispositivi online` };
+    if (id === "tasks") return { count: taskCount, title: `${taskCount} task` };
+    return undefined;
+  };
+
+  // Task è l'unica voce a comparsa condizionata: senza task nella sessione non
+  // viene mostrata.
+  const isVisible = (s: (typeof SECTIONS)[number]) => s.id !== "tasks" || taskCount > 0;
+
+  // Un pulsante della rail. `dot` accende il pallino/badge e, quando presente,
+  // porta il conteggio anche nel tooltip.
+  const railButton = (s: (typeof SECTIONS)[number]) => {
+    const dot = railDot(s.id);
+    const showDot = (dot?.count ?? 0) > 0;
+    return (
+      <button
+        key={s.id}
+        className={`rail-btn ${section === s.id ? "active" : ""}`}
+        title={showDot ? `${s.label} (${dot?.count})` : s.label}
+        onClick={() => setSection(s.id)}
+      >
+        <span className="rail-icon">
+          {s.icon}
+          {showDot && <span className="rail-dot" title={dot?.title} />}
+        </span>
+        <span className="rail-label">{s.label}</span>
+      </button>
+    );
+  };
+
   return (
     <PairGate>
       <div className="shell">
         <nav className="rail">
-          {SECTIONS.flatMap((s) => {
-            const items = [];
-            // La voce Task appare qui (sopra Impostazioni) solo se ci sono task
-            // nella sessione corrente.
-            if (s.id === "settings" && taskCount > 0) {
-              items.push(
-                <button
-                  key={TASK_SECTION.id}
-                  className={`rail-btn ${section === TASK_SECTION.id ? "active" : ""}`}
-                  title={`${TASK_SECTION.label} (${taskCount})`}
-                  onClick={() => setSection(TASK_SECTION.id)}
-                >
-                  <span className="rail-icon">
-                    {TASK_SECTION.icon}
-                    <span className="rail-dot" title={`${taskCount} task`} />
-                  </span>
-                  <span className="rail-label">{TASK_SECTION.label}</span>
-                </button>,
-              );
-            }
-            items.push(
-              <button
-                key={s.id}
-                className={`rail-btn ${section === s.id ? "active" : ""}`}
-                title={s.label}
-                onClick={() => setSection(s.id)}
-              >
-                <span className="rail-icon">
-                  {s.icon}
-                  {s.id === "drop" && peerCount > 0 && (
-                    <span className="rail-dot" title={`${peerCount} dispositivi online`} />
-                  )}
-                </span>
-                <span className="rail-label">{s.label}</span>
-              </button>,
-            );
-            return items;
-          })}
+          {SECTIONS.filter((s) => s.position === "top").map(railButton)}
+          {/* Spinge il gruppo in fondo (Task/About/Impostazioni) verso il basso. */}
+          <div className="rail-spacer" />
+          {SECTIONS.filter((s) => s.position === "bottom" && isVisible(s)).map(railButton)}
         </nav>
 
         <main className="main">
@@ -202,12 +197,12 @@ export default function App() {
           {section === "services" && <Services />}
           {section === "net" && <NetTools />}
           {section === "docker" && <Docker />}
-          {section === "tasks" && <Tasks />}
           {section === "launch" && <Launch />}
           {section === "calc" && <Calc />}
           {section === "color" && <Color />}
           {section === "clipboard" && <Clipboard />}
           {section === "drop" && <Drop />}
+          {section === "tasks" && <Tasks />}
           {section === "about" && <About />}
           {section === "settings" && <Settings />}
         </main>

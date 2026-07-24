@@ -175,7 +175,7 @@ input {
 .rail-label {
   display: none;
 }
-.rail-btn:last-child {
+.rail-spacer {
   margin-top: auto;
 }
 
@@ -1858,8 +1858,8 @@ button.ghost:hover {
     min-width: 0;
     padding: 5px 2px;
   }
-  .rail-btn:last-child {
-    margin-top: 0;
+  .rail-spacer {
+    display: none;
   }
   .rail-label {
     display: block;

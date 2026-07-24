@@ -6,7 +6,6 @@ const isTauri = "__TAURI_INTERNALS__" in window;
 
 // Info di contatto/owner. Punto unico da aggiornare se cambiano.
 const OWNER = "Riccardo Giordano";
-const EMAIL = "riccardogiordano.88@gmail.com";
 const GITHUB_USER = "RickyLeRoi";
 const REPO_URL = "https://github.com/RickyLeRoi/RickyDEVTool";
 
@@ -67,12 +66,6 @@ export function About() {
         <div className="about-line">
           <span className="dim">Owner</span>
           <span>{OWNER}</span>
-        </div>
-        <div className="about-line">
-          <span className="dim">Email</span>
-          <button className="linklike" onClick={() => openExternal(`mailto:${EMAIL}`)}>
-            {EMAIL}
-          </button>
         </div>
         <div className="about-line">
           <span className="dim">GitHub</span>
