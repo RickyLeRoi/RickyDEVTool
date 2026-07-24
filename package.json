@@ -1,13 +1,17 @@
 {
   "name": "rickydevtool",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:dev": "npm run version:sync && tauri dev",
+    "tauri:build": "npm run version:sync && tauri build",
+    "version:sync": "node scripts/set-version.mjs",
+    "version:check": "node scripts/set-version.mjs --check",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:ui": "npm run build && playwright test --ui",
     "test:e2e:codegen": "node e2e/mock-server.mjs & npx playwright codegen http://localhost:6970"

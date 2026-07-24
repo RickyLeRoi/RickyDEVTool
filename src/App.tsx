@@ -85,10 +85,10 @@ export default function App() {
   // Il topic "tasks" è a eventi (spawn/uscita/pulizia), non un poller.
   useEffect(() => {
     api<{ tasks: TaskInfo[] }>("/api/tasks").then((r) => {
-      if (r.ok) setTasks(r.data.tasks);
+      if (r.ok) setTasks(r.data.tasks ?? []);
     });
     return ws.subscribe("tasks", (event) => {
-      if (event.topic === "tasks") setTasks((event.payload as { tasks: TaskInfo[] }).tasks);
+      if (event.topic === "tasks") setTasks((event.payload as { tasks?: TaskInfo[] }).tasks ?? []);
     });
   }, [setTasks]);
 
