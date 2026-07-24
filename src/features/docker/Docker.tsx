@@ -11,18 +11,19 @@ function ImagesPanel() {
   const [pruning, setPruning] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Rifetch a ogni apertura: evita di mostrare un conteggio vecchio (es. 0
-  // catturato mentre la connessione remota non era ancora a posto).
-  const fetchImages = async () => {
+  const fetchImages = useCallback(async () => {
     const r = await api<{ images: DockerImage[] }>("/api/docker/images");
     if (r.ok) setImages(r.data.images);
-  };
+  }, []);
 
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (next) fetchImages();
-  };
+  useEffect(() => {
+    if (!open) return;
+    fetchImages();
+    const id = setInterval(fetchImages, REFRESH_MS);
+    return () => clearInterval(id);
+  }, [open, fetchImages]);
+
+  const toggle = () => setOpen((v) => !v);
 
   const prune = async () => {
     if (
@@ -57,6 +58,7 @@ function ImagesPanel() {
       </div>
       {msg && <div className="dim docker-prune-msg">{msg}</div>}
       {open && images && (
+        <div className="table-scroll">
         <table className="proc-table docker-images">
           <tbody>
             {images.length === 0 && (
@@ -81,6 +83,7 @@ function ImagesPanel() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -149,6 +152,7 @@ function ContainerRow({
   onChanged: () => void;
   onLogs: (task: TaskInfo, name: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = container.state === "running";
@@ -169,59 +173,90 @@ function ContainerRow({
   };
 
   return (
-    <tr>
-      <td>
-        <span className={stateClass(container.state)} title={container.state} />
-        <span className="docker-name">{container.name}</span>
-      </td>
-      <td className="dim docker-image" title={container.image}>
-        {container.image}
-      </td>
-      <td className="dim">{container.status}</td>
-      <td className="dim docker-ports">
-        {container.ports.length > 0 ? container.ports.join(", ") : "—"}
-      </td>
-      <td className="num">
-        <div className="docker-actions">
-          {running ? (
-            <>
+    <>
+      {/* Riga compatta: nome + azioni sempre visibili (anche da remoto su schermi
+          stretti); il resto — immagine, stato, porte — nel dettaglio al click. */}
+      <tr className="docker-row" onClick={() => setExpanded(!expanded)}>
+        <td className="docker-name-cell">
+          <span className={stateClass(container.state)} title={container.state} />
+          <span className="docker-name">{container.name}</span>
+        </td>
+        <td className="docker-actions-cell">
+          {/* I click sulle azioni non devono aprire/chiudere il dettaglio. */}
+          <div className="docker-actions" onClick={(e) => e.stopPropagation()}>
+            {running ? (
+              <>
+                <button
+                  className="docker-btn restart"
+                  disabled={busy}
+                  title="Restart"
+                  aria-label="Restart"
+                  onClick={() => act("restart")}
+                >
+                  ↻
+                </button>
+                <button
+                  className="docker-btn stop"
+                  disabled={busy}
+                  title="Stop"
+                  aria-label="Stop"
+                  onClick={() => act("stop")}
+                >
+                  ◼
+                </button>
+              </>
+            ) : (
               <button
-                className="docker-btn restart"
+                className="docker-btn start"
                 disabled={busy}
-                title="Restart"
-                aria-label="Restart"
-                onClick={() => act("restart")}
+                title="Start"
+                aria-label="Start"
+                onClick={() => act("start")}
               >
-                ↻
+                ▶
               </button>
-              <button
-                className="docker-btn stop"
-                disabled={busy}
-                title="Stop"
-                aria-label="Stop"
-                onClick={() => act("stop")}
-              >
-                ◼
-              </button>
-            </>
-          ) : (
-            <button
-              className="docker-btn start"
-              disabled={busy}
-              title="Start"
-              aria-label="Start"
-              onClick={() => act("start")}
-            >
-              ▶
+            )}
+            <button className="docker-btn logs" title="Logs" aria-label="Logs" onClick={showLogs}>
+              ≣
             </button>
-          )}
-          <button className="docker-btn logs" title="Logs" aria-label="Logs" onClick={showLogs}>
-            ≣
-          </button>
-        </div>
-        {error && <div className="banner banner-error docker-row-error">{error}</div>}
-      </td>
-    </tr>
+          </div>
+          <span className="docker-expand dim" aria-hidden>
+            {expanded ? "▾" : "▸"}
+          </span>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="docker-detail">
+          <td colSpan={2}>
+            <dl className="docker-detail-grid">
+              <div>
+                <dt>Immagine</dt>
+                <dd className="docker-image" title={container.image}>
+                  {container.image}
+                </dd>
+              </div>
+              <div>
+                <dt>Stato</dt>
+                <dd className="dim">{container.status}</dd>
+              </div>
+              <div>
+                <dt>Porte</dt>
+                <dd className="dim">
+                  {container.ports.length > 0 ? container.ports.join(", ") : "—"}
+                </dd>
+              </div>
+            </dl>
+          </td>
+        </tr>
+      )}
+      {error && (
+        <tr className="docker-detail">
+          <td colSpan={2}>
+            <div className="banner banner-error docker-row-error">{error}</div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -301,10 +336,7 @@ export function Docker() {
         <table className="proc-table docker-table">
           <thead>
             <tr>
-              <th>Nome</th>
-              <th>Immagine</th>
-              <th>Stato</th>
-              <th>Porte</th>
+              <th>Container</th>
               <th className="num">Azioni</th>
             </tr>
           </thead>

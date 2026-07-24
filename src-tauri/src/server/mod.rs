@@ -168,6 +168,7 @@ pub async fn start(
         .route("/api/launch/bundles/delete", post(launch_bundle_delete))
         .route("/api/launch/run", post(launch_run))
         .route("/api/clipboard/history", get(clipboard_history))
+        .route("/api/clipboard/blob", get(clipboard_blob))
         .route("/api/clipboard/copy", post(clipboard_copy))
         .route("/api/clipboard/send", post(clipboard_send))
         .route("/api/clipboard/record", post(clipboard_record))
@@ -1297,16 +1298,67 @@ async fn clipboard_copy(
     if !write_allowed(&state, peer) {
         return remote_forbidden();
     }
-    let Some(text) = state.clipboard.text_of(body.id) else {
-        return internal_error("voce non trovata".into());
-    };
-    match crate::adapters::clipboard::write_text(&text) {
-        Ok(()) => {
-            state.clipboard.mark_written(&text);
-            Json(json!({ "ok": true, "data": { "copied": true } })).into_response()
-        }
+    match state.clipboard.copy_to_clipboard(body.id) {
+        Ok(()) => Json(json!({ "ok": true, "data": { "copied": true } })).into_response(),
         Err(message) => internal_error(message),
     }
+}
+
+#[derive(Deserialize)]
+struct ClipBlobQuery {
+    id: u64,
+    /// Indice del file in una voce multi-file (default 0; ignorato per immagini).
+    #[serde(default)]
+    i: usize,
+}
+
+async fn clipboard_blob(
+    State(state): State<ServerState>,
+    axum::extract::Query(query): axum::extract::Query<ClipBlobQuery>,
+) -> Response {
+    let Some(serve) = state.clipboard.blob_for(query.id, query.i) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "BLOB_NOT_FOUND", "message": "contenuto non più disponibile", "retryable": false }
+            })),
+        )
+            .into_response();
+    };
+    let file = match tokio::fs::File::open(&serve.path).await {
+        Ok(f) => f,
+        Err(e) => return internal_error(format!("contenuto non leggibile: {e}")),
+    };
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let mut headers = HeaderMap::new();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&serve.mime) {
+        headers.insert(header::CONTENT_TYPE, v);
+    }
+    if !serve.inline {
+        // RFC 5987 per i nomi non-ASCII; fallback ASCII per i client vecchi.
+        let ascii: String = serve
+            .name
+            .chars()
+            .map(|c| if c.is_ascii() && c != '"' && c != '\\' { c } else { '_' })
+            .collect();
+        let encoded: String = serve
+            .name
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_') {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        let cd = format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}");
+        if let Ok(v) = axum::http::HeaderValue::from_str(&cd) {
+            headers.insert(header::CONTENT_DISPOSITION, v);
+        }
+    }
+    (headers, Body::from_stream(stream)).into_response()
 }
 
 /// Invia il testo di una voce (o l'attuale clipboard di sistema) a un peer come

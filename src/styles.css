@@ -344,9 +344,7 @@ input {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
-  /* Ogni card alla sua altezza naturale: la card Storico è più alta, ma CPU/RAM
-     non devono allungarsi per pareggiarla. */
-  align-items: start;
+  align-items: stretch;
 }
 
 .gauge-card {
@@ -449,19 +447,94 @@ input {
   border-radius: 2px;
   display: inline-block;
 }
+.metrics-plot {
+  display: flex;
+  align-items: stretch;
+}
+.metrics-yaxis {
+  position: relative;
+  width: 22px;
+  flex: none;
+}
+.metrics-yaxis span {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
 .metrics-chart {
-  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
   height: auto;
   display: block;
 }
 .metrics-axis-label {
   fill: var(--text-dim);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 /* ---------- docker ---------- */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-scroll > .proc-table {
+  min-width: 460px;
+}
 .docker-table {
   margin-top: 12px;
+}
+/* Riga container compatta, cliccabile per il dettaglio (stile monitor porte). */
+.docker-row {
+  cursor: pointer;
+}
+.docker-name-cell .docker-name {
+  white-space: nowrap;
+}
+.docker-actions-cell {
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.docker-expand {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+  font-size: 18px;
+  line-height: 1;
+}
+.docker-detail > td {
+  padding: 8px 10px 12px;
+  background: color-mix(in srgb, var(--bg-hover) 45%, transparent);
+}
+.docker-detail-grid {
+  margin: 0;
+  display: grid;
+  gap: 4px 12px;
+}
+.docker-detail-grid > div {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.docker-detail-grid dt {
+  flex: none;
+  width: 78px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding-top: 1px;
+}
+.docker-detail-grid dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Menlo, monospace;
 }
 .docker-state {
   display: inline-block;
@@ -493,9 +566,9 @@ input {
   font-size: 12px;
 }
 .docker-actions {
-  display: flex;
+  display: inline-flex;
+  vertical-align: middle;
   gap: 6px;
-  justify-content: flex-end;
   align-items: center;
   flex-wrap: nowrap;
 }
@@ -2234,6 +2307,54 @@ button.ghost:hover {
 }
 .clip-expand {
   margin-top: 4px;
+}
+.clip-kind {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.clip-media {
+  display: flex;
+}
+.clip-image {
+  max-width: 100%;
+  max-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: repeating-conic-gradient(var(--bg) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+  cursor: zoom-in;
+  object-fit: contain;
+}
+.clip-image.expanded {
+  max-height: 70vh;
+  cursor: zoom-out;
+}
+.clip-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.clip-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.clip-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.clip-file-size {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.clip-file .small {
+  flex: none;
 }
 
 @media (max-width: 760px) {

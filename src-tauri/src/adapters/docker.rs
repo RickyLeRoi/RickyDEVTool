@@ -191,10 +191,42 @@ pub async fn images(host: Option<&str>) -> Vec<Image> {
         _ => return Vec::new(),
     };
     let used = used_image_refs(host).await;
+    let used_ids = used_image_ids(host, &used).await;
     for img in &mut images {
-        img.unused = !image_in_use(img, &used);
+        img.unused = !(image_in_use_by_id(img, &used_ids) || image_in_use(img, &used));
     }
     images
+}
+
+async fn used_image_ids(
+    host: Option<&str>,
+    refs: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    if refs.is_empty() {
+        return std::collections::HashSet::new();
+    }
+    let mut cmd = docker_cmd(host);
+    cmd.args(["image", "inspect", "--format", "{{.Id}}"]);
+    for r in refs {
+        cmd.arg(r);
+    }
+    match cmd.output().await {
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().trim_start_matches("sha256:").to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        Err(_) => std::collections::HashSet::new(),
+    }
+}
+
+/// Un'immagine è in uso se il suo ID compare tra quelli risolti dai container.
+fn image_in_use_by_id(img: &Image, used_ids: &std::collections::HashSet<String>) -> bool {
+    let short = img.id.trim_start_matches("sha256:");
+    !short.is_empty()
+        && used_ids
+            .iter()
+            .any(|u| u.starts_with(short) || short.starts_with(u.as_str()))
 }
 
 /// Un'immagine è "in uso" se un container la referenzia per nome:tag o per id.
@@ -202,6 +234,11 @@ fn image_in_use(img: &Image, used: &std::collections::HashSet<String>) -> bool {
     if img.repository != "<none>" && img.tag != "<none>" {
         let tagref = format!("{}:{}", img.repository, img.tag);
         if used.contains(&tagref) {
+            return true;
+        }
+        // Container avviato col tag `latest` implicito (`docker run nginx`):
+        // `docker ps` mostra solo "nginx", senza ":latest".
+        if img.tag == "latest" && used.contains(&img.repository) {
             return true;
         }
     }
@@ -386,14 +423,44 @@ mod tests {
             unused: false,
         };
         let used: std::collections::HashSet<String> =
-            ["nginx:latest", "abc123def456"].iter().map(|s| s.to_string()).collect();
+            ["nginx:latest", "abc123def456", "redis"].iter().map(|s| s.to_string()).collect();
         // Referenziata per nome:tag → in uso.
         assert!(image_in_use(&img("nginx", "latest", "zzz999888777"), &used));
         // Dangling referenziata per id (prefisso) → in uso.
         assert!(image_in_use(&img("<none>", "<none>", "abc123def456aa"), &used));
+        // Container avviato come "redis" (tag latest implicito) → l'immagine
+        // "redis:latest" è in uso anche se il riferimento non ha il tag.
+        assert!(image_in_use(&img("redis", "latest", "111122223333"), &used));
+        // Tag esplicito diverso da quello usato → non in uso.
+        assert!(!image_in_use(&img("redis", "6", "111122223333"), &used));
         // Tag non usato e id assente → non in uso.
         assert!(!image_in_use(&img("nginx", "1.0", "0000ffff1111"), &used));
         // Dangling non referenziata → non in uso (candidata al prune).
         assert!(!image_in_use(&img("<none>", "<none>", "deadbeef0000"), &used));
+    }
+
+    #[test]
+    fn immagine_in_uso_per_id_risolto() {
+        let img = |id: &str| Image {
+            id: id.into(),
+            repository: "whatever".into(),
+            tag: "1".into(),
+            size: "1MB".into(),
+            created: "now".into(),
+            unused: false,
+        };
+        // ID risolti dai container (full sha, senza prefisso "sha256:").
+        let used_ids: std::collections::HashSet<String> = [
+            "abc123def456789000000000000000000000000000000000000000000000aaaa",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // `docker images` mostra l'ID corto: match sul prefisso → in uso.
+        assert!(image_in_use_by_id(&img("abc123def456"), &used_ids));
+        // Anche col prefisso "sha256:" davanti.
+        assert!(image_in_use_by_id(&img("sha256:abc123def456"), &used_ids));
+        // ID diverso → non in uso.
+        assert!(!image_in_use_by_id(&img("ffff00001111"), &used_ids));
     }
 }

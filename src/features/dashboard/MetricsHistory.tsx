@@ -16,10 +16,17 @@ const SERIES = [
 
 const W = 560;
 const H = 160;
-const PAD_L = 30;
+const PAD_L = 6;
 const PAD_R = 10;
 const PAD_T = 8;
 const PAD_B = 18;
+
+function yFor(pct: number) {
+  return PAD_T + (1 - pct / 100) * (H - PAD_T - PAD_B);
+}
+function topPct(pct: number) {
+  return (yFor(pct) / H) * 100;
+}
 const MAX_POINTS = 400;
 // Il campionamento è ogni 30s: oltre questo scarto tra due punti c'è un buco
 // (app spenta). Non va disegnata una diagonale che lo attraversa.
@@ -119,26 +126,30 @@ export function MetricsHistory() {
             : "Lo storico si popola man mano (un campione ogni 30s)."}
         </div>
       ) : (
-        <svg
-          className="metrics-chart"
-          viewBox={`0 0 ${W} ${H}`}
-          role="img"
-          aria-label={`Storico metriche ${hours} ore`}
-        >
+        <div className="metrics-plot">
+          <div className="metrics-yaxis" aria-hidden>
+            {[100, 50, 0].map((v) => (
+              <span key={v} style={{ top: `${topPct(v)}%` }}>
+                {v}
+              </span>
+            ))}
+          </div>
+          <svg
+            className="metrics-chart"
+            viewBox={`0 0 ${W} ${H}`}
+            role="img"
+            aria-label={`Storico metriche ${hours} ore`}
+          >
           {[0, 25, 50, 75, 100].map((g) => (
-            <g key={g}>
-              <line
-                x1={PAD_L}
-                y1={geometry.y(g)}
-                x2={W - PAD_R}
-                y2={geometry.y(g)}
-                stroke="var(--border)"
-                strokeWidth="1"
-              />
-              <text x={0} y={geometry.y(g) + 3} className="metrics-axis-label">
-                {g}
-              </text>
-            </g>
+            <line
+              key={g}
+              x1={PAD_L}
+              y1={geometry.y(g)}
+              x2={W - PAD_R}
+              y2={geometry.y(g)}
+              stroke="var(--border)"
+              strokeWidth="1"
+            />
           ))}
           <text x={PAD_L} y={H - 5} className="metrics-axis-label">
             {fmtTime(geometry.t0)}
@@ -179,7 +190,8 @@ export function MetricsHistory() {
               />
             ));
           })}
-        </svg>
+          </svg>
+        </div>
       )}
     </section>
   );

@@ -393,12 +393,30 @@ export interface LaunchBundle {
   steps: LaunchStep[];
 }
 
+export type ClipKind = "text" | "image" | "files";
+
+export interface ClipFile {
+  name: string;
+  size: number;
+  /** Copia del contenuto disponibile in cache (scaricabile / ri-copiabile). */
+  hasBlob: boolean;
+}
+
+export interface ClipImage {
+  mime: string;
+  width: number;
+  height: number;
+}
+
 export interface ClipEntry {
   id: number;
+  kind: ClipKind;
   text: string;
   bytes: number;
   copiedAt: number;
   pinned: boolean;
+  files?: ClipFile[];
+  image?: ClipImage;
 }
 
 export interface ClipboardHistory {

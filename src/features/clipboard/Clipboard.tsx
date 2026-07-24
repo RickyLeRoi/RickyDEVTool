@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, post } from "../../lib/api";
+import { api, post, API_BASE } from "../../lib/api";
 import { getDeviceName } from "../../lib/device";
 import { useDropStore } from "../../stores/dropStore";
 import type { ClipboardHistory, ClipEntry } from "../../lib/types";
@@ -21,6 +21,73 @@ function fmtBytes(n: number) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** URL del blob (immagine o file) servito dal backend. */
+function blobUrl(id: number, index?: number) {
+  const q = index != null ? `&i=${index}` : "";
+  return `${API_BASE}/api/clipboard/blob?id=${id}${q}`;
+}
+
+function TextBody({ entry }: { entry: ClipEntry }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = entry.text.length > PREVIEW_CHARS;
+  const shown = expanded || !long ? entry.text : entry.text.slice(0, PREVIEW_CHARS) + "…";
+  return (
+    <>
+      <pre className="clip-text" onClick={() => long && setExpanded(!expanded)}>
+        {shown}
+      </pre>
+      {long && (
+        <button className="small ghost clip-expand" onClick={() => setExpanded(!expanded)}>
+          {expanded ? "comprimi" : `mostra tutto (${entry.text.length} caratteri)`}
+        </button>
+      )}
+    </>
+  );
+}
+
+function ImageBody({ entry }: { entry: ClipEntry }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="clip-media">
+      <img
+        className={`clip-image ${expanded ? "expanded" : ""}`}
+        src={blobUrl(entry.id)}
+        alt={entry.text}
+        title={expanded ? "Riduci" : "Ingrandisci"}
+        onClick={() => setExpanded(!expanded)}
+      />
+    </div>
+  );
+}
+
+function FilesBody({ entry }: { entry: ClipEntry }) {
+  const files = entry.files ?? [];
+  return (
+    <ul className="clip-files">
+      {files.map((f, i) => (
+        <li key={i} className="clip-file">
+          <span className="clip-file-ico" aria-hidden>
+            📄
+          </span>
+          <span className="clip-file-name" title={f.name}>
+            {f.name}
+          </span>
+          <span className="dim clip-file-size">{fmtBytes(f.size)}</span>
+          {f.hasBlob ? (
+            <a className="small ghost" href={blobUrl(entry.id, i)} download={f.name}>
+              Salva
+            </a>
+          ) : (
+            <span className="badge" title="Troppo grande o non copiabile: salvato solo il nome">
+              solo nome
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Entry({
   entry,
   onChanged,
@@ -28,12 +95,9 @@ function Entry({
   entry: ClipEntry;
   onChanged: (h: ClipboardHistory) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const peers = useDropStore((s) => s.peers);
-  const long = entry.text.length > PREVIEW_CHARS;
-  const shown = expanded || !long ? entry.text : entry.text.slice(0, PREVIEW_CHARS) + "…";
 
   const copy = async () => {
     const r = await post<{ copied: boolean }>("/api/clipboard/copy", { id: entry.id });
@@ -70,12 +134,16 @@ function Entry({
     <li className={`clip-entry ${entry.pinned ? "pinned" : ""}`}>
       <div className="clip-meta">
         <span className="dim">{fmtTime(entry.copiedAt)}</span>
+        {entry.kind !== "text" && (
+          <span className="badge clip-kind">{entry.kind === "image" ? "immagine" : "file"}</span>
+        )}
         <span className="dim">{fmtBytes(entry.bytes)}</span>
         <span className="clip-actions">
           <button className="small" onClick={copy} title="Copia negli appunti">
             {copied ? "Copiato ✓" : "Copia"}
           </button>
-          {peers.length > 0 &&
+          {entry.kind === "text" &&
+            peers.length > 0 &&
             (sentTo ? (
               <span className="badge badge-ok">inviato a {sentTo}</span>
             ) : (
@@ -111,14 +179,9 @@ function Entry({
           </button>
         </span>
       </div>
-      <pre className="clip-text" onClick={() => long && setExpanded(!expanded)}>
-        {shown}
-      </pre>
-      {long && (
-        <button className="small ghost clip-expand" onClick={() => setExpanded(!expanded)}>
-          {expanded ? "comprimi" : `mostra tutto (${entry.text.length} caratteri)`}
-        </button>
-      )}
+      {entry.kind === "text" && <TextBody entry={entry} />}
+      {entry.kind === "image" && <ImageBody entry={entry} />}
+      {entry.kind === "files" && <FilesBody entry={entry} />}
     </li>
   );
 }
@@ -174,7 +237,8 @@ export function Clipboard() {
       </div>
 
       <p className="hint">
-        La cronologia vive solo in memoria: non è salvata su disco e sparisce a ogni riavvio.
+        Il testo vive solo in memoria; le immagini e i file copiati sono tenuti in una cache
+        temporanea su disco. Tutto sparisce a ogni riavvio: niente è salvato in modo permanente.
         {hist && !hist.enabled && " — cattura in pausa."}
       </p>
 
@@ -186,7 +250,7 @@ export function Clipboard() {
 
       {hist && hist.supported && hist.entries.length === 0 && (
         <div className="empty">
-          Nessuna copia registrata: copia qualcosa (da qualsiasi app) e comparirà qui.
+          Nessuna copia registrata: copia qualcosa (testo, un file o un'immagine) e comparirà qui.
         </div>
       )}
 
