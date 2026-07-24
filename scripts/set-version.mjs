@@ -51,8 +51,8 @@ const targets = [
   {
     file: "src-tauri/Cargo.lock",
     optional: true, // rigenerato comunque al prossimo build, ma lo teniamo pulito
-    read: (s) => (s.match(/name = "rickydevtool"\nversion = "([^"]*)"/) ?? [])[1],
-    write: (s) => s.replace(/(name = "rickydevtool"\nversion = ")[^"]*(")/, `$1${version}$2`),
+    read: (s) => (s.match(/name = "rickydevtool"\r?\nversion = "([^"]*)"/) ?? [])[1],
+    write: (s) => s.replace(/(name = "rickydevtool"\r?\nversion = ")[^"]*(")/, `$1${version}$2`),
   },
 ];
 

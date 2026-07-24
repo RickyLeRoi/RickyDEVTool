@@ -1,0 +1,13 @@
+# Line ending normalizzati a LF su tutte le piattaforme. Senza questo, i runner
+# Windows della CI (core.autocrlf=true) fanno checkout con CRLF e i tool che
+# leggono i file per riga/pattern (es. scripts/set-version.mjs su Cargo.lock, o
+# `cat VERSION` in bash) vedono byte diversi rispetto a macOS/Linux.
+* text=auto eol=lf
+
+# File intrinsecamente binari: mai toccati.
+*.png binary
+*.ico binary
+*.icns binary
+*.woff2 binary
+*.dmg binary
+*.app binary

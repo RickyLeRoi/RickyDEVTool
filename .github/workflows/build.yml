@@ -70,7 +70,8 @@ jobs:
       - name: Verifica tag ↔ VERSION
         shell: bash
         run: |
-          file_v="$(cat VERSION)"
+          # tr -d '[:space:]' toglie anche il CR se il runner ha checkoutato CRLF.
+          file_v="$(tr -d '[:space:]' < VERSION)"
           tag_v="${GITHUB_REF_NAME#v}"
           if [ "$file_v" != "$tag_v" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} non combacia con VERSION ($file_v). Esegui 'npm run version:sync' e ri-tagga."
