@@ -287,6 +287,7 @@ fn build_sections_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         ("clipboard", "📋 Appunti"),
         ("color", "🎨 Colori"),
         ("calc", "🧮 Calcolatrice"),
+        ("about", "ℹ️ About"),
         ("settings", "⚙️ Impostazioni"),
     ];
     let mut builder = SubmenuBuilder::new(app, "Apri sezione");

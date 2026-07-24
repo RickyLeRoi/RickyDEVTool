@@ -12,11 +12,12 @@ Developer operations console locale per macOS e Windows (Linux best-effort). Un 
   - Apri in VS Code / terminale, copia path.
 - **Servizi online**: health check HTTP/TCP dei preset (Google, Cloudflare, WhatsApp, …) e di servizi personali, solo a sezione aperta.
 - **Rete**: scan LAN, port scan, ping, traceroute, DNS/DoH, certificati TLS.
-- **Docker**: lista container e immagini, start/stop/restart, log in streaming.
+- **Docker**: lista container e immagini, start/stop/restart, log in streaming, immagini non usate con **prune**, e connessione a un **host Docker remoto** via `ssh://` o `tcp://` (vedi [Docker remoto](#docker-remoto)).
 - **Task**: log persistente (ring buffer) di ogni task avviato dal tool, riapribile anche dopo la fine.
-- **Utility**: avvii compositi, calcolatrice scientifica, color picker, storico appunti (in memoria) con clipboard di rete.
+- **Utility**: avvii compositi, calcolatrice scientifica, color picker (eyedropper su Windows/WebView2, Colorimetro digitale su macOS), storico appunti (in memoria) con clipboard di rete.
 - **Drop**: invio file/testo tra dispositivi in LAN (e tra host via discovery UDP), toast in ricezione.
-- **Alert**: CPU sostenuta, RAM alta, servizio down, task falliti — nel pannello laterale.
+- **About**: versione corrente con "verifica aggiornamenti", autore e contatti.
+- **Barra laterale**: CPU/RAM in miniatura, avvii rapidi (se hai profili), shortcut Docker se attivo, e gli alert (CPU sostenuta, RAM alta, servizio down, task falliti).
 - **Mobile**: stessa UI responsive da `http://<ip>:6969`, in sola lettura finché il "Controllo remoto" non viene attivato dal desktop. Deep-link `#/<sezione>` per gli shortcut sulla home.
 
 ## Sviluppo
@@ -25,12 +26,12 @@ Prerequisiti: Rust stable, Node 20+, (macOS) Xcode CLT.
 
 ```bash
 npm install
-npm run tauri dev      # dev con HMR (finestra su Vite :1420, API su :6969)
+npm run tauri:dev      # dev con HMR (finestra su Vite :1420, API su :6969) — sincronizza la versione
 npm run build          # build SPA (necessaria prima di cargo build/test)
 cd src-tauri && cargo test              # unit + contract test
 cd src-tauri && cargo test -- --ignored # contract test per-OS (kill, port scan, discovery)
 npm run test:e2e       # Playwright smoke (builda la SPA e avvia il server fake)
-npm run tauri build    # bundle release (.app/.dmg, .exe, .deb)
+npm run tauri:build    # bundle release (.app/.dmg, .exe, .deb) — sincronizza la versione
 ```
 
 Config e log: `~/Library/Application Support/RickyDEVTool` (macOS) / `%APPDATA%\RickyDEVTool` (Windows).
@@ -38,6 +39,41 @@ Config e log: `~/Library/Application Support/RickyDEVTool` (macOS) / `%APPDATA%\
 ## Architettura in breve
 
 Tauri 2 come shell (finestra, tray, autostart); tutto il resto è un core Rust con axum: REST + WebSocket per topic, `PollerRegistry` che accende i collector solo quando qualche client è sottoscritto, adapter OS-specifici isolati in `src-tauri/src/adapters/`, task runner con stream dei log. La SPA React è embedded nel binario e servita anche alla LAN dietro pairing token.
+
+## Docker remoto
+
+La sezione Docker può puntare a un daemon su un'altra macchina (es. una VM sul server di casa) invece che a quello locale. Nel campo **Host Docker** della sezione inserisci un endpoint con schema:
+
+- `ssh://utente@host` — consigliato: passa dal tuo SSH, nessuna porta Docker esposta in rete;
+- `tcp://ip:2375` — solo se il daemon espone l'API TCP (in chiaro: reti fidate).
+
+La CLI `docker` resta locale (dev'essere installata su questo computer): cambia solo il daemon a cui si connette (`docker -H <host> …`). L'host si configura solo dal desktop; le azioni su container remoti seguono il "Controllo remoto" come le altre scritture.
+
+### Prerequisiti SSH
+
+`docker -H ssh://…` lancia `ssh` in modo **non interattivo**: serve accesso **a chiave, senza password**.
+
+```bash
+ssh-copy-id utente@host        # installa la tua chiave (chiede la password una volta)
+ssh utente@host 'echo ok'      # deve stampare "ok" senza chiedere nulla
+```
+
+Se hai **ricreato la VM**, la sua host key cambia e SSH blocca la connessione (`Host key verification failed`): rimuovi la vecchia e riaccetta la nuova.
+
+```bash
+ssh-keygen -R host
+ssh utente@host                # accetta il nuovo fingerprint (yes)
+```
+
+Per ricreazioni frequenti, in `~/.ssh/config`:
+
+```
+Host host
+  User utente
+  StrictHostKeyChecking accept-new
+```
+
+Se la sezione mostra un **errore** invece dei container, è lo stderr reale di `docker -H …`: lì trovi il motivo (risoluzione nome, chiave, daemon spento).
 
 ## Sicurezza
 
@@ -75,12 +111,24 @@ printf '' | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo <owner>/<rep
 >
 > ⚠️ La `pubkey` nel config deve essere base64 **completa** (padding `=` incluso): una stringa troncata dà `failed to decode pubkey: Invalid padding` in fase di build. Verifica con `python3 -c "import base64,json;base64.b64decode(json.load(open('src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey'],validate=True)"` (nessun errore = ok).
 
+### Versione (single source)
+
+La versione vive in **un solo file**, `VERSION` nella root. Uno script la propaga a `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` e alla voce del crate in `Cargo.lock`:
+
+```bash
+node scripts/set-version.mjs 1.0.0   # imposta VERSION e sincronizza tutti i file
+npm run version:sync                 # (senza argomento) risincronizza dal file VERSION
+npm run version:check                # verifica l'allineamento (usato anche in CI)
+```
+
+I wrapper `npm run tauri:dev` / `npm run tauri:build` eseguono `version:sync` **prima** del CLI Tauri. La CI non scrive versioni: fa solo `version:check` (job `test`) e controlla che il tag combaci con `VERSION` (job `bundle`) — quindi committa sempre i file sincronizzati.
+
 ### Pubblicare una release
 
-1. Bump di `version` in [tauri.conf.json](src-tauri/tauri.conf.json) e [Cargo.toml](src-tauri/Cargo.toml), commit;
-2. tag e push: `git tag v0.2.0 && git push origin v0.2.0`;
+1. Bump: `node scripts/set-version.mjs 0.2.0`, poi commit di `VERSION` + i file sincronizzati;
+2. tag e push: `git tag v0.2.0 && git push origin v0.2.0` (il tag **deve** essere `v` + il contenuto di `VERSION`);
 3. la CI builda, firma e carica gli installer + `latest.json` su una release **draft**;
-4. su GitHub premi **Publish**: solo così l'endpoint `releases/latest/download/latest.json` diventa raggiungibile e i client vedono l'aggiornamento.
+4. su GitHub premi **Publish** lasciandola come release normale — **non** spuntare "Set as a pre-release": l'endpoint `releases/latest/download/latest.json` risolve solo alla più recente release *non* prerelease, quindi una prerelease darebbe 404 e l'updater non scatterebbe.
 
 ### Ri-eseguire i job falliti
 

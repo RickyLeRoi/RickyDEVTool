@@ -8,20 +8,54 @@ const REFRESH_MS = 5000;
 function ImagesPanel() {
   const [open, setOpen] = useState(false);
   const [images, setImages] = useState<DockerImage[] | null>(null);
+  const [pruning, setPruning] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  const toggle = async () => {
-    if (!open && !images) {
-      const r = await api<{ images: DockerImage[] }>("/api/docker/images");
-      if (r.ok) setImages(r.data.images);
-    }
-    setOpen(!open);
+  // Rifetch a ogni apertura: evita di mostrare un conteggio vecchio (es. 0
+  // catturato mentre la connessione remota non era ancora a posto).
+  const fetchImages = async () => {
+    const r = await api<{ images: DockerImage[] }>("/api/docker/images");
+    if (r.ok) setImages(r.data.images);
   };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) fetchImages();
+  };
+
+  const prune = async () => {
+    if (
+      !confirm(
+        "Rimuovere tutte le immagini non usate da nessun container (docker image prune -a)?\nLe immagini in uso non vengono toccate.",
+      )
+    )
+      return;
+    setPruning(true);
+    setMsg(null);
+    const r = await post<{ summary: string }>("/api/docker/images/prune", {});
+    setPruning(false);
+    if (r.ok) {
+      setMsg(r.data.summary?.trim() || "Prune completato.");
+      fetchImages();
+    } else setMsg(`Errore: ${r.error.message}`);
+  };
+
+  const unusedCount = images?.filter((i) => i.unused).length ?? 0;
 
   return (
     <div className="docker-images-wrap">
-      <button className="small" onClick={toggle}>
-        {open ? "▾" : "▸"} Immagini{images ? ` (${images.length})` : ""}
-      </button>
+      <div className="docker-images-head">
+        <button className="small" onClick={toggle}>
+          {open ? "▾" : "▸"} Immagini{images ? ` (${images.length})` : ""}
+        </button>
+        {open && images && images.length > 0 && (
+          <button className="small danger" onClick={prune} disabled={pruning}>
+            {pruning ? "Prune…" : unusedCount ? `Prune (${unusedCount} non usate)` : "Prune"}
+          </button>
+        )}
+      </div>
+      {msg && <div className="dim docker-prune-msg">{msg}</div>}
       {open && images && (
         <table className="proc-table docker-images">
           <tbody>
@@ -31,10 +65,15 @@ function ImagesPanel() {
               </tr>
             )}
             {images.map((img) => (
-              <tr key={img.id}>
+              <tr key={img.id} className={img.unused ? "img-unused" : ""}>
                 <td>
                   {img.repository}
                   <span className="dim">:{img.tag}</span>
+                  {img.unused && (
+                    <span className="badge badge-warn" title="Non usata da nessun container">
+                      non usata
+                    </span>
+                  )}
                 </td>
                 <td className="num dim">{img.size}</td>
                 <td className="num dim">{img.created}</td>
@@ -142,24 +181,44 @@ function ContainerRow({
       <td className="dim docker-ports">
         {container.ports.length > 0 ? container.ports.join(", ") : "—"}
       </td>
-      <td className="num docker-actions">
-        {running ? (
-          <>
-            <button className="small" disabled={busy} onClick={() => act("restart")}>
-              Restart
+      <td className="num">
+        <div className="docker-actions">
+          {running ? (
+            <>
+              <button
+                className="docker-btn restart"
+                disabled={busy}
+                title="Restart"
+                aria-label="Restart"
+                onClick={() => act("restart")}
+              >
+                ↻
+              </button>
+              <button
+                className="docker-btn stop"
+                disabled={busy}
+                title="Stop"
+                aria-label="Stop"
+                onClick={() => act("stop")}
+              >
+                ◼
+              </button>
+            </>
+          ) : (
+            <button
+              className="docker-btn start"
+              disabled={busy}
+              title="Start"
+              aria-label="Start"
+              onClick={() => act("start")}
+            >
+              ▶
             </button>
-            <button className="small danger" disabled={busy} onClick={() => act("stop")}>
-              Stop
-            </button>
-          </>
-        ) : (
-          <button className="small" disabled={busy} onClick={() => act("start")}>
-            Start
+          )}
+          <button className="docker-btn logs" title="Logs" aria-label="Logs" onClick={showLogs}>
+            ≣
           </button>
-        )}
-        <button className="small ghost" onClick={showLogs}>
-          Logs
-        </button>
+        </div>
         {error && <div className="banner banner-error docker-row-error">{error}</div>}
       </td>
     </tr>
@@ -211,15 +270,30 @@ export function Docker() {
         </div>
       )}
 
-      {state && state.available && state.daemonDown && (
+      {/* Il comando docker è fallito: se c'è un errore lo mostriamo per intero
+          (soprattutto per gli host remoti ssh://, dove il motivo — host key,
+          chiave, risoluzione nome — è nell'stderr). Senza questo sembrava
+          "0 container". */}
+      {state && state.available && (state.daemonDown || state.error) && (
         <div className="banner banner-error">
-          {state.host
-            ? `Non riesco a contattare il Docker remoto (${state.host}). Verifica che l'host sia raggiungibile e che il daemon sia attivo.`
-            : "Docker è installato ma il demone non risponde. Avvia Docker Desktop (o il tuo runtime) e riprova."}
+          <div>
+            {state.daemonDown
+              ? state.host
+                ? `Non riesco a contattare il Docker remoto (${state.host}). Verifica che l'host sia raggiungibile e che il daemon sia attivo.`
+                : "Docker è installato ma il demone non risponde. Avvia Docker Desktop (o il tuo runtime) e riprova."
+              : state.host
+                ? `Non riesco a leggere il Docker remoto (${state.host}).`
+                : "Errore nel contattare Docker."}
+          </div>
+          {state.error && (
+            <pre className="docker-error-detail">
+              docker -H {state.host} … → {state.error}
+            </pre>
+          )}
         </div>
       )}
 
-      {state && state.available && !state.daemonDown && state.containers.length === 0 && (
+      {state && state.available && !state.daemonDown && !state.error && state.containers.length === 0 && (
         <div className="empty">Nessun container (né attivo né fermo).</div>
       )}
 
@@ -247,7 +321,7 @@ export function Docker() {
         </table>
       )}
 
-      {state && state.available && !state.daemonDown && <ImagesPanel />}
+      {state && state.available && !state.daemonDown && !state.error && <ImagesPanel />}
 
       {logsFor && (
         <div className="docker-logs">

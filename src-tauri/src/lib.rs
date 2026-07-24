@@ -53,11 +53,19 @@ pub fn run() {
             } else {
                 format!("http://127.0.0.1:{}", info.port)
             };
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(window_url.parse()?))
-                .title("RickyDEVTool")
-                .inner_size(1100.0, 720.0)
-                .min_inner_size(900.0, 600.0)
-                .build()?;
+            let window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(window_url.parse()?))
+                    .title("RickyDEVTool")
+                    .inner_size(1100.0, 720.0)
+                    .min_inner_size(900.0, 600.0)
+                    .build()?;
+
+            // Dopo un riavvio automatico (es. al termine di un aggiornamento) su
+            // macOS la finestra può restare in secondo piano o minimizzata: la
+            // portiamo esplicitamente in primo piano.
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
 
             tray::setup(app.handle(), info)?;
             Ok(())

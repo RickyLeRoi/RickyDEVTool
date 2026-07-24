@@ -44,6 +44,10 @@ function handleApi(req, res, url) {
       return sendJson(res, { ok: true, data: { alerts: [] } });
     case "/api/tasks":
       return sendJson(res, { ok: true, data: { tasks: [] } });
+    case "/api/launch/bundles":
+      return sendJson(res, { ok: true, data: { bundles: [] } });
+    case "/api/docker":
+      return sendJson(res, { ok: true, data: { available: false, daemonDown: false, containers: [] } });
     case "/api/metrics/history":
       return sendJson(res, { ok: true, data: { samples: [], hours: Number(url.searchParams.get("hours") ?? 24) } });
     case "/api/drop/self":

@@ -20,6 +20,12 @@ pub fn open_settings() -> Result<(), String> {
     imp::open_settings()
 }
 
+/// Apre il Colorimetro digitale (solo macOS): usato dal color picker come
+/// alternativa all'EyeDropper, che WKWebView non espone.
+pub fn open_color_meter() -> Result<(), String> {
+    imp::open_color_meter()
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -42,6 +48,14 @@ mod imp {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+
+    pub fn open_color_meter() -> Result<(), String> {
+        std::process::Command::new("open")
+            .args(["-a", "Digital Color Meter"])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
 }
 
 // Windows: SendInput non richiede permessi speciali. Linux: jiggler non attivo.
@@ -55,5 +69,8 @@ mod imp {
     }
     pub fn open_settings() -> Result<(), String> {
         Err("Il permesso Accessibilità esiste solo su macOS".into())
+    }
+    pub fn open_color_meter() -> Result<(), String> {
+        Err("Il Colorimetro digitale esiste solo su macOS".into())
     }
 }

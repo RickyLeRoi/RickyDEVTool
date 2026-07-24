@@ -41,8 +41,10 @@ export function Dashboard() {
 
       {!latest && !error && <div className="empty">In attesa del primo campione…</div>}
 
-      {latest && (
-        <div className="gauges">
+      {/* CPU, RAM e Storico sulla stessa riga (tre card su desktop; vanno a capo
+          da soli su schermi stretti via il grid auto-fit). */}
+      <div className="gauges">
+        {latest && (
           <div className="gauge-card">
             <div className="gauge-title">CPU</div>
             <div className="gauge-value">{latest.cpuTotalPct.toFixed(0)}%</div>
@@ -59,7 +61,9 @@ export function Dashboard() {
               ))}
             </div>
           </div>
+        )}
 
+        {latest && (
           <div className="gauge-card">
             <div className="gauge-title">RAM</div>
             <div className="gauge-value">
@@ -75,10 +79,13 @@ export function Dashboard() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      <MetricsHistory />
+        <div className="gauge-card metrics-card">
+          <MetricsHistory />
+        </div>
+      </div>
+
       <Disks />
       <HeavyProcesses />
     </div>

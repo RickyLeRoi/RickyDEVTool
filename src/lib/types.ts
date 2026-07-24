@@ -57,6 +57,8 @@ export interface DockerImage {
   tag: string;
   size: string;
   created: string;
+  /** Non usata da nessun container (candidata al prune). */
+  unused: boolean;
 }
 
 export interface ProcessInfo {

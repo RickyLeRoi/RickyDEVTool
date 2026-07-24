@@ -233,6 +233,79 @@ input {
   flex: 1;
 }
 
+/* Blocchi extra della barra destra: avvii rapidi e shortcut Docker. */
+.vitals-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.vitals-heading {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  text-align: left;
+}
+.vitals-heading:hover {
+  color: var(--accent);
+}
+.vitals-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.vitals-chip,
+.vitals-shortcut {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.vitals-chip {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vitals-shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.vitals-chip:hover,
+.vitals-shortcut:hover {
+  border-color: var(--accent);
+}
+
+/* Fallback macOS del color picker: Colorimetro digitale. */
+.color-meter-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.color-meter-hint {
+  margin: 4px 0 12px;
+  max-width: none;
+}
+.color-meter-hint kbd {
+  font-family: inherit;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
 /* ---------- dashboard ---------- */
 .dashboard-header {
   display: flex;
@@ -271,6 +344,9 @@ input {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
+  /* Ogni card alla sua altezza naturale: la card Storico è più alta, ma CPU/RAM
+     non devono allungarsi per pareggiarla. */
+  align-items: start;
 }
 
 .gauge-card {
@@ -336,9 +412,25 @@ input {
   display: block;
 }
 
-/* ---------- dischi ---------- */
+/* ---------- storico metriche ---------- */
 .metrics-history {
   margin-top: 18px;
+}
+/* Quando lo storico è una card nella riga gauges: niente margine sopra e header
+   compatto, così sta accanto a CPU e RAM. */
+.metrics-card {
+  gap: 6px;
+}
+.metrics-card .metrics-history {
+  margin-top: 0;
+}
+.metrics-card .section-header {
+  margin-bottom: 2px;
+}
+.metrics-card .metrics-legend {
+  margin: 2px 0 4px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .metrics-legend {
   display: flex;
@@ -404,10 +496,44 @@ input {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.docker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text);
+  cursor: pointer;
+}
+.docker-btn:hover:not(:disabled) {
+  background: var(--bg-panel);
+}
+.docker-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.docker-btn.start {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.docker-btn.stop {
+  border-color: var(--error);
+  color: var(--error);
+}
+.docker-btn.restart {
+  border-color: var(--warn);
+  color: var(--warn);
 }
 .docker-row-error {
-  flex-basis: 100%;
   margin-top: 4px;
 }
 .docker-logs {
@@ -416,8 +542,21 @@ input {
 .docker-images-wrap {
   margin-top: 16px;
 }
+.docker-images-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.docker-prune-msg {
+  margin-top: 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
 .docker-images {
   margin-top: 8px;
+}
+.img-unused td:first-child {
+  opacity: 0.85;
 }
 .docker-host {
   margin: 4px 0 14px;
@@ -432,6 +571,15 @@ input {
 .docker-host .hint {
   margin-top: 6px;
   max-width: none;
+}
+.docker-error-detail {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
 }
 
 /* ---------- task section ---------- */
@@ -2217,53 +2365,100 @@ button.ghost:hover {
 .update-banner {
   position: fixed;
   left: 50%;
-  bottom: 16px;
+  top: 16px;
   transform: translateX(-50%);
   z-index: 300;
   display: flex;
   align-items: center;
   gap: 16px;
-  max-width: 520px;
-  padding: 10px 14px;
-  background: var(--bg-panel);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  max-width: 560px;
+  padding: 11px 16px;
+  color: #fff;
+  background: linear-gradient(
+    135deg,
+    var(--accent),
+    color-mix(in srgb, var(--accent) 65%, #7b3ff2)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, #000);
+  border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
 }
 .update-banner-body {
   min-width: 0;
 }
 .update-banner-title {
   font-size: 13px;
+  font-weight: 600;
 }
-.update-banner-notes {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-dim);
-  max-height: 60px;
-  overflow-y: auto;
-  white-space: pre-wrap;
+.update-banner-dim {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 400;
 }
 .update-banner-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
 }
-.update-banner-actions .primary {
-  background: var(--accent);
+.update-banner .primary {
+  background: #fff;
+  color: var(--accent);
+  border-color: #fff;
+  font-weight: 700;
+}
+.update-banner .ghost-on-accent {
+  background: transparent;
   color: #fff;
-  border-color: var(--accent);
-  font-weight: 600;
+  border-color: rgba(255, 255, 255, 0.5);
 }
 .update-progress {
   margin-top: 6px;
   height: 4px;
-  background: var(--bg-hover);
+  background: rgba(255, 255, 255, 0.25);
   border-radius: 2px;
   overflow: hidden;
 }
 .update-progress-fill {
   height: 100%;
-  background: var(--accent);
+  background: #fff;
   transition: width 0.2s ease;
+}
+
+/* ---------- about ---------- */
+.about-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.about-version {
+  font-weight: 700;
+  font-size: 15px;
+}
+.about-feedback {
+  margin-top: 8px;
+  min-height: 20px;
+  font-size: 13px;
+}
+.about-line {
+  display: flex;
+  gap: 12px;
+  padding: 5px 0;
+  align-items: baseline;
+}
+.about-line > .dim {
+  min-width: 90px;
+  flex-shrink: 0;
+}
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.linklike:hover {
+  text-decoration: underline;
 }

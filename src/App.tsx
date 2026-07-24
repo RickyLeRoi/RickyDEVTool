@@ -13,6 +13,7 @@ import { Tasks } from "./features/tasks/Tasks";
 import { Calc } from "./features/calc/Calc";
 import { Color } from "./features/color/Color";
 import { Clipboard } from "./features/clipboard/Clipboard";
+import { About } from "./features/about/About";
 import { Launch } from "./features/launch/Launch";
 import { DropToasts } from "./features/drop/DropToasts";
 import { UpdateBanner } from "./features/update/UpdateBanner";
@@ -39,6 +40,7 @@ type Section =
   | "color"
   | "clipboard"
   | "drop"
+  | "about"
   | "settings";
 
 // Task NON è nella rail fissa: compare come voce sopra Impostazioni solo se ci
@@ -57,6 +59,7 @@ const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "color", icon: "🎨", label: "Colori" },
   { id: "clipboard", icon: "📋", label: "Appunti" },
   { id: "drop", icon: "📤", label: "Drop" },
+  { id: "about", icon: "ℹ️", label: "About" },
   { id: "settings", icon: "⚙️", label: "Impostazioni" },
 ];
 
@@ -205,10 +208,11 @@ export default function App() {
           {section === "color" && <Color />}
           {section === "clipboard" && <Clipboard />}
           {section === "drop" && <Drop />}
+          {section === "about" && <About />}
           {section === "settings" && <Settings />}
         </main>
 
-        <VitalsPanel />
+        <VitalsPanel onNavigate={(s) => setSection(s as Section)} />
         <DropToasts />
         <UpdateBanner />
       </div>

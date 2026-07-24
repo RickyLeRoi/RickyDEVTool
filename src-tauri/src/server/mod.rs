@@ -131,6 +131,7 @@ pub async fn start(
         .route("/api/disks", get(list_disks))
         .route("/api/docker", get(docker_state))
         .route("/api/docker/images", get(docker_images))
+        .route("/api/docker/images/prune", post(docker_prune_images))
         .route("/api/docker/{id}/action", post(docker_action))
         .route("/api/docker/{id}/logs", post(docker_logs))
         .route("/api/disks/eject", post(disk_eject))
@@ -213,6 +214,7 @@ pub async fn start(
         .route("/api/config/docker-host", get(docker_host_get).post(docker_host_set))
         .route("/api/system/accessibility", get(accessibility_status))
         .route("/api/system/open-accessibility", post(open_accessibility))
+        .route("/api/system/color-meter", post(open_color_meter))
         .route("/api/system/open-url", post(open_url))
         .route("/ws", get(ws::ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
@@ -1507,6 +1509,22 @@ async fn docker_images(State(state): State<ServerState>) -> Json<serde_json::Val
     Json(json!({ "ok": true, "data": { "images": images } }))
 }
 
+/// Rimuove le immagini non usate (`docker image prune -a`): azione di scrittura.
+async fn docker_prune_images(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let host = state.config.get().docker_host;
+    match crate::adapters::docker::prune_images(host.as_deref()).await {
+        Ok(summary) => Json(json!({ "ok": true, "data": { "summary": summary } })).into_response(),
+        Err(crate::adapters::docker::DockerError::Failed(msg)) => internal_error(msg),
+        Err(_) => internal_error("prune fallito".into()),
+    }
+}
+
 /// Host Docker remoto configurato (vuoto = locale).
 async fn docker_host_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "host": state.config.get().docker_host } }))
@@ -1709,6 +1727,17 @@ async fn open_accessibility(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Respo
     }
 }
 
+/// Apre il Colorimetro digitale di macOS (fallback all'EyeDropper del color picker).
+async fn open_color_meter(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    match crate::adapters::accessibility::open_color_meter() {
+        Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
 #[derive(Deserialize)]
 struct OpenUrlBody {
     url: String,
@@ -1724,7 +1753,7 @@ async fn open_url(
         return remote_forbidden();
     }
     let url = body.url.trim();
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
         return internal_error("URL non valido".into());
     }
     match tauri_plugin_opener::open_url(url, None::<String>) {

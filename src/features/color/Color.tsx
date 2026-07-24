@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { post } from "../../lib/api";
 import {
   hsvToRgb,
   parseColor,
@@ -20,6 +21,10 @@ interface HSVA {
 // L'API EyeDropper esiste solo su webview Chromium (Windows WebView2), non su
 // WKWebView (macOS). Feature-detection: il bottone appare solo se usabile.
 const HAS_EYEDROPPER = typeof window !== "undefined" && "EyeDropper" in window;
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const IS_MAC = typeof navigator !== "undefined" && /Macintosh/.test(navigator.userAgent);
+// Su macOS senza EyeDropper si ripiega sul Colorimetro digitale di sistema.
+const USE_COLOR_METER = !HAS_EYEDROPPER && IS_TAURI && IS_MAC;
 
 function hsvaToRgba({ h, s, v, a }: HSVA): RGBA {
   return { ...hsvToRgb(h, s, v), a };
@@ -61,6 +66,7 @@ export function Color() {
   const [input, setInput] = useState("");
   const [inputErr, setInputErr] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [meterMsg, setMeterMsg] = useState<string | null>(null);
 
   const rgba = useMemo(() => hsvaToRgba(hsva), [hsva]);
   const opaqueHex = toHex({ ...rgba, a: 1 });
@@ -69,15 +75,61 @@ export function Color() {
   const hueBar = useDrag((x) => setHsva((c) => ({ ...c, h: x * 360 })));
   const alphaBar = useDrag((x) => setHsva((c) => ({ ...c, a: x })));
 
+  const setFromRgba = (c: RGBA) => {
+    const { h, s, v } = rgbToHsv(c.r, c.g, c.b);
+    setHsva({ h, s, v, a: c.a });
+  };
+
   const applyInput = (text: string) => {
     setInput(text);
     const parsed = parseColor(text);
     if (parsed) {
-      const { h, s, v } = rgbToHsv(parsed.r, parsed.g, parsed.b);
-      setHsva({ h, s, v, a: parsed.a });
+      setFromRgba(parsed);
       setInputErr(false);
     } else {
       setInputErr(true);
+    }
+  };
+
+  // Parsing tollerante per il Colorimetro digitale, che copia spesso "R, G, B"
+  // (interi 0..255) invece di un formato CSS.
+  const applyLoose = (text: string): boolean => {
+    const t = text.trim();
+    const parsed = parseColor(t);
+    if (parsed) {
+      setFromRgba(parsed);
+      return true;
+    }
+    const nums = (t.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+    if (nums.length >= 3 && nums.slice(0, 3).every((n) => n <= 255)) {
+      const [r, g, b, a] = nums;
+      setFromRgba({
+        r: Math.round(r),
+        g: Math.round(g),
+        b: Math.round(b),
+        a: a != null && a <= 1 ? a : 1,
+      });
+      return true;
+    }
+    return false;
+  };
+
+  const openColorMeter = () => post("/api/system/color-meter", {});
+
+  const readFromClipboard = async () => {
+    setMeterMsg(null);
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      setMeterMsg("Non riesco a leggere gli appunti (permesso negato).");
+      return;
+    }
+    if (applyLoose(text)) {
+      setInput(text.trim());
+      setInputErr(false);
+    } else {
+      setMeterMsg("Negli appunti non c'è un colore riconoscibile.");
     }
   };
 
@@ -109,12 +161,37 @@ export function Color() {
           <button className="small" onClick={pickScreen} title="Preleva un colore dallo schermo">
             🎯 Preleva dallo schermo
           </button>
+        ) : USE_COLOR_METER ? (
+          <div className="color-meter-actions">
+            <button
+              className="small"
+              onClick={openColorMeter}
+              title="Apri il Colorimetro digitale di macOS"
+            >
+              🔬 Colorimetro digitale
+            </button>
+            <button
+              className="small ghost"
+              onClick={readFromClipboard}
+              title="Applica il colore copiato (⇧⌘C dal Colorimetro)"
+            >
+              Leggi dagli appunti
+            </button>
+          </div>
         ) : (
           <span className="dim" title="Disponibile su Windows; WKWebView (macOS) non espone l'API">
             eyedropper non supportato qui
           </span>
         )}
       </div>
+
+      {USE_COLOR_METER && (
+        <div className="color-meter-hint hint">
+          macOS non espone l'eyedropper: apri il <strong>Colorimetro digitale</strong>, punta il
+          colore, premi <kbd>⇧⌘C</kbd> per copiarlo, poi <em>Leggi dagli appunti</em>.
+          {meterMsg && <span className="banner-error-text"> {meterMsg}</span>}
+        </div>
+      )}
 
       <div className="color-layout">
         <div className="color-pickers">

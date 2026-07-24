@@ -152,9 +152,29 @@ pub struct Image {
     pub tag: String,
     pub size: String,
     pub created: String,
+    /// Non referenziata da nessun container (dangling `<none>` o tag non più
+    /// usato): candidata al prune. Docker comunque non rimuove mai immagini in uso.
+    pub unused: bool,
 }
 
-/// Immagini locali (`docker images`). Vuoto se docker manca o il demone è giù.
+/// Riferimenti immagine (nome:tag o id) in uso dai container, da `docker ps -a`.
+async fn used_image_refs(host: Option<&str>) -> std::collections::HashSet<String> {
+    let output = docker_cmd(host)
+        .args(["ps", "-a", "--format", "{{.Image}}"])
+        .output()
+        .await;
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        _ => std::collections::HashSet::new(),
+    }
+}
+
+/// Immagini locali (`docker images`), con il flag `unused` calcolato incrociando
+/// i riferimenti dei container. Vuoto se docker manca o il demone è giù.
 pub async fn images(host: Option<&str>) -> Vec<Image> {
     if !docker_available().await {
         return Vec::new();
@@ -163,12 +183,50 @@ pub async fn images(host: Option<&str>) -> Vec<Image> {
         .args(["images", "--format", "{{json .}}"])
         .output()
         .await;
-    match output {
+    let mut images: Vec<Image> = match output {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
             .lines()
             .filter_map(parse_image_line)
             .collect(),
-        _ => Vec::new(),
+        _ => return Vec::new(),
+    };
+    let used = used_image_refs(host).await;
+    for img in &mut images {
+        img.unused = !image_in_use(img, &used);
+    }
+    images
+}
+
+/// Un'immagine è "in uso" se un container la referenzia per nome:tag o per id.
+fn image_in_use(img: &Image, used: &std::collections::HashSet<String>) -> bool {
+    if img.repository != "<none>" && img.tag != "<none>" {
+        let tagref = format!("{}:{}", img.repository, img.tag);
+        if used.contains(&tagref) {
+            return true;
+        }
+    }
+    // Riferimento per id (es. container su immagine dangling): match anche
+    // parziale sui prefissi, perché `docker images` e `docker ps` possono
+    // troncare l'id a lunghezze diverse.
+    used.iter().any(|u| {
+        u.len() >= 12 && (img.id.starts_with(u.as_str()) || u.starts_with(img.id.as_str()))
+    })
+}
+
+/// Rimuove tutte le immagini non usate da nessun container (`docker image prune -a`).
+/// Docker non tocca mai immagini in uso, quindi l'operazione è sempre sicura.
+pub async fn prune_images(host: Option<&str>) -> Result<String, DockerError> {
+    let output = docker_cmd(host)
+        .args(["image", "prune", "-a", "-f"])
+        .output()
+        .await
+        .map_err(|e| DockerError::Failed(e.to_string()))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(DockerError::Failed(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
     }
 }
 
@@ -186,6 +244,7 @@ pub fn parse_image_line(line: &str) -> Option<Image> {
         tag: get("Tag"),
         size: get("Size"),
         created: get("CreatedSince"),
+        unused: false, // calcolato in `images()` dopo aver letto i container
     })
 }
 
@@ -312,6 +371,29 @@ mod tests {
         assert_eq!(img.tag, "latest");
         assert_eq!(img.size, "187MB");
         assert_eq!(img.created, "3 weeks ago");
+        assert!(!img.unused); // default finché images() non lo calcola
         assert!(parse_image_line("garbage").is_none());
+    }
+
+    #[test]
+    fn immagine_in_uso_per_tag_e_id() {
+        let img = |repo: &str, tag: &str, id: &str| Image {
+            id: id.into(),
+            repository: repo.into(),
+            tag: tag.into(),
+            size: "1MB".into(),
+            created: "now".into(),
+            unused: false,
+        };
+        let used: std::collections::HashSet<String> =
+            ["nginx:latest", "abc123def456"].iter().map(|s| s.to_string()).collect();
+        // Referenziata per nome:tag → in uso.
+        assert!(image_in_use(&img("nginx", "latest", "zzz999888777"), &used));
+        // Dangling referenziata per id (prefisso) → in uso.
+        assert!(image_in_use(&img("<none>", "<none>", "abc123def456aa"), &used));
+        // Tag non usato e id assente → non in uso.
+        assert!(!image_in_use(&img("nginx", "1.0", "0000ffff1111"), &used));
+        // Dangling non referenziata → non in uso (candidata al prune).
+        assert!(!image_in_use(&img("<none>", "<none>", "deadbeef0000"), &used));
     }
 }
