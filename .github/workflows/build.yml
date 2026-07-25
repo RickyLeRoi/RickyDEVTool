@@ -36,8 +36,7 @@ jobs:
         working-directory: src-tauri
 
   e2e:
-    # Smoke test Playwright della SPA contro il backend fake. Solo su Linux con
-    # Chromium: valida shell, badge porte zombie e deep-link a ogni push.
+    # Smoke test Playwright con Chromium: shell, badge, porte-zombie e deep-link.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -63,7 +62,7 @@ jobs:
           - os: windows-latest
             args: ""
           - os: ubuntu-latest
-            args: ""
+            args: --bundles deb,rpm,appimage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -94,12 +93,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Firma degli artefatti dell'updater (minisign). Necessaria perché il
-          # client verifica la firma contro la pubkey in tauri.conf.json.
+          # AppImage su runner Ubuntu recenti: linuxdeploy gira senza FUSE
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          # Firma degli artefatti dell'updater (minisign)
+
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Firma macOS/Windows (codesign/notarizzazione): aggiungere qui i secret
-          # quando disponibili (APPLE_CERTIFICATE, APPLE_ID... / WINDOWS_CERTIFICATE).
+          # APPLE_CERTIFICATE
+          # APPLE_ID
+          # WINDOWS_CERTIFICATE).
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "RickyDEVTool ${{ github.ref_name }}"
