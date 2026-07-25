@@ -54,6 +54,33 @@ function handleApi(req, res, url) {
       return sendJson(res, { ok: true, data: { hubId: "mock-hub" } });
     case "/api/drop/hello":
       return sendJson(res, { ok: true, data: { peers: [] } });
+    // Endpoint delle nuove sezioni/tab: shape reali (array/oggetti attesi dai
+    // componenti). Il default permissivo {} farebbe crashare i render che
+    // iterano su liste (es. Appunti, Log, Snippet, SSH).
+    case "/api/clipboard/history":
+      return sendJson(res, { ok: true, data: { entries: [], enabled: true, supported: true } });
+    case "/api/snippets":
+      return sendJson(res, { ok: true, data: { snippets: [] } });
+    case "/api/ssh/hosts":
+      return sendJson(res, { ok: true, data: { hosts: [] } });
+    case "/api/logtail":
+      return sendJson(res, { ok: true, data: { tails: [] } });
+    case "/api/scheduler":
+      return sendJson(res, { ok: true, data: { supported: true, entries: [], note: null } });
+    case "/api/alerts/config":
+      return sendJson(res, {
+        ok: true,
+        data: { cpuPct: 90, memPct: 92, tempC: 85, batteryPct: 15, tempEnabled: true, batteryEnabled: true },
+      });
+    case "/api/lan":
+      return sendJson(res, {
+        ok: true,
+        data: { urls: [], port: PORT, lanEnabled: false, remoteControlEnabled: false, antiIdleEnabled: false, remote: false },
+      });
+    case "/api/system/accessibility":
+      return sendJson(res, { ok: true, data: { supported: false, trusted: false } });
+    case "/api/tools":
+      return sendJson(res, { ok: true, data: { tools: [] } });
     default:
       // Default permissivo: ok con data vuoto. Copre i POST idempotenti (ack,
       // interval…) toccati dagli smoke test senza bisogno di logica dedicata.

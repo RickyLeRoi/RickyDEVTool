@@ -331,9 +331,78 @@ pub fn logs_command(host: Option<&str>, id: &str) -> Option<(&'static str, Vec<S
     Some(("docker", args))
 }
 
+// ---------- stats live (CPU/RAM per container) ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerStat {
+    pub id: String,
+    pub name: String,
+    /// Percentuale CPU (può superare 100% con più core).
+    pub cpu_pct: f32,
+    pub mem_pct: f32,
+    /// Uso memoria in forma umana ("120MiB / 2GiB").
+    pub mem_usage: String,
+}
+
+/// Snapshot istantaneo dell'uso risorse dei container attivi
+/// (`docker stats --no-stream`). Vuoto se docker manca o il demone è giù: il
+/// poller non deve andare in backoff solo perché Docker è spento.
+pub async fn stats(host: Option<&str>) -> Vec<ContainerStat> {
+    if !docker_available().await {
+        return Vec::new();
+    }
+    let output = docker_cmd(host)
+        .args(["stats", "--no-stream", "--no-trunc", "--format", "{{json .}}"])
+        .output()
+        .await;
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(parse_stat_line)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// "12.34%" → 12.34; robusto a spazi e formati mancanti.
+fn parse_pct(s: &str) -> f32 {
+    s.trim().trim_end_matches('%').trim().parse::<f32>().unwrap_or(0.0)
+}
+
+/// Parser di una riga `docker stats --format '{{json .}}'`. Testato su fixture.
+pub fn parse_stat_line(line: &str) -> Option<ContainerStat> {
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let id = get("ID");
+    let name = get("Name");
+    if id.is_empty() && name.is_empty() {
+        return None;
+    }
+    Some(ContainerStat {
+        id,
+        name,
+        cpu_pct: parse_pct(&get("CPUPerc")),
+        mem_pct: parse_pct(&get("MemPerc")),
+        mem_usage: get("MemUsage"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_stat_riga() {
+        let line = r#"{"BlockIO":"0B / 0B","CPUPerc":"1.53%","Container":"abc","ID":"abc123","MemPerc":"2.10%","MemUsage":"41.2MiB / 2GiB","Name":"web","NetIO":"1kB / 2kB","PIDs":"7"}"#;
+        let s = parse_stat_line(line).expect("parse");
+        assert_eq!(s.id, "abc123");
+        assert_eq!(s.name, "web");
+        assert!((s.cpu_pct - 1.53).abs() < 0.001);
+        assert!((s.mem_pct - 2.10).abs() < 0.001);
+        assert_eq!(s.mem_usage, "41.2MiB / 2GiB");
+        assert!(parse_stat_line("garbage").is_none());
+    }
 
     #[test]
     fn parse_container_running() {

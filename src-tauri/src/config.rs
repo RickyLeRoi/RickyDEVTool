@@ -49,6 +49,41 @@ pub struct AppConfig {
     /// Host Docker remoto (es. "ssh://user@host" o "tcp://ip:2375"); vuoto = daemon locale.
     #[serde(default)]
     pub docker_host: Option<String>,
+    /// Snippet / comandi salvati eseguibili al volo.
+    #[serde(default)]
+    pub snippets: Vec<crate::services::snippets::Snippet>,
+    /// Host SSH salvati per l'esecuzione rapida di comandi.
+    #[serde(default)]
+    pub ssh_hosts: Vec<crate::services::ssh::SshHost>,
+    /// Soglie configurabili degli alert (CPU/RAM/temperatura/batteria).
+    #[serde(default)]
+    pub alert_thresholds: AlertThresholds,
+}
+
+/// Soglie oltre le quali scattano gli alert. Modificabili dall'utente; i default
+/// riproducono i valori storici (CPU 90%, RAM 92%) più temperatura e batteria.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AlertThresholds {
+    pub cpu_pct: f64,
+    pub mem_pct: f64,
+    pub temp_c: f64,
+    pub battery_pct: f64,
+    pub temp_enabled: bool,
+    pub battery_enabled: bool,
+}
+
+impl Default for AlertThresholds {
+    fn default() -> Self {
+        Self {
+            cpu_pct: 90.0,
+            mem_pct: 92.0,
+            temp_c: 85.0,
+            battery_pct: 15.0,
+            temp_enabled: true,
+            battery_enabled: true,
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -74,6 +109,9 @@ impl Default for AppConfig {
             drop_hub_name: String::new(),
             launch_bundles: Vec::new(),
             docker_host: None,
+            snippets: Vec::new(),
+            ssh_hosts: Vec::new(),
+            alert_thresholds: AlertThresholds::default(),
         }
     }
 }

@@ -280,13 +280,15 @@ fn build_pairing_submenu(app: &AppHandle, cfg: &crate::config::AppConfig) -> tau
 fn build_sections_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     const SECTIONS: &[(&str, &str)] = &[
         ("dashboard", "🖥 Dashboard"),
+        ("ports", "🔌 Porte"),
         ("projects", "📁 Progetti"),
+        ("net", "🌐 Rete"),
         ("docker", "🐳 Docker"),
+        ("tool", "🧰 Tool"),
+        ("log", "📜 Log"),
+        ("snippets", "⌨️ Snippet"),
+        ("ssh", "🔑 SSH"),
         ("tasks", "🧾 Task"),
-        ("launch", "🚀 Avvii"),
-        ("clipboard", "📋 Appunti"),
-        ("color", "🎨 Colori"),
-        ("calc", "🧮 Calcolatrice"),
         ("about", "ℹ️ About"),
         ("settings", "⚙️ Impostazioni"),
     ];

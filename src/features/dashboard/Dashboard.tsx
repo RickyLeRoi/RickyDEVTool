@@ -4,6 +4,7 @@ import { post } from "../../lib/api";
 import { HeavyProcesses } from "./HeavyProcesses";
 import { Disks } from "./Disks";
 import { MetricsHistory } from "./MetricsHistory";
+import { SensorsPanel } from "./SensorsPanel";
 
 const INTERVALS = [500, 1000, 2000, 5000, 10000];
 
@@ -86,6 +87,7 @@ export function Dashboard() {
         </div>
       </div>
 
+      <SensorsPanel />
       <Disks />
       <HeavyProcesses />
     </div>

@@ -104,17 +104,18 @@ test("la shell carica e la dashboard mostra la CPU dal push WS", async ({ page }
   await expect(page.locator(".gauge-value").filter({ hasText: "42%" })).toBeVisible();
 });
 
-test("la sezione Porte mostra il badge zombie per il listener orfano", async ({ page }) => {
-  await page.goto("/");
-  await page.getByTitle("Porte", { exact: true }).click();
+test("le Porte in ascolto (tab di Rete) mostrano il badge zombie", async ({ page }) => {
+  // Le porte in ascolto vivono ora come primo tab di Rete; il deep-link #/ports
+  // ci arriva mappando la sezione storica sul tab "listen".
+  await page.goto("/#/ports");
   await expect(page.getByRole("heading", { name: "Porte in ascolto" })).toBeVisible();
   await expect(page.getByText("3000")).toBeVisible();
   // Il badge "zombie" è la feature di rilevamento porte orfane.
   await expect(page.getByText("zombie").first()).toBeVisible();
 });
 
-test("il deep-link #/ports apre direttamente la sezione Porte", async ({ page }) => {
+test("il deep-link #/ports apre le Porte in ascolto dentro Rete", async ({ page }) => {
   await page.goto("/#/ports");
-  // Nessun click: la sezione arriva dall'hash → conferma il routing deep-link.
+  await expect(page.getByRole("heading", { name: "Rete", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Porte in ascolto" })).toBeVisible();
 });

@@ -21,9 +21,7 @@ pub struct Alert {
     pub acknowledged: bool,
 }
 
-const CPU_SUSTAINED_PCT: f64 = 90.0;
 const CPU_SUSTAINED_SECS: u64 = 60;
-const MEM_HIGH_PCT: f64 = 92.0;
 /// Non ripetere lo stesso alert per 10 minuti.
 const COOLDOWN_MS: u64 = 600_000;
 /// Un certificato in scadenza resta tale per giorni: un promemoria al giorno basta.
@@ -92,6 +90,9 @@ impl AlertService {
             "stats" => self.eval_stats(payload),
             "services" => self.eval_services(payload),
             "tasks" => self.eval_tasks(payload),
+            // "sensors" = poller dashboard; "sensorsbg" = campionatore sempre
+            // attivo (alert termici/batteria anche senza dashboard aperta).
+            "sensors" | "sensorsbg" => self.eval_sensors(payload),
             _ => {}
         }
     }
@@ -103,6 +104,7 @@ impl AlertService {
             .and_then(|m| m.get("usedPct"))
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
+        let thresholds = self.config.get().alert_thresholds;
         let ts = now_ms();
 
         let fire_cpu = {
@@ -113,7 +115,7 @@ impl AlertService {
                 .retain(|(t, _)| ts.saturating_sub(*t) <= CPU_SUSTAINED_SECS * 1000);
             let window = &inner.cpu_window;
             window.len() >= 5
-                && window.iter().all(|(_, pct)| *pct > CPU_SUSTAINED_PCT)
+                && window.iter().all(|(_, pct)| *pct > thresholds.cpu_pct)
                 // la finestra deve coprire quasi tutto il periodo
                 && ts.saturating_sub(window[0].0) >= CPU_SUSTAINED_SECS * 900
         };
@@ -123,10 +125,10 @@ impl AlertService {
                 "cpu",
                 "warning",
                 "CPU sostenuta".into(),
-                format!("CPU sopra il {CPU_SUSTAINED_PCT}% da oltre {CPU_SUSTAINED_SECS}s"),
+                format!("CPU sopra il {:.0}% da oltre {CPU_SUSTAINED_SECS}s", thresholds.cpu_pct),
             );
         }
-        if mem > MEM_HIGH_PCT {
+        if mem > thresholds.mem_pct {
             self.fire(
                 "mem-high",
                 "mem",
@@ -134,6 +136,41 @@ impl AlertService {
                 "RAM quasi esaurita".into(),
                 format!("Memoria al {mem:.0}%"),
             );
+        }
+    }
+
+    /// Alert termici e batteria dal topic "sensors" (attivo con la dashboard).
+    fn eval_sensors(&self, payload: &serde_json::Value) {
+        let thresholds = self.config.get().alert_thresholds;
+        if thresholds.temp_enabled {
+            if let Some(max) = payload.get("maxTempC").and_then(|v| v.as_f64()) {
+                if max >= thresholds.temp_c {
+                    self.fire(
+                        "temp-high",
+                        "temp",
+                        "warning",
+                        "Temperatura alta".into(),
+                        format!("Sensore a {max:.0}°C (soglia {:.0}°C)", thresholds.temp_c),
+                    );
+                }
+            }
+        }
+        if thresholds.battery_enabled {
+            if let Some(bat) = payload.get("battery") {
+                let percent = bat.get("percent").and_then(|v| v.as_f64());
+                let charging = bat.get("charging").and_then(|v| v.as_bool()).unwrap_or(false);
+                if let Some(p) = percent {
+                    if !charging && p <= thresholds.battery_pct {
+                        self.fire(
+                            "battery-low",
+                            "battery",
+                            "warning",
+                            "Batteria quasi scarica".into(),
+                            format!("Batteria al {p:.0}% e non in carica"),
+                        );
+                    }
+                }
+            }
         }
     }
 

@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
+import { ws } from "../../lib/ws";
 import { TaskLog } from "../../components/TaskLog";
-import type { DockerContainer, DockerImage, DockerState, TaskInfo } from "../../lib/types";
+import type {
+  ContainerStat,
+  DockerContainer,
+  DockerImage,
+  DockerState,
+  TaskInfo,
+} from "../../lib/types";
 
 const REFRESH_MS = 5000;
+// Intervalli offerti per gli stats live (docker stats è più pesante della lista).
+const STAT_INTERVALS = [2000, 3000, 5000, 10000];
 
 function ImagesPanel() {
   const [open, setOpen] = useState(false);
@@ -145,10 +154,12 @@ function HostBar({ host, onSaved }: { host: string | null; onSaved: () => void }
 
 function ContainerRow({
   container,
+  stat,
   onChanged,
   onLogs,
 }: {
   container: DockerContainer;
+  stat?: ContainerStat;
   onChanged: () => void;
   onLogs: (task: TaskInfo, name: string) => void;
 }) {
@@ -180,6 +191,18 @@ function ContainerRow({
         <td className="docker-name-cell">
           <span className={stateClass(container.state)} title={container.state} />
           <span className="docker-name">{container.name}</span>
+          {running && stat && (
+            <span className="docker-stat" title={`CPU ${stat.cpuPct}% · MEM ${stat.memUsage}`}>
+              <span className="docker-stat-metric">
+                <span className="docker-stat-label">CPU</span>
+                {stat.cpuPct.toFixed(0)}%
+              </span>
+              <span className="docker-stat-metric">
+                <span className="docker-stat-label">MEM</span>
+                {stat.memPct.toFixed(0)}%
+              </span>
+            </span>
+          )}
         </td>
         <td className="docker-actions-cell">
           {/* I click sulle azioni non devono aprire/chiudere il dettaglio. */}
@@ -245,6 +268,14 @@ function ContainerRow({
                   {container.ports.length > 0 ? container.ports.join(", ") : "—"}
                 </dd>
               </div>
+              {running && stat && (
+                <div>
+                  <dt>Risorse</dt>
+                  <dd className="dim">
+                    CPU {stat.cpuPct.toFixed(1)}% · MEM {stat.memPct.toFixed(1)}% ({stat.memUsage})
+                  </dd>
+                </div>
+              )}
             </dl>
           </td>
         </tr>
@@ -263,6 +294,8 @@ function ContainerRow({
 export function Docker() {
   const [state, setState] = useState<DockerState | null>(null);
   const [logsFor, setLogsFor] = useState<{ task: TaskInfo; name: string } | null>(null);
+  const [stats, setStats] = useState<Record<string, ContainerStat>>({});
+  const [statInterval, setStatInterval] = useState(3000);
 
   const load = useCallback(async () => {
     const r = await api<DockerState>("/api/docker");
@@ -274,6 +307,26 @@ export function Docker() {
     const id = setInterval(load, REFRESH_MS);
     return () => clearInterval(id);
   }, [load]);
+
+  // Stats live per container: il poller backend si accende solo mentre questa
+  // sezione è aperta (subscribe) e si spegne all'uscita (unsubscribe).
+  useEffect(() => {
+    return ws.subscribe("docker:stats", (event) => {
+      const payload = event.payload as { stats?: ContainerStat[] };
+      const map: Record<string, ContainerStat> = {};
+      for (const s of payload.stats ?? []) {
+        if (s.id) map[s.id] = s;
+        if (s.name) map[s.name] = s;
+      }
+      setStats(map);
+    });
+  }, []);
+
+  const changeStatInterval = (ms: number) => {
+    setStatInterval(ms);
+    // Il topic contiene ":" — path valido, nessun encoding necessario.
+    post("/api/pollers/docker:stats/interval", { intervalMs: ms });
+  };
 
   // `docker logs -f` non termina da solo: va fermato non solo alla chiusura
   // esplicita ma anche quando si passa a un altro container o si lascia la
@@ -290,9 +343,22 @@ export function Docker() {
     <div>
       <div className="section-header">
         <h2>Docker</h2>
-        <button className="small" onClick={load}>
-          Aggiorna
-        </button>
+        <div className="docker-header-actions">
+          <div className="segmented" title="Intervallo aggiornamento stats live">
+            {STAT_INTERVALS.map((ms) => (
+              <button
+                key={ms}
+                className={statInterval === ms ? "active" : ""}
+                onClick={() => changeStatInterval(ms)}
+              >
+                {ms / 1000}s
+              </button>
+            ))}
+          </div>
+          <button className="small" onClick={load}>
+            Aggiorna
+          </button>
+        </div>
       </div>
 
       <HostBar host={state?.host ?? null} onSaved={load} />
@@ -345,6 +411,7 @@ export function Docker() {
               <ContainerRow
                 key={c.id}
                 container={c}
+                stat={stats[c.id] ?? stats[c.name]}
                 onChanged={load}
                 onLogs={(task, name) => setLogsFor({ task, name })}
               />

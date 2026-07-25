@@ -51,6 +51,14 @@ export interface DockerState {
   host?: string | null;
 }
 
+export interface ContainerStat {
+  id: string;
+  name: string;
+  cpuPct: number;
+  memPct: number;
+  memUsage: string;
+}
+
 export interface DockerImage {
   id: string;
   repository: string;
@@ -393,6 +401,20 @@ export interface LaunchBundle {
   steps: LaunchStep[];
 }
 
+export interface Snippet {
+  id: string;
+  name: string;
+  command: string;
+  cwd: string;
+}
+
+export interface SshHost {
+  id: string;
+  name: string;
+  host: string;
+  defaultCommand: string;
+}
+
 export type ClipKind = "text" | "image" | "files";
 
 export interface ClipFile {
@@ -428,6 +450,57 @@ export interface ClipboardHistory {
 export interface AccessibilityStatus {
   supported: boolean;
   trusted: boolean;
+}
+
+// ---------- sensori / gpu / alert / scheduler ----------
+
+export interface TempReading {
+  label: string;
+  celsius: number;
+}
+
+export interface Battery {
+  percent: number;
+  charging: boolean;
+  state: string;
+}
+
+export interface GpuInfo {
+  name: string;
+  utilizationPct: number | null;
+  memUsedMb: number | null;
+  memTotalMb: number | null;
+  tempC: number | null;
+  source: string;
+}
+
+export interface SensorsSnapshot {
+  temps: TempReading[];
+  battery: Battery | null;
+  gpus: GpuInfo[];
+  maxTempC: number | null;
+}
+
+export interface AlertThresholds {
+  cpuPct: number;
+  memPct: number;
+  tempC: number;
+  batteryPct: number;
+  tempEnabled: boolean;
+  batteryEnabled: boolean;
+}
+
+export interface SchedEntry {
+  schedule: string;
+  command: string;
+  source: string;
+  detail: string | null;
+}
+
+export interface SchedListing {
+  supported: boolean;
+  entries: SchedEntry[];
+  note: string | null;
 }
 
 export interface DiskInfo {

@@ -9,6 +9,15 @@ function fmtGb(bytes: number) {
   return (bytes / 1024 ** 3).toFixed(1);
 }
 
+// Pagina d'origine di un alert, dal suo `kind`: cliccando l'alert ci si va.
+function alertTarget(kind: string): string | null {
+  if (kind === "service-down" || kind.startsWith("cert")) return "services"; // → Rete/Servizi
+  if (kind === "task-failed") return "tasks";
+  if (kind === "cpu-sustained" || kind === "mem-high" || kind === "temp-high" || kind === "battery-low")
+    return "dashboard";
+  return null;
+}
+
 // Poll lento: lo shortcut Docker è un indicatore, non un monitor. Su host remoto
 // ssh:// non vogliamo aprire una connessione ogni pochi secondi.
 const DOCKER_POLL_MS = 60_000;
@@ -145,17 +154,23 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
           )}
         </div>
         {alerts.length === 0 && <div className="vitals-sub">Nessun alert</div>}
-        {alerts.slice(0, 5).map((a) => (
-          <button
-            key={a.id}
-            className={`alert-item ${a.severity}`}
-            title={`${a.detail} (clic per confermare)`}
-            onClick={() => post("/api/alerts/ack", { id: a.id })}
-          >
-            <span className="alert-title">{a.title}</span>
-            <span className="alert-detail">{a.detail}</span>
-          </button>
-        ))}
+        {alerts.slice(0, 5).map((a) => {
+          const target = alertTarget(a.kind);
+          return (
+            <button
+              key={a.id}
+              className={`alert-item ${a.severity}`}
+              title={`${a.detail}${target ? " (clic: vai e conferma)" : " (clic per confermare)"}`}
+              onClick={() => {
+                if (target) onNavigate?.(target);
+                post("/api/alerts/ack", { id: a.id });
+              }}
+            >
+              <span className="alert-title">{a.title}</span>
+              <span className="alert-detail">{a.detail}</span>
+            </button>
+          );
+        })}
       </div>
     </aside>
   );

@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { post } from "../../lib/api";
-import { useTrayIntentStore } from "../../stores/trayIntentStore";
+import { useNavStore } from "../../stores/navStore";
 import { useNetScanStore } from "../../stores/netScanStore";
+import { Tabs, usePageTab, type TabDef } from "../../components/Tabs";
+import { Services } from "../services/Services";
+import { Ports as ListeningPorts } from "../ports/Ports";
 import { TaskLog } from "../../components/TaskLog";
 import type { DnsRecordSet, LanHost, PingResult, PortCheckResult, TaskInfo } from "../../lib/types";
 
-type Tool = "ping" | "dns" | "ports" | "traceroute" | "scan";
-
-const TOOLS: { id: Tool; label: string }[] = [
+// "listen" (Porte in ascolto) è il primo tab e apre di default.
+const TOOLS: TabDef[] = [
+  { id: "listen", label: "Porte in ascolto" },
+  { id: "services", label: "Servizi" },
   { id: "ping", label: "Ping" },
   { id: "dns", label: "DNS" },
-  { id: "ports", label: "Porte" },
+  { id: "portcheck", label: "Port check" },
   { id: "traceroute", label: "Traceroute" },
   { id: "scan", label: "Scan LAN" },
 ];
@@ -498,33 +502,30 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
 }
 
 export function NetTools() {
-  const [tool, setTool] = useState<Tool>("ping");
-  const traySection = useTrayIntentStore((s) => s.section);
-  const trayExtra = useTrayIntentStore((s) => s.extra);
-  const traySeq = useTrayIntentStore((s) => s.seq);
-  const trayWantsScan = traySection === "net" && trayExtra === "scan";
-
-  useEffect(() => {
-    if (trayWantsScan) setTool("scan");
-  }, [trayWantsScan, traySeq]);
+  const [tool, setTool] = usePageTab(
+    "net",
+    TOOLS.map((t) => t.id),
+    "listen",
+  );
+  // Auto-run dello scan quando si arriva sul tab "scan" da tray/palette.
+  const page = useNavStore((s) => s.page);
+  const reqTab = useNavStore((s) => s.tab);
+  const seq = useNavStore((s) => s.seq);
+  const scanSeq = page === "net" && reqTab === "scan" ? seq : 0;
 
   return (
     <div>
       <div className="section-header">
         <h2>Rete</h2>
-        <div className="segmented">
-          {TOOLS.map((t) => (
-            <button key={t.id} className={tool === t.id ? "active" : ""} onClick={() => setTool(t.id)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <Tabs tabs={TOOLS} active={tool} onChange={setTool} />
       </div>
+      {tool === "listen" && <ListeningPorts />}
+      {tool === "services" && <Services />}
       {tool === "ping" && <Ping />}
       {tool === "dns" && <Dns />}
-      {tool === "ports" && <Ports />}
+      {tool === "portcheck" && <Ports />}
       {tool === "traceroute" && <Traceroute />}
-      {tool === "scan" && <Scan autoRunSeq={trayWantsScan ? traySeq : 0} />}
+      {tool === "scan" && <Scan autoRunSeq={scanSeq} />}
     </div>
   );
 }

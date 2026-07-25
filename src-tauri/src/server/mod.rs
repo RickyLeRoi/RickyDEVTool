@@ -45,7 +45,10 @@ pub struct ServerState {
 /// Le azioni che modificano il sistema sono locali, oppure LAN se l'utente
 /// ha attivato esplicitamente il controllo remoto.
 fn write_allowed(state: &ServerState, peer: SocketAddr) -> bool {
-    peer.ip().is_loopback() || state.config.get().remote_control_enabled
+    write_permitted(peer.ip().is_loopback(), state.config.get().remote_control_enabled)
+}
+fn write_permitted(is_loopback: bool, remote_control_enabled: bool) -> bool {
+    is_loopback || remote_control_enabled
 }
 
 #[derive(Clone)]
@@ -103,6 +106,20 @@ pub async fn start(
     let metrics = crate::services::metrics::MetricsService::start();
     // Storico appunti sempre attivo (solo in memoria), thread OS dedicato.
     let clipboard = crate::services::clipboard::ClipboardHistory::start();
+    // Campionatore sensori a bassa frequenza SEMPRE attivo, solo per gli alert
+    // termici/batteria: il poller "sensors" gira solo con la dashboard aperta,
+    // ma questi alert devono scattare anche in background. Topic "sensorsbg"
+    // (base diverso da "sensors": non arriva alle dashboard, niente flicker).
+    {
+        let bus_bg = bus.clone();
+        tokio::spawn(async move {
+            loop {
+                let payload = crate::adapters::sensors::read_for_alerts().await;
+                bus_bg.publish("sensorsbg", payload);
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+    }
     let state = ServerState {
         config,
         bus,
@@ -167,6 +184,12 @@ pub async fn start(
         .route("/api/launch/bundles", get(launch_bundles_list).post(launch_bundle_upsert))
         .route("/api/launch/bundles/delete", post(launch_bundle_delete))
         .route("/api/launch/run", post(launch_run))
+        .route("/api/snippets", get(snippets_list).post(snippets_upsert))
+        .route("/api/snippets/delete", post(snippets_delete))
+        .route("/api/snippets/run", post(snippets_run))
+        .route("/api/ssh/hosts", get(ssh_hosts_list).post(ssh_host_upsert))
+        .route("/api/ssh/hosts/delete", post(ssh_host_delete))
+        .route("/api/ssh/run", post(ssh_run))
         .route("/api/clipboard/history", get(clipboard_history))
         .route("/api/clipboard/blob", get(clipboard_blob))
         .route("/api/clipboard/copy", post(clipboard_copy))
@@ -181,6 +204,9 @@ pub async fn start(
         .route("/api/services/{id}/toggle", post(services_toggle))
         .route("/api/alerts", get(alerts_get))
         .route("/api/alerts/ack", post(alerts_ack))
+        .route("/api/alerts/config", get(alerts_config_get).post(alerts_config_set))
+        .route("/api/scheduler", get(scheduler_list))
+        .route("/api/scheduler/detail", get(scheduler_detail))
         .route("/api/fs/entries", get(fs_entries))
         .route("/api/env/files", get(env_files))
         .route("/api/env/read", get(env_read))
@@ -1261,12 +1287,216 @@ async fn launch_run(
     let mut errors = Vec::new();
     for step in &bundle.steps {
         let label = format!("{} · {}", bundle.name, step.label);
-        match state.tasks.spawn_shell(&label, &step.command, &step.cwd) {
+        match state.tasks.spawn_shell(&label, &step.command, &expand_tilde(&step.cwd)) {
             Ok(info) => tasks.push(info),
             Err(e) => errors.push(format!("{}: {e}", step.label)),
         }
     }
     Json(json!({ "ok": true, "data": { "tasks": tasks, "errors": errors } })).into_response()
+}
+
+// ---------- snippet / comandi salvati ----------
+
+async fn snippets_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "snippets": state.config.get().snippets } }))
+}
+
+#[derive(Deserialize)]
+struct SnippetBody {
+    #[serde(default)]
+    id: Option<String>,
+    name: String,
+    command: String,
+    #[serde(default)]
+    cwd: String,
+}
+
+async fn snippets_upsert(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<SnippetBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let snippet = crate::services::snippets::Snippet {
+        id: body.id.unwrap_or_else(crate::services::snippets::new_id),
+        name: body.name,
+        command: body.command,
+        cwd: body.cwd,
+    };
+    let snippet = match snippet.sanitized() {
+        Ok(s) => s,
+        Err(message) => return internal_error(message),
+    };
+    let mut too_many = false;
+    state.config.update(|c| {
+        if let Some(existing) = c.snippets.iter_mut().find(|s| s.id == snippet.id) {
+            *existing = snippet.clone();
+        } else if c.snippets.len() >= crate::services::snippets::MAX_SNIPPETS {
+            too_many = true;
+        } else {
+            c.snippets.push(snippet.clone());
+        }
+    });
+    if too_many {
+        return internal_error(format!(
+            "troppi snippet (max {})",
+            crate::services::snippets::MAX_SNIPPETS
+        ));
+    }
+    Json(json!({ "ok": true, "data": { "snippets": state.config.get().snippets } })).into_response()
+}
+
+async fn snippets_delete(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<LaunchIdBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    state.config.update(|c| c.snippets.retain(|s| s.id != body.id));
+    Json(json!({ "ok": true, "data": { "snippets": state.config.get().snippets } })).into_response()
+}
+
+async fn snippets_run(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<LaunchIdBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let Some(snippet) = state.config.get().snippets.into_iter().find(|s| s.id == body.id) else {
+        return internal_error("snippet non trovato".into());
+    };
+    let cwd = if snippet.cwd.is_empty() {
+        home_dir_string()
+    } else {
+        expand_tilde(&snippet.cwd)
+    };
+    match state.tasks.spawn_shell(&snippet.name, &snippet.command, &cwd) {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+// ---------- ssh quick-connect ----------
+
+fn home_dir_string() -> String {
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+/// Espande un `~`/`~/…` iniziale nella home dell'utente: la shell lo farebbe da
+/// sé, ma qui la cartella è passata a `current_dir` senza shell, quindi un path
+/// come "~/Documents/…" darebbe "No such file or directory". Nessun altro
+/// glob/variabile viene toccato.
+fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        return home_dir_string();
+    }
+    let home = home_dir_string();
+    if let Some(rest) = path.strip_prefix("~/") {
+        return format!("{}/{}", home.trim_end_matches('/'), rest);
+    }
+    if let Some(rest) = path.strip_prefix("~\\") {
+        return format!("{}\\{}", home.trim_end_matches(['/', '\\']), rest);
+    }
+    path.to_string()
+}
+
+async fn ssh_hosts_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "hosts": state.config.get().ssh_hosts } }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SshHostBody {
+    #[serde(default)]
+    id: Option<String>,
+    name: String,
+    host: String,
+    #[serde(default)]
+    default_command: String,
+}
+
+async fn ssh_host_upsert(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<SshHostBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let host = crate::services::ssh::SshHost {
+        id: body.id.unwrap_or_else(crate::services::ssh::new_id),
+        name: body.name,
+        host: body.host,
+        default_command: body.default_command,
+    };
+    let host = match host.sanitized() {
+        Ok(h) => h,
+        Err(message) => return internal_error(message),
+    };
+    let mut too_many = false;
+    state.config.update(|c| {
+        if let Some(existing) = c.ssh_hosts.iter_mut().find(|h| h.id == host.id) {
+            *existing = host.clone();
+        } else if c.ssh_hosts.len() >= crate::services::ssh::MAX_HOSTS {
+            too_many = true;
+        } else {
+            c.ssh_hosts.push(host.clone());
+        }
+    });
+    if too_many {
+        return internal_error(format!("troppi host (max {})", crate::services::ssh::MAX_HOSTS));
+    }
+    Json(json!({ "ok": true, "data": { "hosts": state.config.get().ssh_hosts } })).into_response()
+}
+
+async fn ssh_host_delete(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<LaunchIdBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    state.config.update(|c| c.ssh_hosts.retain(|h| h.id != body.id));
+    Json(json!({ "ok": true, "data": { "hosts": state.config.get().ssh_hosts } })).into_response()
+}
+
+#[derive(Deserialize)]
+struct SshRunBody {
+    id: String,
+    command: String,
+}
+
+async fn ssh_run(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<SshRunBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let Some(host) = state.config.get().ssh_hosts.into_iter().find(|h| h.id == body.id) else {
+        return internal_error("host non trovato".into());
+    };
+    let command = body.command.trim().to_string();
+    if command.is_empty() {
+        return internal_error("inserisci un comando da eseguire".into());
+    }
+    let args = crate::services::ssh::run_args(&host.host, &command);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let label = format!("ssh {} — {}", host.host, command);
+    match state.tasks.spawn(&label, "ssh", &arg_refs, &home_dir_string()) {
+        Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
+        Err(message) => internal_error(message),
+    }
 }
 
 // ---------- storico appunti ----------
@@ -1730,6 +1960,62 @@ struct AckBody {
 async fn alerts_ack(State(state): State<ServerState>, Json(body): Json<AckBody>) -> Json<serde_json::Value> {
     state.alerts.ack(body.id.as_deref());
     Json(json!({ "ok": true, "data": { "alerts": state.alerts.list() } }))
+}
+
+async fn alerts_config_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": state.config.get().alert_thresholds }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AlertConfigBody {
+    cpu_pct: f64,
+    mem_pct: f64,
+    temp_c: f64,
+    battery_pct: f64,
+    temp_enabled: bool,
+    battery_enabled: bool,
+}
+
+async fn alerts_config_set(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<AlertConfigBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    let thresholds = crate::config::AlertThresholds {
+        cpu_pct: body.cpu_pct.clamp(10.0, 100.0),
+        mem_pct: body.mem_pct.clamp(10.0, 100.0),
+        temp_c: body.temp_c.clamp(30.0, 120.0),
+        battery_pct: body.battery_pct.clamp(1.0, 100.0),
+        temp_enabled: body.temp_enabled,
+        battery_enabled: body.battery_enabled,
+    };
+    state.config.update(|c| c.alert_thresholds = thresholds.clone());
+    Json(json!({ "ok": true, "data": state.config.get().alert_thresholds })).into_response()
+}
+
+/// Elenco (sola lettura) di cron/launchd/schtasks. On-demand come porte/servizi.
+async fn scheduler_list() -> Json<serde_json::Value> {
+    let listing = crate::adapters::scheduler::list().await;
+    Json(json!({ "ok": true, "data": listing }))
+}
+
+#[derive(Deserialize)]
+struct SchedDetailQuery {
+    source: String,
+    id: String,
+}
+
+/// Dettagli di una voce pianificata (sola lettura): plist di launchd, query
+/// verbosa di schtasks. crontab calcola il prossimo avvio lato client.
+async fn scheduler_detail(
+    axum::extract::Query(query): axum::extract::Query<SchedDetailQuery>,
+) -> Json<serde_json::Value> {
+    let lines = crate::adapters::scheduler::detail(&query.source, &query.id).await;
+    Json(json!({ "ok": true, "data": { "lines": lines } }))
 }
 
 #[derive(Deserialize)]
@@ -2473,4 +2759,32 @@ async fn static_assets(uri: Uri) -> Response {
 fn asset_response(path: &str, file: rust_embed::EmbeddedFile) -> Response {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     ([(header::CONTENT_TYPE, mime.as_ref())], file.data).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_permitted_invariante_di_sicurezza() {
+        // Loopback: sempre concesso, anche col controllo remoto spento.
+        assert!(write_permitted(true, false));
+        assert!(write_permitted(true, true));
+        // Remoto: negato salvo controllo remoto attivo.
+        assert!(!write_permitted(false, false));
+        assert!(write_permitted(false, true));
+    }
+
+    #[test]
+    fn expand_tilde_risolve_la_home() {
+        let home = home_dir_string();
+        assert_eq!(expand_tilde("~"), home);
+        assert_eq!(
+            expand_tilde("~/Documents/Progetti/Share WebUI"),
+            format!("{}/Documents/Progetti/Share WebUI", home.trim_end_matches('/'))
+        );
+        // Nessun tilde iniziale: invariato (anche i path assoluti restano tali).
+        assert_eq!(expand_tilde("/var/log/app.log"), "/var/log/app.log");
+        assert_eq!(expand_tilde("relativo/dir"), "relativo/dir");
+    }
 }

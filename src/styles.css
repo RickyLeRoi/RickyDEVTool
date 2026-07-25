@@ -2583,3 +2583,382 @@ button.ghost:hover {
 .linklike:hover {
   text-decoration: underline;
 }
+
+/* ---------- tabs (Tool / Rete) ---------- */
+.tabs {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.tool-tabbar {
+  margin-bottom: 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* La barra scorre in orizzontale: il segmented si dimensiona sul contenuto e NON
+   clippa i tab (il default .segmented ha overflow:hidden + .tabs max-width:100%,
+   che su mobile tagliava i tab oltre il quinto rendendoli irraggiungibili). */
+.tool-tabbar .segmented {
+  flex-wrap: nowrap;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+}
+.tool-page > * + * {
+  margin-top: 4px;
+}
+.tool-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---------- command palette (⌘K) ---------- */
+.cmdk-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 200;
+}
+.cmdk {
+  width: min(560px, 92vw);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.cmdk-input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 12px 14px;
+  font-size: 15px;
+  background: transparent;
+}
+.cmdk-input:focus {
+  outline: none;
+}
+.cmdk-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 6px;
+}
+.cmdk-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.cmdk-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+}
+.cmdk-item.active {
+  background: var(--bg-hover);
+}
+.cmdk-icon {
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.cmdk-title {
+  flex: 1;
+}
+.cmdk-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.cmdk-footer {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* ---------- log viewer ---------- */
+.log-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+.log-tab {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.log-tab.active {
+  border-color: var(--accent);
+}
+.log-tab-name {
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--text-dim);
+}
+.log-tab.active .log-tab-name {
+  color: var(--accent);
+}
+.log-tab-close {
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--text-dim);
+  padding: 4px 8px;
+}
+.log-tab-close:hover {
+  color: var(--error);
+}
+
+/* ---------- snippet / ssh ---------- */
+.snippet-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.snippet-form textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  resize: vertical;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.snippet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.snippet-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.snippet-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.snippet-name {
+  font-weight: 600;
+}
+.snippet-cmd {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--code-bg);
+}
+.snippet-cwd {
+  font-size: 11px;
+}
+.snippet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.snippet-output {
+  margin-top: 16px;
+}
+.ssh-run-form {
+  margin: 0;
+}
+.ssh-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+@media (max-width: 640px) {
+  .snippet-card {
+    flex-direction: column;
+  }
+  .snippet-actions {
+    flex-direction: row;
+  }
+}
+
+/* Su mobile i tab della pagina Tool vanno a capo: tutti raggiungibili senza
+   dover scoprire lo scroll orizzontale. */
+@media (max-width: 700px) {
+  .tool-tabbar {
+    overflow-x: visible;
+  }
+  .tool-tabbar .segmented {
+    flex-wrap: wrap;
+    width: auto;
+  }
+}
+
+/* ---------- docker stats live ---------- */
+.docker-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.docker-stat {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.docker-stat-metric {
+  font-variant-numeric: tabular-nums;
+}
+.docker-stat-label {
+  color: var(--text-dim);
+  opacity: 0.7;
+  margin-right: 3px;
+}
+
+/* ---------- sensori (temp / batteria / gpu) ---------- */
+.sensors {
+  margin-top: 18px;
+}
+.sensor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.sensor-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sensor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.sensor-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sensor-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.sensor-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+.sensor-bar-fill.warn {
+  background: var(--warn);
+}
+.sensor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sensor-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.sensor-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sensor-gpu-sub {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ---------- soglie alert ---------- */
+.alert-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.alert-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.alert-field span:first-child {
+  min-width: 160px;
+}
+.alert-field input {
+  width: 90px;
+}
+
+/* ---------- cron / scheduler ---------- */
+.cron-schedule {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+.cron-cmd {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--code-bg);
+}
+.cron-row {
+  cursor: pointer;
+}
+.cron-row:hover {
+  background: var(--bg-hover);
+}
+.cron-source {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  white-space: nowrap;
+}
+.cron-expand {
+  opacity: 0.6;
+}
+.cron-detail > td {
+  background: var(--bg-panel);
+}
+.cron-detail-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.cron-detail-list li {
+  padding: 1px 0;
+}

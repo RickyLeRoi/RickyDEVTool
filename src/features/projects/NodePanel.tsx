@@ -85,25 +85,18 @@ export function NodePanel({ path }: { path: string }) {
               Start ({project.primaryStart})
             </button>
           )}
-          {otherScripts.length > 0 && (
-            <select
-              defaultValue=""
-              onChange={(e) => {
-                if (e.target.value) run(e.target.value);
-                e.target.value = "";
-              }}
+          {/* Tutti gli script di package.json come bottoni, non solo i fissi. */}
+          {otherScripts.map((s) => (
+            <button
+              key={s}
+              className="small script-btn"
+              onClick={() => run(s)}
               disabled={task?.state === "running"}
+              title={project.scripts[s]}
             >
-              <option value="" disabled>
-                altri script…
-              </option>
-              {otherScripts.map((s) => (
-                <option key={s} value={s} title={project.scripts[s]}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          )}
+              {s}
+            </button>
+          ))}
           {!project.nodeModulesPresent && (
             <span className="badge badge-warn">node_modules assente</span>
           )}
