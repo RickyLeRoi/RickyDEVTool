@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,11 +102,8 @@ async fn which(name: &str) -> Option<String> {
     #[cfg(not(windows))]
     let (cmd, arg) = ("/usr/bin/which", name);
 
-    let output = tokio::process::Command::new(cmd).arg(arg).no_window().output().await.ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).lines().next()?.trim().to_string();
+    let out = exec::text(exec::cmd(cmd).arg(arg)).await?;
+    let path = out.lines().next()?.trim().to_string();
     (!path.is_empty()).then_some(path)
 }
 
@@ -116,18 +113,8 @@ async fn version_of(id: &str, path: &str) -> Option<String> {
         "docker" => "--version",
         _ => "--version",
     };
-    let output = tokio::time::timeout(Duration::from_secs(4), {
-        let mut c = tokio::process::Command::new(path);
-        c.arg(arg).no_window();
-        c.output()
-    })
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let first = String::from_utf8_lossy(&output.stdout).lines().next()?.trim().to_string();
+    let out = exec::text_within(exec::cmd(path).arg(arg), Duration::from_secs(4)).await?;
+    let first = out.lines().next()?.trim().to_string();
     (!first.is_empty()).then_some(first)
 }
 
@@ -196,17 +183,12 @@ async fn discover_visual_studio() -> DiscoveredTool {
     }
     // -prerelease: senza questo flag vswhere esclude le edizioni Preview/Insiders
     // (es. VS 2026 finché resta in preview), facendole risultare "non trovate".
-    let output = match tokio::process::Command::new(&vswhere)
-        .args(["-all", "-prerelease", "-products", "*", "-format", "json"])
-        .no_window()
-        .output()
-        .await
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return not_found("visualstudio", Some("vswhere eseguito ma fallito".into())),
+    let cmd = &mut exec::cmd(&vswhere);
+    cmd.args(["-all", "-prerelease", "-products", "*", "-format", "json"]);
+    let Some(output) = exec::text(cmd).await else {
+        return not_found("visualstudio", Some("vswhere eseguito ma fallito".into()));
     };
-    let parsed: Vec<serde_json::Value> =
-        serde_json::from_slice(&output.stdout).unwrap_or_default();
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&output).unwrap_or_default();
     let editions: Vec<ToolEdition> = parsed
         .iter()
         .filter_map(|v| {
@@ -290,7 +272,7 @@ pub async fn launch(tool: &DiscoveredTool, target: Option<&str>) -> Result<(), S
 
 #[cfg(target_os = "macos")]
 fn launch_vscode(path: &str, target: Option<&str>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new("open");
+    let mut cmd = exec::sync_cmd("open");
     cmd.args(["-a", path]);
     if let Some(t) = target {
         cmd.arg(t);
@@ -300,7 +282,7 @@ fn launch_vscode(path: &str, target: Option<&str>) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 fn launch_vscode(path: &str, target: Option<&str>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new(path);
+    let mut cmd = exec::sync_cmd(path);
     if let Some(t) = target {
         cmd.arg(t);
     }
@@ -309,7 +291,7 @@ fn launch_vscode(path: &str, target: Option<&str>) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn launch_visual_studio(path: &str, target: Option<&str>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new(path);
+    let mut cmd = exec::sync_cmd(path);
     if let Some(t) = target {
         cmd.arg(t);
     }
@@ -323,7 +305,7 @@ fn launch_visual_studio(_path: &str, _target: Option<&str>) -> Result<(), String
 
 #[cfg(target_os = "macos")]
 fn launch_terminal(path: &str, target: Option<&str>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new("open");
+    let mut cmd = exec::sync_cmd("open");
     cmd.args(["-a", path]);
     if let Some(t) = target {
         cmd.arg(t);
@@ -335,11 +317,13 @@ fn launch_terminal(path: &str, target: Option<&str>) -> Result<(), String> {
 fn launch_terminal(path: &str, target: Option<&str>) -> Result<(), String> {
     let dir = target.unwrap_or(".");
     if path.ends_with("wt") || path.ends_with("wt.exe") {
-        let mut c = std::process::Command::new(path);
+        let mut c = exec::sync_cmd(path);
         c.args(["-d", dir]);
         spawn(c)
     } else {
-        let mut c = std::process::Command::new("cmd");
+        // Qui la console è il prodotto, non un effetto collaterale: `start`
+        // apre il terminale che l'utente ha chiesto.
+        let mut c = exec::sync_cmd_with_console("cmd");
         c.args(["/c", "start", "cmd", "/K", "cd", "/d", dir]);
         spawn(c)
     }
@@ -347,7 +331,7 @@ fn launch_terminal(path: &str, target: Option<&str>) -> Result<(), String> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn launch_terminal(path: &str, target: Option<&str>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new(path);
+    let mut cmd = exec::sync_cmd(path);
     if let Some(t) = target {
         cmd.current_dir(t);
     }

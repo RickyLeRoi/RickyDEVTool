@@ -42,7 +42,7 @@ mod imp {
     }
 
     pub fn open_settings() -> Result<(), String> {
-        std::process::Command::new("open")
+        crate::exec::sync_cmd("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
             .spawn()
             .map(|_| ())
@@ -50,7 +50,7 @@ mod imp {
     }
 
     pub fn open_color_meter() -> Result<(), String> {
-        std::process::Command::new("open")
+        crate::exec::sync_cmd("open")
             .args(["-a", "Digital Color Meter"])
             .spawn()
             .map(|_| ())

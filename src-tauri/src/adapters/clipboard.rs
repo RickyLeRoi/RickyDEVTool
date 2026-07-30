@@ -19,8 +19,7 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 /// Contenuto letto dalla clipboard in un giro di polling.
 pub enum ClipRead {
@@ -105,7 +104,7 @@ pub fn write_image(png_path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         run_ok(
-            Command::new("osascript")
+            exec::sync_cmd("osascript")
                 .args(["-l", "JavaScript", "-e", MAC_WRITE_IMG_JS, "--"])
                 .arg(png_path),
             "scrittura immagine",
@@ -114,7 +113,7 @@ pub fn write_image(png_path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         run_ok(
-            Command::new("powershell")
+            exec::sync_cmd("powershell")
                 .args(["-Sta", "-NoProfile", "-Command", WIN_WRITE_IMG_PS])
                 .env("RDT_CLIPPATH", png_path),
             "scrittura immagine",
@@ -133,7 +132,7 @@ pub fn write_files(paths: &[PathBuf]) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        let mut cmd = Command::new("osascript");
+        let mut cmd = exec::sync_cmd("osascript");
         cmd.args(["-l", "JavaScript", "-e", MAC_WRITE_FILES_JS, "--"]);
         for p in paths {
             cmd.arg(p);
@@ -148,7 +147,7 @@ pub fn write_files(paths: &[PathBuf]) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join("\n");
         run_ok(
-            Command::new("powershell")
+            exec::sync_cmd("powershell")
                 .args(["-Sta", "-NoProfile", "-Command", WIN_WRITE_FILES_PS])
                 .env("RDT_CLIPPATHS", joined),
             "copia file",
@@ -163,7 +162,6 @@ pub fn write_files(paths: &[PathBuf]) -> Result<(), String> {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn run_ok(cmd: &mut Command, what: &str) -> Result<(), String> {
     let out = cmd
-        .no_window()
         .stderr(Stdio::null())
         .output()
         .map_err(|e| format!("{what} fallita: {e}"))?;
@@ -249,11 +247,10 @@ fn read_macos(last: i64) -> (i64, Option<ClipRead>) {
         return (last, Some(ClipRead::Text(text)));
     }
     let out_png = temp_png_path();
-    let output = Command::new("osascript")
+    let output = exec::sync_cmd("osascript")
         .args(["-l", "JavaScript", "-e", MAC_READ_JS, "--"])
         .arg(last.to_string())
         .arg(&out_png)
-        .no_window()
         .stderr(Stdio::null())
         .output();
     let Ok(output) = output else {
@@ -278,16 +275,12 @@ const MAC_WRITE_FILES_JS: &str = r#"function run(a){ObjC.import("Foundation");Ob
 
 #[cfg(target_os = "macos")]
 fn read_command() -> Option<Command> {
-    let mut c = Command::new("pbpaste");
-    c.no_window();
-    Some(c)
+    Some(exec::sync_cmd("pbpaste"))
 }
 
 #[cfg(target_os = "macos")]
 fn write_command() -> Option<Command> {
-    let mut c = Command::new("pbcopy");
-    c.no_window();
-    Some(c)
+    Some(exec::sync_cmd("pbcopy"))
 }
 
 // ------------------------------ Windows ------------------------------------
@@ -295,11 +288,10 @@ fn write_command() -> Option<Command> {
 #[cfg(target_os = "windows")]
 fn read_windows(last: i64) -> (i64, Option<ClipRead>) {
     let out_png = temp_png_path();
-    let output = Command::new("powershell")
+    let output = exec::sync_cmd("powershell")
         .args(["-Sta", "-NoProfile", "-Command", WIN_READ_PS])
         .env("RDT_LASTCHANGE", last.to_string())
         .env("RDT_OUTPNG", &out_png)
-        .no_window()
         .stderr(Stdio::null())
         .output();
     let Ok(output) = output else {
@@ -347,18 +339,16 @@ try {
 
 #[cfg(target_os = "windows")]
 fn read_command() -> Option<Command> {
-    let mut c = Command::new("powershell");
+    let mut c = exec::sync_cmd("powershell");
     // -Raw preserva il testo esatto (niente split/rejoin delle righe).
     c.args(["-NoProfile", "-Command", "Get-Clipboard -Raw"]);
-    c.no_window();
     Some(c)
 }
 
 #[cfg(target_os = "windows")]
 fn write_command() -> Option<Command> {
-    let mut c = Command::new("powershell");
+    let mut c = exec::sync_cmd("powershell");
     c.args(["-NoProfile", "-Command", "$input | Set-Clipboard"]);
-    c.no_window();
     Some(c)
 }
 

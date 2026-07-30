@@ -6,8 +6,7 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::sync::Mutex;
 
 use super::procs::{classify_known_app, is_system_process};
-#[cfg(target_os = "windows")]
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 /// Nomi che richiedono conferma rafforzata prima del kill.
 pub const PROTECTED_NAMES: &[&str] = &[
@@ -216,7 +215,7 @@ fn users() -> &'static sysinfo::Users {
 
 #[cfg(target_os = "macos")]
 async fn list_listeners() -> Result<Vec<RawListener>, String> {
-    let output = tokio::process::Command::new("lsof")
+    let output = exec::cmd("lsof")
         .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-FpnP"])
         .output()
         .await
@@ -265,16 +264,10 @@ pub fn parse_lsof_f(output: &str) -> Vec<RawListener> {
 
 #[cfg(target_os = "windows")]
 async fn list_listeners() -> Result<Vec<RawListener>, String> {
-    let output = tokio::process::Command::new("netstat")
-        .args(["-ano", "-p", "TCP"])
-        .no_window()
-        .output()
+    let text = exec::text(exec::cmd("netstat").args(["-ano", "-p", "TCP"]))
         .await
-        .map_err(|e| format!("netstat non eseguibile: {e}"))?;
-    if !output.status.success() {
-        return Err("netstat fallito".to_string());
-    }
-    Ok(parse_netstat(&String::from_utf8_lossy(&output.stdout)))
+        .ok_or("netstat fallito")?;
+    Ok(parse_netstat(&text))
 }
 
 /// Parser dell'output `netstat -ano -p TCP` (righe LISTENING). Testato su fixture.
@@ -299,7 +292,7 @@ pub fn parse_netstat(output: &str) -> Vec<RawListener> {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 async fn list_listeners() -> Result<Vec<RawListener>, String> {
     // Linux best-effort: stesso formato -F di lsof.
-    let output = tokio::process::Command::new("lsof")
+    let output = exec::cmd("lsof")
         .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-FpnP"])
         .output()
         .await

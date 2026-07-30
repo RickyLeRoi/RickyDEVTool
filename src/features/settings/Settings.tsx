@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, API_BASE, post } from "../../lib/api";
+import { Modal } from "../../components/Modal";
 import { Toggle } from "../../components/Toggle";
 import { AlertSettings } from "./AlertSettings";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
@@ -113,25 +114,23 @@ export function Settings() {
       </section>
 
       {showQr && (
-        <div className="overlay" onClick={() => setShowQr(false)}>
-          <div className="dialog qr-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>Abbina uno smartphone</h3>
-            <img
-              className="qr"
-              src={`${API_BASE}/api/lan/qr.svg`}
-              alt="QR di abbinamento"
-              width={220}
-              height={220}
-            />
-            <p className="hint">
-              Scansiona dal telefono: contiene indirizzo e token di abbinamento. Il telefono resta
-              in sola lettura finché non attivi il controllo remoto.
-            </p>
-            <div className="dialog-actions">
-              <button onClick={() => setShowQr(false)}>Chiudi</button>
-            </div>
-          </div>
-        </div>
+        <Modal
+          title="Abbina uno smartphone"
+          onCancel={() => setShowQr(false)}
+          className="qr-dialog"
+        >
+          <img
+            className="qr"
+            src={`${API_BASE}/api/lan/qr.svg`}
+            alt="QR di abbinamento"
+            width={220}
+            height={220}
+          />
+          <p className="hint">
+            Scansiona dal telefono: contiene indirizzo e token di abbinamento. Il telefono resta
+            in sola lettura finché non attivi il controllo remoto.
+          </p>
+        </Modal>
       )}
     </div>
   );

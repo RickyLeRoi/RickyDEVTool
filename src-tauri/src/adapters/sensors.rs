@@ -6,8 +6,8 @@
 use serde::Serialize;
 
 use crate::adapters::gpu::GpuInfo;
-#[cfg(target_os = "windows")]
-use crate::process_ext::NoWindow;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::exec;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,15 +79,7 @@ fn read_temps() -> Vec<TempReading> {
 
 #[cfg(target_os = "macos")]
 async fn read_battery() -> Option<Battery> {
-    let out = tokio::process::Command::new("pmset")
-        .args(["-g", "batt"])
-        .output()
-        .await
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    parse_pmset(&String::from_utf8_lossy(&out.stdout))
+    parse_pmset(&exec::text(exec::cmd("pmset").args(["-g", "batt"])).await?)
 }
 
 /// Estrae percentuale e stato dall'output di `pmset -g batt`. None se non c'è
@@ -145,20 +137,12 @@ async fn read_battery() -> Option<Battery> {
 
 #[cfg(target_os = "windows")]
 async fn read_battery() -> Option<Battery> {
-    let out = tokio::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "$b = Get-CimInstance Win32_Battery | Select-Object -First 1; if ($b) { \"$($b.EstimatedChargeRemaining);$($b.BatteryStatus)\" }",
-        ])
-        .no_window()
-        .output()
-        .await
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = exec::text(exec::cmd("powershell").args([
+        "-NoProfile",
+        "-Command",
+        "$b = Get-CimInstance Win32_Battery | Select-Object -First 1; if ($b) { \"$($b.EstimatedChargeRemaining);$($b.BatteryStatus)\" }",
+    ]))
+    .await?;
     let line = text.trim();
     if line.is_empty() {
         return None;

@@ -4,7 +4,7 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use super::ports::kill_protection_for;
 use super::procs::is_system_process;
 #[cfg(windows)]
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,8 +136,7 @@ fn kill_now(pid: u32, force: bool) -> Result<(), KillError> {
 fn kill_now(pid: u32, force: bool) -> Result<(), KillError> {
     // taskkill senza /F invia WM_CLOSE (chiusura gentile, solo app con finestra);
     // /T termina anche l'albero dei figli.
-    let mut cmd = std::process::Command::new("taskkill");
-    cmd.no_window();
+    let mut cmd = exec::sync_cmd("taskkill");
     if force {
         cmd.args(["/F", "/T"]);
     }

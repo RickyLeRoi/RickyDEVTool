@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sysinfo::Disks;
 
-#[cfg(target_os = "windows")]
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,7 +192,7 @@ fn macos_fs(filesystem: &str) -> Result<&'static str, DiskError> {
 /// Estrae il disco fisico ("Part of Whole") dal mount point via `diskutil info`.
 #[cfg(target_os = "macos")]
 async fn whole_disk_device(mount_point: &str) -> Result<String, DiskError> {
-    let output = tokio::process::Command::new("diskutil")
+    let output = exec::cmd("diskutil")
         .args(["info", mount_point])
         .output()
         .await
@@ -212,7 +211,7 @@ async fn whole_disk_device(mount_point: &str) -> Result<String, DiskError> {
 
 #[cfg(target_os = "macos")]
 async fn run_diskutil(args: &[&str]) -> Result<(), DiskError> {
-    let output = tokio::process::Command::new("diskutil")
+    let output = exec::cmd("diskutil")
         .args(args)
         .output()
         .await
@@ -267,9 +266,8 @@ async fn format_impl(
 
 #[cfg(target_os = "windows")]
 async fn run_powershell(script: &str) -> Result<(), DiskError> {
-    let output = tokio::process::Command::new("powershell")
+    let output = exec::cmd("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .no_window()
         .output()
         .await
         .map_err(|e| DiskError::Failed { message: e.to_string(), os_hint: None })?;
@@ -287,7 +285,7 @@ async fn run_powershell(script: &str) -> Result<(), DiskError> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 async fn eject_impl(mount_point: &str) -> Result<(), DiskError> {
-    let output = tokio::process::Command::new("udisksctl")
+    let output = exec::cmd("udisksctl")
         .args(["unmount", "-b", mount_point])
         .output()
         .await

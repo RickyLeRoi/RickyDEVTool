@@ -3,11 +3,11 @@ mod alerts;
 mod collectors;
 mod config;
 mod events;
+mod exec;
 mod jiggler;
 mod netinfo;
 mod notify;
 mod poller;
-mod process_ext;
 mod server;
 mod services;
 mod tasks;
@@ -110,7 +110,7 @@ fn init_logging() {
 /// senza questo fix git/node/dotnet non si troverebbero quando serviranno.
 #[cfg(target_os = "macos")]
 fn fix_gui_path() {
-    let output = std::process::Command::new("/bin/zsh")
+    let output = crate::exec::sync_cmd("/bin/zsh")
         .args(["-lc", "echo -n $PATH"])
         .output();
     if let Ok(output) = output {

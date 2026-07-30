@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,14 +43,13 @@ const NETWORK_TIMEOUT: Duration = Duration::from_secs(90);
 const STALE_FETCH_DAYS: u64 = 7;
 
 async fn run_git(repo: &str, args: &[&str], timeout: Duration) -> Result<String, GitError> {
-    let mut cmd = tokio::process::Command::new("git");
+    let mut cmd = exec::cmd("git");
     cmd.arg("-C")
         .arg(repo)
         .args(args)
         // Mai bloccarsi su un prompt credenziali: meglio fallire con errore chiaro.
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
-        .no_window();
+        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes");
     let output = tokio::time::timeout(timeout, cmd.output())
         .await
         .map_err(|_| GitError::Timeout)?

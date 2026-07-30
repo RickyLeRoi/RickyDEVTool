@@ -15,6 +15,8 @@
 use std::time::{Duration, Instant};
 
 use crate::config::ConfigHandle;
+#[cfg(target_os = "macos")]
+use crate::exec;
 
 const IDLE_THRESHOLD_SECS: u64 = 300; // 5 minuti
 const MOVE_INTERVAL: Duration = Duration::from_secs(180); // 3 minuti
@@ -88,7 +90,7 @@ impl KeepAwake {
     #[cfg(target_os = "macos")]
     fn start() -> Option<Self> {
         // -d: no display sleep, -i: no idle sleep, -w <pid>: esce se moriamo noi.
-        match std::process::Command::new("caffeinate")
+        match exec::sync_cmd("caffeinate")
             .args(["-d", "-i", "-w", &std::process::id().to_string()])
             .spawn()
         {
@@ -121,7 +123,7 @@ impl Drop for KeepAwake {
 /// Secondi dall'ultimo input reale dell'utente (tastiera/mouse), a livello di sistema.
 #[cfg(target_os = "macos")]
 fn idle_seconds() -> Option<u64> {
-    let output = std::process::Command::new("ioreg")
+    let output = exec::sync_cmd("ioreg")
         .args(["-c", "IOHIDSystem"])
         .output()
         .ok()?;

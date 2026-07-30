@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -32,19 +32,11 @@ pub async fn read() -> Vec<GpuInfo> {
 }
 
 async fn nvidia() -> Option<Vec<GpuInfo>> {
-    let out = tokio::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
-            "--format=csv,noheader,nounits",
-        ])
-        .no_window()
-        .output()
-        .await
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = exec::text(exec::cmd("nvidia-smi").args([
+        "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+        "--format=csv,noheader,nounits",
+    ]))
+    .await?;
     let gpus: Vec<GpuInfo> = text.lines().filter_map(parse_nvidia_line).collect();
     if gpus.is_empty() {
         None
@@ -106,15 +98,11 @@ async fn macos_static_cached() -> Vec<GpuInfo> {
 
 #[cfg(target_os = "macos")]
 async fn macos_utilization() -> Vec<f32> {
-    let out = match tokio::process::Command::new("ioreg")
-        .args(["-r", "-c", "IOAccelerator", "-w", "0"])
-        .output()
-        .await
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    let Some(text) = exec::text(exec::cmd("ioreg").args(["-r", "-c", "IOAccelerator", "-w", "0"])).await
+    else {
+        return Vec::new();
     };
-    parse_ioreg_utilization(&String::from_utf8_lossy(&out.stdout))
+    parse_ioreg_utilization(&text)
 }
 
 /// Estrae i valori `"Device Utilization %"` dall'output di ioreg, in ordine.
@@ -136,15 +124,11 @@ fn parse_ioreg_utilization(text: &str) -> Vec<f32> {
 
 #[cfg(target_os = "macos")]
 async fn macos_probe() -> Vec<GpuInfo> {
-    let out = match tokio::process::Command::new("system_profiler")
-        .args(["SPDisplaysDataType", "-json"])
-        .output()
-        .await
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    let Some(out) = exec::text(exec::cmd("system_profiler").args(["SPDisplaysDataType", "-json"])).await
+    else {
+        return Vec::new();
     };
-    let v: serde_json::Value = match serde_json::from_slice(&out.stdout) {
+    let v: serde_json::Value = match serde_json::from_str(&out) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };

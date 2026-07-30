@@ -5,8 +5,7 @@
 
 use serde::Serialize;
 
-#[cfg(windows)]
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -75,7 +74,7 @@ async fn unix_list() -> SchedListing {
 
 #[cfg(unix)]
 async fn crontab_entries() -> Result<Vec<SchedEntry>, String> {
-    let out = tokio::process::Command::new("crontab")
+    let out = exec::cmd("crontab")
         .arg("-l")
         .output()
         .await
@@ -154,11 +153,9 @@ pub fn parse_crontab(text: &str) -> Vec<SchedEntry> {
 /// comando (sta nei plist), quindi schedule="launchd"; filtra il rumore di Apple.
 #[cfg(target_os = "macos")]
 async fn launchd_entries() -> Vec<SchedEntry> {
-    let out = match tokio::process::Command::new("launchctl").arg("list").output().await {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    let Some(text) = exec::text(exec::cmd("launchctl").arg("list")).await else {
+        return Vec::new();
     };
-    let text = String::from_utf8_lossy(&out.stdout);
     let mut entries = Vec::new();
     for line in text.lines().skip(1) {
         // "PID\tStatus\tLabel"
@@ -189,9 +186,8 @@ async fn launchd_entries() -> Vec<SchedEntry> {
 
 #[cfg(windows)]
 async fn windows_schtasks() -> SchedListing {
-    let out = tokio::process::Command::new("schtasks")
+    let out = exec::cmd("schtasks")
         .args(["/query", "/fo", "CSV", "/nh"])
-        .no_window()
         .output()
         .await;
     match out {
@@ -404,16 +400,11 @@ fn xml_calendar_interval(text: &str) -> Option<String> {
 
 #[cfg(windows)]
 async fn schtasks_detail(taskname: &str) -> Vec<String> {
-    let out = tokio::process::Command::new("schtasks")
-        .args(["/query", "/tn", taskname, "/v", "/fo", "LIST"])
-        .no_window()
-        .output()
-        .await;
-    let Ok(o) = out else { return vec!["Dettagli non disponibili.".into()] };
-    if !o.status.success() {
+    let cmd = &mut exec::cmd("schtasks");
+    cmd.args(["/query", "/tn", taskname, "/v", "/fo", "LIST"]);
+    let Some(text) = exec::text(cmd).await else {
         return vec!["Dettagli non disponibili.".into()];
-    }
-    let text = String::from_utf8_lossy(&o.stdout);
+    };
     // Chiavi utili (EN + IT): pianificazione e prossima/ultima esecuzione.
     const WANT: &[&str] = &[
         "Schedule Type",

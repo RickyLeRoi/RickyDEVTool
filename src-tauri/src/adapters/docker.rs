@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 
-use crate::process_ext::NoWindow;
+use crate::exec;
 
 /// ID/nome container accettabile per una riga di comando: niente spazi, flag o
 /// metacaratteri di shell. I nomi Docker sono `[a-zA-Z0-9][a-zA-Z0-9_.-]*`, gli
@@ -27,8 +27,7 @@ pub fn valid_host(s: &str) -> bool {
 /// Costruisce `docker [-H <host>]` pronto per aggiungere i suoi argomenti. La CLI
 /// resta locale: l'host cambia solo il daemon a cui si connette (es. la VM Docker).
 fn docker_cmd(host: Option<&str>) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new("docker");
-    cmd.no_window();
+    let mut cmd = exec::cmd("docker");
     if let Some(h) = host.filter(|h| valid_host(h)) {
         cmd.arg("-H").arg(h);
     }
@@ -65,9 +64,8 @@ async fn docker_available() -> bool {
     let (cmd, arg) = ("where", "docker");
     #[cfg(not(windows))]
     let (cmd, arg) = ("/usr/bin/which", "docker");
-    tokio::process::Command::new(cmd)
+    exec::cmd(cmd)
         .arg(arg)
-        .no_window()
         .output()
         .await
         .map(|o| o.status.success())
