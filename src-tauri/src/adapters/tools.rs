@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::process_ext::NoWindow;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredTool {
@@ -100,7 +102,7 @@ async fn which(name: &str) -> Option<String> {
     #[cfg(not(windows))]
     let (cmd, arg) = ("/usr/bin/which", name);
 
-    let output = tokio::process::Command::new(cmd).arg(arg).output().await.ok()?;
+    let output = tokio::process::Command::new(cmd).arg(arg).no_window().output().await.ok()?;
     if !output.status.success() {
         return None;
     }
@@ -114,10 +116,11 @@ async fn version_of(id: &str, path: &str) -> Option<String> {
         "docker" => "--version",
         _ => "--version",
     };
-    let output = tokio::time::timeout(
-        Duration::from_secs(4),
-        tokio::process::Command::new(path).arg(arg).output(),
-    )
+    let output = tokio::time::timeout(Duration::from_secs(4), {
+        let mut c = tokio::process::Command::new(path);
+        c.arg(arg).no_window();
+        c.output()
+    })
     .await
     .ok()?
     .ok()?;
@@ -195,6 +198,7 @@ async fn discover_visual_studio() -> DiscoveredTool {
     // (es. VS 2026 finché resta in preview), facendole risultare "non trovate".
     let output = match tokio::process::Command::new(&vswhere)
         .args(["-all", "-prerelease", "-products", "*", "-format", "json"])
+        .no_window()
         .output()
         .await
     {

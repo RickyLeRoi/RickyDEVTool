@@ -7,6 +7,8 @@ use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::events::{now_ms, EventBus};
+#[cfg(not(unix))]
+use crate::process_ext::NoWindow;
 
 /// Task long-running avviati dal tool (npm install, dotnet build, ...).
 /// Output in streaming sul topic WS `task:{id}`; eventi di stato su `tasks`.
@@ -100,6 +102,7 @@ impl TaskRegistry {
         let cmd = {
             let mut c = tokio::process::Command::new("cmd");
             c.arg("/C").arg(program).args(args);
+            c.no_window();
             c
         };
         #[cfg(not(windows))]
@@ -127,6 +130,7 @@ impl TaskRegistry {
         let cmd = {
             let mut c = tokio::process::Command::new("cmd");
             c.arg("/C").arg(command);
+            c.no_window();
             c
         };
         #[cfg(not(windows))]
@@ -244,6 +248,7 @@ impl TaskRegistry {
         {
             let _ = std::process::Command::new("taskkill")
                 .args(["/T", "/F", "/PID", &handle.pid.to_string()])
+                .no_window()
                 .output();
         }
         Ok(())

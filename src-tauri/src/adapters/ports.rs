@@ -6,6 +6,8 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::sync::Mutex;
 
 use super::procs::{classify_known_app, is_system_process};
+#[cfg(target_os = "windows")]
+use crate::process_ext::NoWindow;
 
 /// Nomi che richiedono conferma rafforzata prima del kill.
 pub const PROTECTED_NAMES: &[&str] = &[
@@ -265,6 +267,7 @@ pub fn parse_lsof_f(output: &str) -> Vec<RawListener> {
 async fn list_listeners() -> Result<Vec<RawListener>, String> {
     let output = tokio::process::Command::new("netstat")
         .args(["-ano", "-p", "TCP"])
+        .no_window()
         .output()
         .await
         .map_err(|e| format!("netstat non eseguibile: {e}"))?;

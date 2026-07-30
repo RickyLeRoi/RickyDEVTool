@@ -6,6 +6,8 @@
 use serde::Serialize;
 
 use crate::adapters::gpu::GpuInfo;
+#[cfg(target_os = "windows")]
+use crate::process_ext::NoWindow;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -149,6 +151,7 @@ async fn read_battery() -> Option<Battery> {
             "-Command",
             "$b = Get-CimInstance Win32_Battery | Select-Object -First 1; if ($b) { \"$($b.EstimatedChargeRemaining);$($b.BatteryStatus)\" }",
         ])
+        .no_window()
         .output()
         .await
         .ok()?;

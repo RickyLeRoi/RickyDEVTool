@@ -19,6 +19,9 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::process_ext::NoWindow;
+
 /// Contenuto letto dalla clipboard in un giro di polling.
 pub enum ClipRead {
     Text(String),
@@ -160,6 +163,7 @@ pub fn write_files(paths: &[PathBuf]) -> Result<(), String> {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn run_ok(cmd: &mut Command, what: &str) -> Result<(), String> {
     let out = cmd
+        .no_window()
         .stderr(Stdio::null())
         .output()
         .map_err(|e| format!("{what} fallita: {e}"))?;
@@ -249,6 +253,7 @@ fn read_macos(last: i64) -> (i64, Option<ClipRead>) {
         .args(["-l", "JavaScript", "-e", MAC_READ_JS, "--"])
         .arg(last.to_string())
         .arg(&out_png)
+        .no_window()
         .stderr(Stdio::null())
         .output();
     let Ok(output) = output else {
@@ -273,12 +278,16 @@ const MAC_WRITE_FILES_JS: &str = r#"function run(a){ObjC.import("Foundation");Ob
 
 #[cfg(target_os = "macos")]
 fn read_command() -> Option<Command> {
-    Some(Command::new("pbpaste"))
+    let mut c = Command::new("pbpaste");
+    c.no_window();
+    Some(c)
 }
 
 #[cfg(target_os = "macos")]
 fn write_command() -> Option<Command> {
-    Some(Command::new("pbcopy"))
+    let mut c = Command::new("pbcopy");
+    c.no_window();
+    Some(c)
 }
 
 // ------------------------------ Windows ------------------------------------
@@ -290,6 +299,7 @@ fn read_windows(last: i64) -> (i64, Option<ClipRead>) {
         .args(["-Sta", "-NoProfile", "-Command", WIN_READ_PS])
         .env("RDT_LASTCHANGE", last.to_string())
         .env("RDT_OUTPNG", &out_png)
+        .no_window()
         .stderr(Stdio::null())
         .output();
     let Ok(output) = output else {
@@ -340,6 +350,7 @@ fn read_command() -> Option<Command> {
     let mut c = Command::new("powershell");
     // -Raw preserva il testo esatto (niente split/rejoin delle righe).
     c.args(["-NoProfile", "-Command", "Get-Clipboard -Raw"]);
+    c.no_window();
     Some(c)
 }
 
@@ -347,6 +358,7 @@ fn read_command() -> Option<Command> {
 fn write_command() -> Option<Command> {
     let mut c = Command::new("powershell");
     c.args(["-NoProfile", "-Command", "$input | Set-Clipboard"]);
+    c.no_window();
     Some(c)
 }
 

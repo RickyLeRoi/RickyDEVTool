@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::process_ext::NoWindow;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitRepoInfo {
@@ -47,7 +49,8 @@ async fn run_git(repo: &str, args: &[&str], timeout: Duration) -> Result<String,
         .args(args)
         // Mai bloccarsi su un prompt credenziali: meglio fallire con errore chiaro.
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes");
+        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
+        .no_window();
     let output = tokio::time::timeout(timeout, cmd.output())
         .await
         .map_err(|_| GitError::Timeout)?

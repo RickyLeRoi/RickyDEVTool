@@ -5,6 +5,8 @@
 
 use serde::Serialize;
 
+use crate::process_ext::NoWindow;
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuInfo {
@@ -35,6 +37,7 @@ async fn nvidia() -> Option<Vec<GpuInfo>> {
             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
             "--format=csv,noheader,nounits",
         ])
+        .no_window()
         .output()
         .await
         .ok()?;

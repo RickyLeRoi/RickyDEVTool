@@ -7,6 +7,7 @@ mod jiggler;
 mod netinfo;
 mod notify;
 mod poller;
+mod process_ext;
 mod server;
 mod services;
 mod tasks;

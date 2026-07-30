@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::process_ext::NoWindow;
+
 /// Toolbox di rete: ping, lookup DNS, port check, scan della LAN.
 /// Tutte operazioni read-only. Il ping usa il binario di sistema (niente
 /// raw socket → niente privilegi), parsato in modo tollerante alle lingue.
@@ -109,6 +111,7 @@ async fn run_ping(host: &str, count: u32, per_packet_timeout_ms: u64) -> Result<
     cmd.args(["-c", &count.to_string(), "-W", &(per_packet_timeout_ms / 1000).max(1).to_string()]);
     cmd.arg(host);
     cmd.stdin(std::process::Stdio::null());
+    cmd.no_window();
 
     let total_timeout = Duration::from_millis(2000 + count as u64 * (per_packet_timeout_ms + 1100));
     let output = tokio::time::timeout(total_timeout, cmd.output())
@@ -349,7 +352,7 @@ async fn reverse_dns(ip: &str) -> Option<String> {
 /// MAC address dalla tabella ARP di sistema (popolata dal ping sweep appena fatto).
 async fn arp_table() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
-    let Ok(output) = tokio::process::Command::new("arp").arg("-a").output().await else {
+    let Ok(output) = tokio::process::Command::new("arp").arg("-a").no_window().output().await else {
         return map;
     };
     let text = String::from_utf8_lossy(&output.stdout);

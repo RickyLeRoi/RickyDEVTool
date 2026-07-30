@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use sysinfo::Disks;
 
+#[cfg(target_os = "windows")]
+use crate::process_ext::NoWindow;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiskInfo {
@@ -266,6 +269,7 @@ async fn format_impl(
 async fn run_powershell(script: &str) -> Result<(), DiskError> {
     let output = tokio::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .no_window()
         .output()
         .await
         .map_err(|e| DiskError::Failed { message: e.to_string(), os_hint: None })?;

@@ -5,6 +5,9 @@
 
 use serde::Serialize;
 
+#[cfg(windows)]
+use crate::process_ext::NoWindow;
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SchedEntry {
@@ -188,6 +191,7 @@ async fn launchd_entries() -> Vec<SchedEntry> {
 async fn windows_schtasks() -> SchedListing {
     let out = tokio::process::Command::new("schtasks")
         .args(["/query", "/fo", "CSV", "/nh"])
+        .no_window()
         .output()
         .await;
     match out {
@@ -402,6 +406,7 @@ fn xml_calendar_interval(text: &str) -> Option<String> {
 async fn schtasks_detail(taskname: &str) -> Vec<String> {
     let out = tokio::process::Command::new("schtasks")
         .args(["/query", "/tn", taskname, "/v", "/fo", "LIST"])
+        .no_window()
         .output()
         .await;
     let Ok(o) = out else { return vec!["Dettagli non disponibili.".into()] };
