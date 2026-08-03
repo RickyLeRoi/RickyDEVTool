@@ -43,8 +43,10 @@ const VIEWPORTS = [
 const PAGES: { hash: string; heading: string | null }[] = [
   { hash: "#/dashboard", heading: "Dashboard" },
   { hash: "#/net", heading: "Rete" },
-  { hash: "#/docker", heading: "Docker" },
+  // Docker è un tab di Rete: il deep-link storico resta valido e apre lì.
+  { hash: "#/docker", heading: "Rete" },
   { hash: "#/tool", heading: null },
+  { hash: "#/compare", heading: null },
   { hash: "#/log", heading: "Log" },
   { hash: "#/snippets", heading: "Snippet" },
   { hash: "#/ssh", heading: "SSH" },
@@ -80,7 +82,14 @@ test("command palette: Ctrl+K apre, filtra e naviga", async ({ page }) => {
   await input.fill("dock");
   await expect(page.locator(".cmdk-item").first()).toContainText("Docker");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "Docker", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rete", exact: true })).toBeVisible();
+  await expect(page.locator(".segmented button", { hasText: "Docker" })).toHaveClass(/active/);
+});
+
+test("il deep-link storico #/docker apre il tab Docker dentro Rete", async ({ page }) => {
+  await page.goto("/#/docker");
+  await expect(page.getByRole("heading", { name: "Rete", exact: true })).toBeVisible();
+  await expect(page.locator(".segmented button", { hasText: "Docker" })).toHaveClass(/active/);
 });
 
 test("command palette: Esc chiude", async ({ page }) => {
@@ -104,6 +113,43 @@ test("Rete apre di default sul tab Porte in ascolto", async ({ page }) => {
   await expect(
     page.locator(".segmented button", { hasText: "Porte in ascolto" }),
   ).toHaveClass(/active/);
+});
+
+test("storico metriche: la legenda spegne e riaccende una serie", async ({ page }) => {
+  await page.goto("/#/dashboard");
+  const chart = page.locator(".metrics-chart");
+  await expect(chart).toBeVisible();
+  // Una polyline per serie (i campioni mockati sono contigui: nessun buco).
+  await expect(chart.locator("polyline")).toHaveCount(3);
+  const cpu = page.locator(".metrics-legend-item", { hasText: "CPU" });
+  await cpu.click();
+  await expect(cpu).toHaveClass(/off/);
+  await expect(chart.locator("polyline")).toHaveCount(2);
+  await cpu.click();
+  await expect(chart.locator("polyline")).toHaveCount(3);
+});
+
+test("confronto cartelle: differenze, apertura di una cartella e azioni", async ({ page }) => {
+  await page.goto("/#/compare");
+  await expect(page.locator(".tool-tabbar button", { hasText: "Confronta" })).toHaveClass(/active/);
+  const paths = page.getByPlaceholder("percorso della cartella");
+  await paths.nth(0).fill("/mock/a");
+  await paths.nth(1).fill("/mock/b");
+  await page.getByRole("button", { name: "Confronta", exact: true }).click();
+
+  await expect(page.getByText("diverso.txt")).toBeVisible();
+  await expect(page.locator(".compare-rel", { hasText: "solo-sx" })).toBeVisible();
+  // Le quattro azioni su ogni riga.
+  await expect(page.locator(".compare-table tbody tr").first().locator(".compare-btn")).toHaveCount(4);
+
+  // La cartella si apre e i suoi file ricevono le stesse azioni.
+  await page.locator("button.compare-expand").first().click();
+  await expect(page.getByText("uno.txt")).toBeVisible();
+
+  // "Ignora" toglie la riga dall'elenco.
+  await page.locator(".compare-table tbody tr").first().getByLabel("Ignora").click();
+  await expect(page.getByText("diverso.txt")).toHaveCount(0);
+  await expect(page.locator(".compare-ignored")).toBeVisible();
 });
 
 test("persistenza: l'ultima pagina è ricordata dopo un reload", async ({ page }) => {

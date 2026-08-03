@@ -6,7 +6,6 @@ export type Page =
   | "dashboard"
   | "projects"
   | "net"
-  | "docker"
   | "tool"
   | "log"
   | "snippets"
@@ -20,7 +19,6 @@ export const PAGES: readonly Page[] = [
   "dashboard",
   "projects",
   "net",
-  "docker",
   "tool",
   "log",
   "snippets",
@@ -39,10 +37,12 @@ const LAST_PAGE_KEY = "rdt-page";
 const LEGACY: Record<string, { page: Page; tab: string }> = {
   ports: { page: "net", tab: "listen" },
   services: { page: "net", tab: "services" },
+  docker: { page: "net", tab: "docker" },
   launch: { page: "tool", tab: "launch" },
   calc: { page: "tool", tab: "calc" },
   color: { page: "tool", tab: "color" },
   clipboard: { page: "tool", tab: "clipboard" },
+  compare: { page: "tool", tab: "compare" },
 };
 
 /** Risolve un id (pagina, sezione storica o alias) in pagina + eventuale tab. */
@@ -54,7 +54,10 @@ export function resolveTarget(id: string): { page: Page; tab: string | null } {
 
 function initialPage(): Page {
   const stored = localStorage.getItem(LAST_PAGE_KEY);
-  return stored && PAGE_SET.has(stored) ? (stored as Page) : "dashboard";
+  if (!stored) return "dashboard";
+  // Un id salvato da una versione precedente (es. "docker", ora un tab di Rete)
+  // passa dalla mappa storica invece di far ricadere l'utente sulla dashboard.
+  return PAGE_SET.has(stored) ? (stored as Page) : resolveTarget(stored).page;
 }
 
 interface NavState {
@@ -76,6 +79,10 @@ export const useNavStore = create<NavState>((set) => ({
     const target = resolveTarget(id);
     const page = target.page;
     localStorage.setItem(LAST_PAGE_KEY, page);
-    set((s) => ({ page, tab: tab ?? target.tab, seq: s.seq + 1 }));
+    // Il tab della mappa storica vince su quello passato: dal tray l'argomento
+    // è l'"extra" della voce (id servizio, numero di porta, device Drop…), non
+    // un tab — usarlo come tale faceva atterrare su quello sbagliato. Resta
+    // valido per gli id senza tab fisso (es. "net" + "scan").
+    set((s) => ({ page, tab: target.tab ?? tab ?? null, seq: s.seq + 1 }));
   },
 }));

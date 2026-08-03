@@ -208,6 +208,9 @@ pub async fn start(
         .route("/api/scheduler", get(scheduler_list))
         .route("/api/scheduler/detail", get(scheduler_detail))
         .route("/api/fs/entries", get(fs_entries))
+        .route("/api/fs/compare", post(fs_compare))
+        .route("/api/fs/compare/children", post(fs_compare_children))
+        .route("/api/fs/compare/apply", post(fs_compare_apply))
         .route("/api/env/files", get(env_files))
         .route("/api/env/read", get(env_read))
         .route("/api/env/activate", post(env_activate))
@@ -1819,7 +1822,9 @@ struct DockerHostBody {
 }
 
 /// Configura l'host Docker remoto. Solo dal desktop: cambia dove puntano tutte
-/// le azioni Docker.
+/// le azioni Docker. L'host viene provato davvero prima di accettarlo: uno
+/// schema valido non basta, se dall'altra parte non risponde nessun daemon
+/// l'utente deve vedere l'errore invece di credere di esserci collegato.
 async fn docker_host_set(
     State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -1835,6 +1840,14 @@ async fn docker_host_set(
                 "Host non valido: usa uno schema come tcp://, ssh:// o unix://".into(),
             );
         }
+    }
+    if let Err(message) = crate::adapters::docker::probe(host.as_deref()).await {
+        tracing::warn!(host = ?host, %message, "docker host non raggiungibile");
+        let where_ = match &host {
+            Some(h) => format!("Non riesco a collegarmi a {h}"),
+            None => "Non riesco a collegarmi al Docker locale".to_string(),
+        };
+        return internal_error(format!("{where_}: {message}"));
     }
     state.config.update(|c| c.docker_host = host.clone());
     tracing::info!(host = ?host, "docker host aggiornato");
@@ -2192,6 +2205,119 @@ async fn fs_entries(
             })),
         )
             .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompareBody {
+    left: String,
+    right: String,
+    /// Nomi di file/cartelle da saltare (es. ".git", "node_modules").
+    #[serde(default)]
+    excludes: Vec<String>,
+}
+
+/// Differenze tra due alberature. Elenca il contenuto di cartelle arbitrarie:
+/// stessa guardia della navigazione filesystem.
+async fn fs_compare(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<CompareBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::fscompare::compare(body.left, body.right, body.excludes).await {
+        Ok(result) => Json(json!({ "ok": true, "data": result })).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": message, "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompareChildrenBody {
+    left: String,
+    right: String,
+    rel_path: String,
+    #[serde(default)]
+    excludes: Vec<String>,
+}
+
+/// Contenuto di una cartella comparsa nel confronto come voce unica: permette
+/// alla UI di aprirla e agire sui singoli file.
+async fn fs_compare_children(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<CompareChildrenBody>,
+) -> Response {
+    if !write_allowed(&state, peer) {
+        return remote_forbidden();
+    }
+    match crate::services::fscompare::children(body.left, body.right, body.rel_path, body.excludes)
+        .await
+    {
+        Ok(entries) => Json(json!({ "ok": true, "data": { "entries": entries } })).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": { "code": "PATH_NOT_FOUND", "message": message, "retryable": false }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompareApplyBody {
+    left: String,
+    right: String,
+    rel_path: String,
+    /// toRight | toLeft | delete
+    action: String,
+    /// Solo per "delete": da quale dei due rami eliminare.
+    side: Option<crate::services::fscompare::Side>,
+}
+
+/// Applica la scelta dell'utente su una differenza: copia da un lato all'altro
+/// oppure elimina. Scrive (e cancella) sul disco: solo dal desktop, come il
+/// format dei dischi — non basta il controllo remoto.
+async fn fs_compare_apply(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<CompareApplyBody>,
+) -> Response {
+    use crate::services::fscompare::{self, Side};
+    if !peer.ip().is_loopback() {
+        return remote_forbidden();
+    }
+    let result = match body.action.as_str() {
+        "toRight" => {
+            fscompare::copy_entry(body.left, body.right, body.rel_path, "di sinistra", "di destra")
+                .await
+        }
+        "toLeft" => {
+            fscompare::copy_entry(body.right, body.left, body.rel_path, "di destra", "di sinistra")
+                .await
+        }
+        "delete" => match body.side {
+            Some(Side::Left) => fscompare::delete_entry(body.left, body.rel_path, "di sinistra").await,
+            Some(Side::Right) => fscompare::delete_entry(body.right, body.rel_path, "di destra").await,
+            None => Err("indica da quale lato eliminare".to_string()),
+        },
+        _ => Err("azione non valida".to_string()),
+    };
+    match result {
+        Ok(()) => Json(json!({ "ok": true, "data": { "done": true } })).into_response(),
+        Err(message) => internal_error(message),
     }
 }
 

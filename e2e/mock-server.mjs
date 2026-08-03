@@ -25,6 +25,18 @@ const MIME = {
   ".woff2": "font/woff2",
 };
 
+// Storico metriche: qualche campione contiguo (30s l'uno dall'altro) così il
+// grafico ha una geometria vera e la legenda può accendere/spegnere le serie.
+function metricSamples() {
+  const now = Date.now();
+  return Array.from({ length: 20 }, (_, i) => ({
+    ts: now - (19 - i) * 30_000,
+    cpuPct: 30 + i,
+    memPct: 50 + (i % 5),
+    diskPct: 70,
+  }));
+}
+
 function sendJson(res, obj, status = 200) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -49,7 +61,36 @@ function handleApi(req, res, url) {
     case "/api/docker":
       return sendJson(res, { ok: true, data: { available: false, daemonDown: false, containers: [] } });
     case "/api/metrics/history":
-      return sendJson(res, { ok: true, data: { samples: [], hours: Number(url.searchParams.get("hours") ?? 24) } });
+      return sendJson(res, {
+        ok: true,
+        data: { samples: metricSamples(), hours: Number(url.searchParams.get("hours") ?? 24) },
+      });
+    // Confronto di due alberature: due differenze di primo livello (una delle
+    // quali è una cartella, apribile sui singoli file).
+    case "/api/fs/compare":
+      return sendJson(res, {
+        ok: true,
+        data: {
+          left: "/mock/a",
+          right: "/mock/b",
+          compared: 5,
+          identical: 2,
+          truncated: false,
+          entries: [
+            { relPath: "diverso.txt", status: "different", isDir: false, leftSize: 2048, rightSize: 1024, leftMtime: null, rightMtime: null },
+            { relPath: "solo-sx", status: "onlyLeft", isDir: true, leftSize: 0, rightSize: null, leftMtime: null, rightMtime: null },
+          ],
+        },
+      });
+    case "/api/fs/compare/children":
+      return sendJson(res, {
+        ok: true,
+        data: {
+          entries: [
+            { relPath: "solo-sx/uno.txt", status: "onlyLeft", isDir: false, leftSize: 10, rightSize: null, leftMtime: null, rightMtime: null },
+          ],
+        },
+      });
     case "/api/drop/self":
       return sendJson(res, { ok: true, data: { hubId: "mock-hub" } });
     case "/api/drop/hello":

@@ -339,6 +339,28 @@ export interface LanHost {
   isSelf: boolean;
 }
 
+/** Confronto di due alberature: una differenza tra il ramo sinistro e destro. */
+export type DiffStatus = "onlyLeft" | "onlyRight" | "different";
+
+export interface DiffEntry {
+  relPath: string;
+  status: DiffStatus;
+  isDir: boolean;
+  leftSize: number | null;
+  rightSize: number | null;
+  leftMtime: number | null;
+  rightMtime: number | null;
+}
+
+export interface CompareResult {
+  left: string;
+  right: string;
+  entries: DiffEntry[];
+  compared: number;
+  identical: number;
+  truncated: boolean;
+}
+
 export interface DropPeer {
   deviceId: string;
   name: string;

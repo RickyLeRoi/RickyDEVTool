@@ -4,6 +4,7 @@ pub mod clipboard_cache;
 pub mod dotnet;
 pub mod drop;
 pub mod env;
+pub mod fscompare;
 pub mod git;
 pub mod hubdiscovery;
 pub mod launch;

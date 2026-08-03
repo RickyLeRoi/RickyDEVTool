@@ -26,12 +26,35 @@ pub fn valid_host(s: &str) -> bool {
 
 /// Costruisce `docker [-H <host>]` pronto per aggiungere i suoi argomenti. La CLI
 /// resta locale: l'host cambia solo il daemon a cui si connette (es. la VM Docker).
+/// stdin chiuso: con `ssh://` la CLI lancia ssh, che senza questo può restare
+/// appeso su una richiesta di password/host key che nessuno può digitare.
 fn docker_cmd(host: Option<&str>) -> tokio::process::Command {
-    let mut cmd = exec::cmd("docker");
+    let mut cmd = tokio::process::Command::new("docker");
+    cmd.no_window();
+    cmd.stdin(std::process::Stdio::null());
     if let Some(h) = host.filter(|h| valid_host(h)) {
         cmd.arg("-H").arg(h);
     }
     cmd
+}
+
+/// Tempo massimo per un comando docker. Su un host remoto irraggiungibile la
+/// CLI può restare in attesa per minuti (connect TCP/ssh senza risposta): senza
+/// questo tetto la sezione resterebbe "in caricamento" per sempre invece di
+/// mostrare l'errore.
+const CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// Esegue il comando con il tetto di tempo: il timeout diventa un errore
+/// esplicito, non un'attesa infinita.
+async fn run(mut cmd: tokio::process::Command) -> Result<std::process::Output, String> {
+    match tokio::time::timeout(CMD_TIMEOUT, cmd.output()).await {
+        Ok(Ok(out)) => Ok(out),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!(
+            "nessuna risposta entro {}s (host irraggiungibile o in attesa di credenziali)",
+            CMD_TIMEOUT.as_secs()
+        )),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -82,12 +105,10 @@ pub async fn state(host: Option<&str>) -> DockerState {
         };
     }
 
-    let output = docker_cmd(host)
-        .args(["ps", "-a", "--no-trunc", "--format", "{{json .}}"])
-        .output()
-        .await;
+    let mut cmd = docker_cmd(host);
+    cmd.args(["ps", "-a", "--no-trunc", "--format", "{{json .}}"]);
 
-    match output {
+    match run(cmd).await {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout);
             let containers = text.lines().filter_map(parse_ps_line).collect();
@@ -95,26 +116,71 @@ pub async fn state(host: Option<&str>) -> DockerState {
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
-            // Varie formulazioni a seconda del runtime: Docker Desktop
-            // ("cannot connect to the docker daemon"), colima/rootless
-            // ("failed to connect to the docker api ... docker.sock").
-            let daemon_down = stderr.contains("cannot connect to the docker daemon")
-                || stderr.contains("is the docker daemon running")
-                || stderr.contains("failed to connect to the docker api")
-                || stderr.contains("docker.sock");
             DockerState {
                 available: true,
-                daemon_down,
+                daemon_down: looks_like_daemon_down(&stderr),
                 containers: Vec::new(),
-                error: Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+                error: Some(clean_error(&String::from_utf8_lossy(&out.stderr))),
             }
         }
         Err(e) => DockerState {
             available: true,
-            daemon_down: false,
+            // Timeout/spawn fallito: il daemon (locale o remoto) non risponde.
+            daemon_down: true,
             containers: Vec::new(),
-            error: Some(e.to_string()),
+            error: Some(e),
         },
+    }
+}
+
+/// Varie formulazioni a seconda del runtime: Docker Desktop ("cannot connect to
+/// the docker daemon"), colima/rootless ("failed to connect to the docker api
+/// ... docker.sock"), host remoto ssh/tcp irraggiungibile.
+fn looks_like_daemon_down(stderr_lower: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "cannot connect to the docker daemon",
+        "is the docker daemon running",
+        "failed to connect to the docker api",
+        "docker.sock",
+        "error during connect",
+        "connection refused",
+        "no route to host",
+        "could not resolve hostname",
+        "host key verification failed",
+        "permission denied",
+        "connection timed out",
+        "network is unreachable",
+        "i/o timeout",
+    ];
+    MARKERS.iter().any(|m| stderr_lower.contains(m))
+}
+
+/// stderr della CLI ridotto a qualcosa di leggibile: docker ripete l'help
+/// completo dopo alcuni errori di connessione, inutile in un banner.
+fn clean_error(stderr: &str) -> String {
+    let text = stderr.trim();
+    let cut = text.find("\nRun 'docker").or_else(|| text.find("\nUsage:"));
+    match cut {
+        Some(i) => text[..i].trim().to_string(),
+        None => text.to_string(),
+    }
+}
+
+/// Verifica che il daemon (locale o all'host indicato) risponda davvero.
+/// Usata quando l'utente salva un host: senza questa prova l'app accetterebbe
+/// qualsiasi URL sintatticamente valido e direbbe di starci puntando anche
+/// quando non c'è nulla dall'altra parte.
+pub async fn probe(host: Option<&str>) -> Result<(), String> {
+    if !docker_available().await {
+        return Err("la CLI docker non è nel PATH di questo computer".to_string());
+    }
+    let mut cmd = docker_cmd(host);
+    cmd.args(["version", "--format", "{{.Server.Version}}"]);
+    let out = run(cmd).await?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(clean_error(&String::from_utf8_lossy(&out.stderr)))
     }
 }
 
@@ -161,11 +227,9 @@ pub struct Image {
 
 /// Riferimenti immagine (nome:tag o id) in uso dai container, da `docker ps -a`.
 async fn used_image_refs(host: Option<&str>) -> std::collections::HashSet<String> {
-    let output = docker_cmd(host)
-        .args(["ps", "-a", "--format", "{{.Image}}"])
-        .output()
-        .await;
-    match output {
+    let mut cmd = docker_cmd(host);
+    cmd.args(["ps", "-a", "--format", "{{.Image}}"]);
+    match run(cmd).await {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
             .lines()
             .map(|l| l.trim().to_string())
@@ -181,11 +245,9 @@ pub async fn images(host: Option<&str>) -> Vec<Image> {
     if !docker_available().await {
         return Vec::new();
     }
-    let output = docker_cmd(host)
-        .args(["images", "--format", "{{json .}}"])
-        .output()
-        .await;
-    let mut images: Vec<Image> = match output {
+    let mut cmd = docker_cmd(host);
+    cmd.args(["images", "--format", "{{json .}}"]);
+    let mut images: Vec<Image> = match run(cmd).await {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
             .lines()
             .filter_map(parse_image_line)
@@ -212,7 +274,7 @@ async fn used_image_ids(
     for r in refs {
         cmd.arg(r);
     }
-    match cmd.output().await {
+    match run(cmd).await {
         Ok(out) => String::from_utf8_lossy(&out.stdout)
             .lines()
             .map(|l| l.trim().trim_start_matches("sha256:").to_string())
@@ -255,17 +317,15 @@ fn image_in_use(img: &Image, used: &std::collections::HashSet<String>) -> bool {
 /// Rimuove tutte le immagini non usate da nessun container (`docker image prune -a`).
 /// Docker non tocca mai immagini in uso, quindi l'operazione è sempre sicura.
 pub async fn prune_images(host: Option<&str>) -> Result<String, DockerError> {
-    let output = docker_cmd(host)
-        .args(["image", "prune", "-a", "-f"])
-        .output()
-        .await
-        .map_err(|e| DockerError::Failed(e.to_string()))?;
+    let mut cmd = docker_cmd(host);
+    cmd.args(["image", "prune", "-a", "-f"]);
+    let output = run(cmd).await.map_err(DockerError::Failed)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(DockerError::Failed(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ))
+        Err(DockerError::Failed(clean_error(&String::from_utf8_lossy(
+            &output.stderr,
+        ))))
     }
 }
 
@@ -304,17 +364,15 @@ pub async fn action(host: Option<&str>, id: &str, action: &str) -> Result<(), Do
         _ => return Err(DockerError::InvalidAction),
     };
     tracing::info!(container = id, action = verb, "docker action");
-    let output = docker_cmd(host)
-        .args([verb, id])
-        .output()
-        .await
-        .map_err(|e| DockerError::Failed(e.to_string()))?;
+    let mut cmd = docker_cmd(host);
+    cmd.args([verb, id]);
+    let output = run(cmd).await.map_err(DockerError::Failed)?;
     if output.status.success() {
         Ok(())
     } else {
-        Err(DockerError::Failed(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ))
+        Err(DockerError::Failed(clean_error(&String::from_utf8_lossy(
+            &output.stderr,
+        ))))
     }
 }
 
@@ -354,11 +412,9 @@ pub async fn stats(host: Option<&str>) -> Vec<ContainerStat> {
     if !docker_available().await {
         return Vec::new();
     }
-    let output = docker_cmd(host)
-        .args(["stats", "--no-stream", "--no-trunc", "--format", "{{json .}}"])
-        .output()
-        .await;
-    match output {
+    let mut cmd = docker_cmd(host);
+    cmd.args(["stats", "--no-stream", "--no-trunc", "--format", "{{json .}}"]);
+    match run(cmd).await {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
             .lines()
             .filter_map(parse_stat_line)
@@ -460,6 +516,28 @@ mod tests {
         assert_eq!(&args[0], "-H");
         assert_eq!(&args[1], "ssh://ricky@192.168.1.50");
         assert!(args.contains(&"abc123".to_string()));
+    }
+
+    #[test]
+    fn daemon_down_riconosce_host_remoto_irraggiungibile() {
+        // ssh:// verso una macchina spenta / senza chiave: docker riporta
+        // l'errore di connect, non il classico "cannot connect to the daemon".
+        let ssh = "error during connect: get \"http://docker.example.com/v1.51/containers/json\": command [ssh -l ricky -- 192.168.1.248 docker system dial-stdio] has exited with exit status 255";
+        assert!(looks_like_daemon_down(ssh));
+        assert!(looks_like_daemon_down("ssh: connect to host 192.168.1.248 port 22: connection refused"));
+        assert!(looks_like_daemon_down("cannot connect to the docker daemon at unix:///var/run/docker.sock"));
+        // Errore applicativo (container inesistente): il daemon risponde.
+        assert!(!looks_like_daemon_down("error: no such container: web"));
+    }
+
+    #[test]
+    fn errore_senza_help_della_cli() {
+        let stderr = "error during connect: dial tcp 192.168.1.248:2375: connectex: no connection\n\nRun 'docker ps --help' for more information";
+        assert_eq!(
+            clean_error(stderr),
+            "error during connect: dial tcp 192.168.1.248:2375: connectex: no connection"
+        );
+        assert_eq!(clean_error("  boom  "), "boom");
     }
 
     #[test]
