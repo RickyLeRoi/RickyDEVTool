@@ -230,10 +230,41 @@ fn build_services_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result
     builder.build()
 }
 
+/// Strumenti di rete raggiungibili in un clic (sono tutti tab della sezione
+/// Rete: il tab richiesto viaggia come "extra" dell'evento di navigazione).
 fn build_net_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let scan_item = MenuItemBuilder::with_id("nav:net:scan", "Scansiona rete locale…").build(app)?;
-    SubmenuBuilder::new(app, "Rete").item(&scan_item).build()
+    let mut builder = SubmenuBuilder::new(app, "Rete").item(&scan_item).separator();
+    for (tab, label) in NET_TABS {
+        let item = MenuItemBuilder::with_id(format!("nav:net:{tab}"), *label).build(app)?;
+        builder = builder.item(&item);
+    }
+    builder.build()
 }
+
+/// Tab della sezione Rete (Docker incluso: da questa versione è un tab di Rete).
+const NET_TABS: &[(&str, &str)] = &[
+    ("listen", "Porte in ascolto"),
+    ("services", "Servizi"),
+    ("ping", "Ping"),
+    ("dns", "DNS"),
+    ("portcheck", "Port check"),
+    ("traceroute", "Traceroute"),
+    ("scan", "Scan LAN"),
+    ("docker", "🐳 Docker"),
+];
+
+/// Tab della sezione Tool.
+const TOOL_TABS: &[(&str, &str)] = &[
+    ("clipboard", "📋 Appunti"),
+    ("launch", "🚀 Avvii"),
+    ("calc", "🧮 Calcolatrice"),
+    ("color", "🎨 Colorimetro"),
+    ("cron", "⏱ Cron"),
+    ("compare", "🔀 Confronta cartelle"),
+    ("antiidle", "🕒 Anti-inattività"),
+    ("tools", "🔧 Strumenti"),
+];
 
 fn build_drop_submenu(app: &AppHandle, drop: &DropService) -> tauri::Result<Submenu<Wry>> {
     let peers = drop.peers_except("");
@@ -274,26 +305,43 @@ fn build_pairing_submenu(app: &AppHandle, cfg: &crate::config::AppConfig) -> tau
         .build()
 }
 
-/// Scorciatoie che aprono l'app direttamente sulla sezione scelta: dà al tray
-/// accesso rapido anche alle sezioni senza un proprio sottomenu di dati
-/// (Progetti, Docker, Avvii, Appunti, Colori, Calcolatrice, Task, Dashboard).
+/// Scorciatoie che aprono l'app direttamente dove serve: le sezioni semplici
+/// come voce singola, quelle a tab (Rete, Tool) come sottomenu con dentro tutti
+/// i loro strumenti. È la mappa completa delle funzioni dell'app: quando ne
+/// nasce una nuova va aggiunta qui (e nei TABS sopra).
 fn build_sections_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
-    const SECTIONS: &[(&str, &str)] = &[
-        ("dashboard", "🖥 Dashboard"),
-        ("ports", "🔌 Porte"),
-        ("projects", "📁 Progetti"),
-        ("net", "🌐 Rete"),
-        ("docker", "🐳 Docker"),
-        ("tool", "🧰 Tool"),
+    let mut builder = SubmenuBuilder::new(app, "Apri sezione");
+
+    let dashboard = MenuItemBuilder::with_id("nav:dashboard", "🖥 Dashboard").build(app)?;
+    let projects = MenuItemBuilder::with_id("nav:projects", "📁 Progetti").build(app)?;
+    builder = builder.item(&dashboard).item(&projects);
+
+    let mut net = SubmenuBuilder::new(app, "🌐 Rete");
+    for (tab, label) in NET_TABS {
+        let item = MenuItemBuilder::with_id(format!("nav:net:{tab}"), *label).build(app)?;
+        net = net.item(&item);
+    }
+    let net_sub = net.build()?;
+    builder = builder.item(&net_sub);
+
+    let mut tool = SubmenuBuilder::new(app, "🧰 Tool");
+    for (tab, label) in TOOL_TABS {
+        let item = MenuItemBuilder::with_id(format!("nav:tool:{tab}"), *label).build(app)?;
+        tool = tool.item(&item);
+    }
+    let tool_sub = tool.build()?;
+    builder = builder.item(&tool_sub);
+
+    const SIMPLE: &[(&str, &str)] = &[
         ("log", "📜 Log"),
         ("snippets", "⌨️ Snippet"),
         ("ssh", "🔑 SSH"),
+        ("drop", "📤 Drop"),
         ("tasks", "🧾 Task"),
         ("about", "ℹ️ About"),
         ("settings", "⚙️ Impostazioni"),
     ];
-    let mut builder = SubmenuBuilder::new(app, "Apri sezione");
-    for (id, label) in SECTIONS {
+    for (id, label) in SIMPLE {
         let item = MenuItemBuilder::with_id(format!("nav:{id}"), *label).build(app)?;
         builder = builder.item(&item);
     }

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { post } from "../../lib/api";
 import { useNavStore } from "../../stores/navStore";
 import { useNetScanStore } from "../../stores/netScanStore";
 import { Tabs, usePageTab, type TabDef } from "../../components/Tabs";
 import { Services } from "../services/Services";
 import { Ports as ListeningPorts } from "../ports/Ports";
+import { Docker } from "../docker/Docker";
 import { TaskLog } from "../../components/TaskLog";
 import type { DnsRecordSet, LanHost, PingResult, PortCheckResult, TaskInfo } from "../../lib/types";
 
@@ -17,6 +18,7 @@ const TOOLS: TabDef[] = [
   { id: "portcheck", label: "Port check" },
   { id: "traceroute", label: "Traceroute" },
   { id: "scan", label: "Scan LAN" },
+  { id: "docker", label: "🐳 Docker" },
 ];
 
 const PING_ATTEMPTS = 10;
@@ -444,6 +446,35 @@ function Traceroute() {
   );
 }
 
+/**
+ * Dominio condiviso da TUTTI gli host che ne hanno uno (es. ".homenet.telecom
+ * italia.it" del router): se è lo stesso per tutti non aggiunge informazione e
+ * fa solo rumore nella colonna, quindi si mostra una volta sola in intestazione
+ * e nelle righe resta il solo nome host. Serve almeno una coppia per parlare di
+ * "uguale per tutti"; se anche uno solo differisce, i nomi restano interi.
+ */
+export function commonDomain(hostnames: (string | null)[]): string | null {
+  const domains = hostnames
+    .filter((h): h is string => !!h)
+    .map((h) => {
+      const dot = h.indexOf(".");
+      return dot > 0 ? h.slice(dot + 1) : null;
+    });
+  if (domains.length < 2 || domains.some((d) => !d)) return null;
+  const first = domains[0]!.toLowerCase();
+  return domains.every((d) => d!.toLowerCase() === first) ? domains[0] : null;
+}
+
+/** Nome host senza il dominio comune (che viene mostrato a parte). */
+function shortHostname(hostname: string | null, domain: string | null): string {
+  if (!hostname) return "—";
+  if (!domain) return hostname;
+  const suffix = `.${domain}`;
+  return hostname.toLowerCase().endsWith(suffix.toLowerCase())
+    ? hostname.slice(0, hostname.length - suffix.length)
+    : hostname;
+}
+
 function Scan({ autoRunSeq }: { autoRunSeq: number }) {
   // Store esterno all'albero React: i risultati restano visibili quando si
   // cambia tool/sezione e tornano finché non si lancia una nuova scansione.
@@ -466,6 +497,8 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
     run();
   }, [autoRunSeq]);
 
+  const domain = useMemo(() => commonDomain((hosts ?? []).map((h) => h.hostname)), [hosts]);
+
   return (
     <div className="net-tool">
       <button disabled={busy} onClick={run}>
@@ -477,7 +510,10 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
           <thead>
             <tr>
               <th>IP</th>
-              <th>Hostname</th>
+              <th>
+                Hostname
+                {domain && <span className="dim th-note"> · .{domain}</span>}
+              </th>
               <th>MAC</th>
               <th className="num">Ping</th>
             </tr>
@@ -489,7 +525,9 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
                   {h.ip}
                   {h.isSelf && <span className="badge">questo PC</span>}
                 </td>
-                <td className="dim">{h.hostname ?? "—"}</td>
+                <td className="dim" title={h.hostname ?? undefined}>
+                  {shortHostname(h.hostname, domain)}
+                </td>
                 <td className="dim">{h.mac ?? "—"}</td>
                 <td className="num dim">{h.latencyMs != null ? `${h.latencyMs.toFixed(0)}ms` : "—"}</td>
               </tr>
@@ -526,6 +564,7 @@ export function NetTools() {
       {tool === "portcheck" && <Ports />}
       {tool === "traceroute" && <Traceroute />}
       {tool === "scan" && <Scan autoRunSeq={scanSeq} />}
+      {tool === "docker" && <Docker />}
     </div>
   );
 }

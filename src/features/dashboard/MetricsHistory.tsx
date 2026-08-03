@@ -14,12 +14,29 @@ const SERIES = [
   { key: "diskPct", label: "Disco", color: "var(--ok)" },
 ] as const;
 
+type SeriesKey = (typeof SERIES)[number]["key"];
+
+// Serie nascoste dalla legenda: scelta dell'utente, ricordata tra le sessioni.
+const HIDDEN_KEY = "rdt-metrics-hidden";
+
+function loadHidden(): SeriesKey[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]");
+    const keys = SERIES.map((s) => s.key) as readonly string[];
+    return Array.isArray(parsed) ? parsed.filter((k) => keys.includes(k)) : [];
+  } catch {
+    return [];
+  }
+}
+
 const W = 560;
 const H = 160;
 const PAD_L = 6;
 const PAD_R = 10;
 const PAD_T = 8;
-const PAD_B = 18;
+// Le etichette dell'asse X stanno fuori dall'SVG (vedi sotto): qui serve solo
+// un filo di respiro sotto l'ultima griglia.
+const PAD_B = 6;
 
 function yFor(pct: number) {
   return PAD_T + (1 - pct / 100) * (H - PAD_T - PAD_B);
@@ -61,6 +78,7 @@ function fmtTime(ms: number) {
 export function MetricsHistory() {
   const [hours, setHours] = useState(24);
   const [samples, setSamples] = useState<MetricSample[] | null>(null);
+  const [hidden, setHidden] = useState<SeriesKey[]>(loadHidden);
 
   const load = async (h: number) => {
     const r = await api<{ samples: MetricSample[]; hours: number }>(
@@ -75,6 +93,14 @@ export function MetricsHistory() {
     return () => clearInterval(id);
   }, [hours]);
 
+  const toggleSeries = (key: SeriesKey) => {
+    setHidden((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      localStorage.setItem(HIDDEN_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
   const points = useMemo(() => (samples ? downsample(samples) : []), [samples]);
 
   const geometry = useMemo(() => {
@@ -88,11 +114,12 @@ export function MetricsHistory() {
   }, [points]);
 
   const last = samples && samples.length > 0 ? samples[samples.length - 1] : null;
+  const visible = SERIES.filter((s) => !hidden.includes(s.key));
 
   return (
     <section className="metrics-history">
-      <div className="section-header">
-        <h3>Storico {hours}h</h3>
+      <div className="metrics-head">
+        <span className="gauge-title">Storico {hours}h</span>
         <div className="segmented">
           {RANGES.map((r) => (
             <button
@@ -106,15 +133,24 @@ export function MetricsHistory() {
         </div>
       </div>
 
+      {/* Legenda cliccabile: ogni voce accende/spegne la sua serie nel grafico. */}
       <div className="metrics-legend">
         {SERIES.map((s) => {
           const v = last ? (last[s.key] as number | null) : null;
+          const off = hidden.includes(s.key);
           return (
-            <span key={s.key} className="metrics-legend-item">
+            <button
+              key={s.key}
+              type="button"
+              className={`metrics-legend-item ${off ? "off" : ""}`}
+              aria-pressed={!off}
+              title={off ? `Mostra ${s.label}` : `Nascondi ${s.label}`}
+              onClick={() => toggleSeries(s.key)}
+            >
               <span className="metrics-swatch" style={{ background: s.color }} />
               {s.label}
               {v != null && <span className="dim"> {v.toFixed(0)}%</span>}
-            </span>
+            </button>
           );
         })}
       </div>
@@ -126,72 +162,79 @@ export function MetricsHistory() {
             : "Lo storico si popola man mano (un campione ogni 30s)."}
         </div>
       ) : (
-        <div className="metrics-plot">
-          <div className="metrics-yaxis" aria-hidden>
-            {[100, 50, 0].map((v) => (
-              <span key={v} style={{ top: `${topPct(v)}%` }}>
-                {v}
-              </span>
-            ))}
-          </div>
-          <svg
-            className="metrics-chart"
-            viewBox={`0 0 ${W} ${H}`}
-            role="img"
-            aria-label={`Storico metriche ${hours} ore`}
-          >
-          {[0, 25, 50, 75, 100].map((g) => (
-            <line
-              key={g}
-              x1={PAD_L}
-              y1={geometry.y(g)}
-              x2={W - PAD_R}
-              y2={geometry.y(g)}
-              stroke="var(--border)"
-              strokeWidth="1"
-            />
-          ))}
-          <text x={PAD_L} y={H - 5} className="metrics-axis-label">
-            {fmtTime(geometry.t0)}
-          </text>
-          <text x={W - PAD_R} y={H - 5} className="metrics-axis-label" textAnchor="end">
-            {fmtTime(geometry.t1)}
-          </text>
-          {SERIES.map((s) => {
-            // Segmenti spezzati sui buchi temporali e sui valori mancanti:
-            // ogni tratto continuo è una polyline separata.
-            const segments: string[][] = [];
-            let current: string[] = [];
-            let prevTs: number | null = null;
-            for (const p of points) {
-              const v = p[s.key] as number | null;
-              const gap = prevTs != null && p.ts - prevTs > GAP_MS;
-              if (v == null || gap) {
+        <>
+          <div className="metrics-plot">
+            <div className="metrics-yaxis" aria-hidden>
+              {[100, 50, 0].map((v) => (
+                <span key={v} style={{ top: `${topPct(v)}%` }}>
+                  {v}
+                </span>
+              ))}
+            </div>
+            <svg
+              className="metrics-chart"
+              viewBox={`0 0 ${W} ${H}`}
+              role="img"
+              aria-label={`Storico metriche ${hours} ore`}
+            >
+              {[0, 25, 50, 75, 100].map((g) => (
+                <line
+                  key={g}
+                  x1={PAD_L}
+                  y1={geometry.y(g)}
+                  x2={W - PAD_R}
+                  y2={geometry.y(g)}
+                  stroke="var(--border)"
+                  strokeWidth="1"
+                />
+              ))}
+              {visible.map((s) => {
+                // Segmenti spezzati sui buchi temporali e sui valori mancanti:
+                // ogni tratto continuo è una polyline separata.
+                const segments: string[][] = [];
+                let current: string[] = [];
+                let prevTs: number | null = null;
+                for (const p of points) {
+                  const v = p[s.key] as number | null;
+                  const gap = prevTs != null && p.ts - prevTs > GAP_MS;
+                  if (v == null || gap) {
+                    if (current.length > 0) segments.push(current);
+                    current = [];
+                  }
+                  if (v != null) {
+                    current.push(`${geometry.x(p.ts).toFixed(1)},${geometry.y(v).toFixed(1)}`);
+                    prevTs = p.ts;
+                  } else {
+                    prevTs = null;
+                  }
+                }
                 if (current.length > 0) segments.push(current);
-                current = [];
-              }
-              if (v != null) {
-                current.push(`${geometry.x(p.ts).toFixed(1)},${geometry.y(v).toFixed(1)}`);
-                prevTs = p.ts;
-              } else {
-                prevTs = null;
-              }
-            }
-            if (current.length > 0) segments.push(current);
-            return segments.map((seg, i) => (
-              <polyline
-                key={`${s.key}-${i}`}
-                points={seg.join(" ")}
-                fill="none"
-                stroke={s.color}
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-                vectorEffect="non-scaling-stroke"
-              />
-            ));
-          })}
-          </svg>
-        </div>
+                return segments.map((seg, i) => (
+                  <polyline
+                    key={`${s.key}-${i}`}
+                    points={seg.join(" ")}
+                    fill="none"
+                    stroke={s.color}
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ));
+              })}
+            </svg>
+          </div>
+          {/* Etichette dell'ora in HTML e non dentro l'SVG: nel viewBox il testo
+              veniva rimpicciolito insieme al grafico e finiva a metà della
+              dimensione dell'asse Y. Qui i due assi hanno lo stesso font. */}
+          <div className="metrics-xaxis" aria-hidden>
+            <span>{fmtTime(geometry.t0)}</span>
+            <span>{fmtTime((geometry.t0 + geometry.t1) / 2)}</span>
+            <span>{fmtTime(geometry.t1)}</span>
+          </div>
+        </>
+      )}
+      {visible.length === 0 && (
+        <div className="dim metrics-empty-note">Tutte le serie sono nascoste.</div>
       )}
     </section>
   );

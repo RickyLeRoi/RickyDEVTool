@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import { TaskLog } from "../../components/TaskLog";
@@ -104,9 +104,31 @@ function stateClass(state: string): string {
   return "docker-state stopped";
 }
 
+// Esito della connessione al daemon, dedotto dallo stato: serve alla HostBar
+// per dire se l'host configurato risponde davvero o no.
+type HostHealth = "loading" | "ok" | "down" | "missing";
+
+function healthOf(state: DockerState | null, loadError: string | null): HostHealth {
+  if (loadError) return "down";
+  if (!state) return "loading";
+  if (!state.available) return "missing"; // la CLI docker non c'è proprio
+  if (state.daemonDown || state.error) return "down";
+  return "ok";
+}
+
 // Configurazione dell'host Docker: vuoto = daemon locale; altrimenti si punta a
 // un Docker remoto (es. una VM sul server di casa) via ssh:// o tcp://.
-function HostBar({ host, onSaved }: { host: string | null; onSaved: () => void }) {
+// Il salvataggio prova la connessione lato backend: un host che non risponde
+// viene rifiutato con l'errore vero, non salvato in silenzio.
+function HostBar({
+  host,
+  health,
+  onSaved,
+}: {
+  host: string | null;
+  health: HostHealth;
+  onSaved: () => void;
+}) {
   const [value, setValue] = useState(host ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,8 +142,14 @@ function HostBar({ host, onSaved }: { host: string | null; onSaved: () => void }
       host: value.trim() || null,
     });
     setSaving(false);
-    if (r.ok) onSaved();
-    else setError(r.error.message);
+    if (r.ok) {
+      onSaved();
+    } else {
+      setError(r.error.message);
+      // L'host NON è stato salvato: riporta il campo a quello attivo, così non
+      // resta a schermo un valore che sembra applicato e invece non lo è.
+      setValue(host ?? "");
+    }
   };
 
   const dirty = value.trim() !== (host ?? "");
@@ -139,14 +167,26 @@ function HostBar({ host, onSaved }: { host: string | null; onSaved: () => void }
           }}
         />
         <button className="small" onClick={save} disabled={saving || !dirty}>
-          {saving ? "Salvo…" : "Salva"}
+          {saving ? "Provo…" : "Salva"}
         </button>
       </label>
       {error && <div className="banner banner-error">{error}</div>}
-      <div className="hint">
-        {host
-          ? `Puntando a un host remoto: ${host}`
-          : "Daemon locale. Per un Docker su un'altra macchina (es. VM Proxmox) inserisci ssh:// o tcp:// (serve comunque la CLI docker su questo computer)."}
+      <div className={`hint ${health === "down" ? "hint-error" : ""}`}>
+        {health === "missing" ? (
+          "La CLI docker non è installata su questo computer: nemmeno un host remoto può essere contattato senza."
+        ) : host ? (
+          health === "loading" ? (
+            <>Contatto l'host remoto {host}…</>
+          ) : health === "down" ? (
+            <>⚠ Host remoto non raggiungibile: {host}</>
+          ) : (
+            <>✓ Collegato all'host remoto: {host}</>
+          )
+        ) : health === "down" ? (
+          <>⚠ Il daemon Docker locale non risponde.</>
+        ) : (
+          "Daemon locale. Per un Docker su un'altra macchina (es. VM Proxmox) inserisci ssh:// o tcp:// (serve comunque la CLI docker su questo computer)."
+        )}
       </div>
     </div>
   );
@@ -293,13 +333,28 @@ function ContainerRow({
 
 export function Docker() {
   const [state, setState] = useState<DockerState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<{ task: TaskInfo; name: string } | null>(null);
   const [stats, setStats] = useState<Record<string, ContainerStat>>({});
   const [statInterval, setStatInterval] = useState(3000);
+  const inFlight = useRef(false);
 
   const load = useCallback(async () => {
+    // Con un host remoto lento la risposta può metterci più dell'intervallo di
+    // refresh: senza questa guardia le richieste si accavallerebbero, ognuna
+    // con il suo `docker ps` dietro.
+    if (inFlight.current) return;
+    inFlight.current = true;
     const r = await api<DockerState>("/api/docker");
-    if (r.ok) setState(r.data);
+    inFlight.current = false;
+    if (r.ok) {
+      setState(r.data);
+      setLoadError(null);
+    } else {
+      // Anche il fallimento della chiamata va detto: prima restava a schermo
+      // l'ultimo stato buono, come se fosse tutto a posto.
+      setLoadError(r.error.message);
+    }
   }, []);
 
   useEffect(() => {
@@ -339,31 +394,36 @@ export function Docker() {
     };
   }, [openLogTaskId]);
 
+  const health = healthOf(state, loadError);
+
   return (
-    <div>
-      <div className="section-header">
-        <h2>Docker</h2>
-        <div className="docker-header-actions">
-          <div className="segmented" title="Intervallo aggiornamento stats live">
-            {STAT_INTERVALS.map((ms) => (
-              <button
-                key={ms}
-                className={statInterval === ms ? "active" : ""}
-                onClick={() => changeStatInterval(ms)}
-              >
-                {ms / 1000}s
-              </button>
-            ))}
-          </div>
-          <button className="small" onClick={load}>
-            Aggiorna
-          </button>
+    <div className="docker-tool">
+      <div className="docker-toolbar">
+        <div className="segmented" title="Intervallo aggiornamento stats live">
+          {STAT_INTERVALS.map((ms) => (
+            <button
+              key={ms}
+              className={statInterval === ms ? "active" : ""}
+              onClick={() => changeStatInterval(ms)}
+            >
+              {ms / 1000}s
+            </button>
+          ))}
         </div>
+        <button className="small" onClick={load}>
+          Aggiorna
+        </button>
       </div>
 
-      <HostBar host={state?.host ?? null} onSaved={load} />
+      <HostBar host={state?.host ?? null} health={health} onSaved={load} />
 
-      {!state && <div className="empty">Controllo Docker…</div>}
+      {loadError && (
+        <div className="banner banner-error">
+          Non riesco a leggere lo stato di Docker: {loadError}
+        </div>
+      )}
+
+      {!state && !loadError && <div className="empty">Controllo Docker…</div>}
 
       {state && !state.available && (
         <div className="empty">
@@ -388,7 +448,7 @@ export function Docker() {
           </div>
           {state.error && (
             <pre className="docker-error-detail">
-              docker -H {state.host} … → {state.error}
+              {state.host ? `docker -H ${state.host} …` : "docker …"} → {state.error}
             </pre>
           )}
         </div>

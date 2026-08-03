@@ -4,6 +4,7 @@ import { Launch } from "../launch/Launch";
 import { Calc } from "../calc/Calc";
 import { Color } from "../color/Color";
 import { Cron } from "../cron/Cron";
+import { Compare } from "../compare/Compare";
 import { AntiIdlePanel } from "./AntiIdlePanel";
 import { ToolsPanel } from "../settings/ToolsPanel";
 
@@ -15,6 +16,7 @@ const TABS: TabDef[] = [
   { id: "calc", label: "🧮 Calcolatrice" },
   { id: "color", label: "🎨 Colorimetro" },
   { id: "cron", label: "⏱ Cron" },
+  { id: "compare", label: "🔀 Confronta cartelle" },
   { id: "antiidle", label: "🕒 Anti-inattività" },
   { id: "tools", label: "🔧 Strumenti" },
 ];
@@ -36,6 +38,7 @@ export function Tool() {
       {tab === "calc" && <Calc />}
       {tab === "color" && <Color />}
       {tab === "cron" && <Cron />}
+      {tab === "compare" && <Compare />}
       {tab === "antiidle" && <AntiIdlePanel />}
       {tab === "tools" && <ToolsPanel />}
     </div>

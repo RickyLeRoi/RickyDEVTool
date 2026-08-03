@@ -6,7 +6,6 @@ import { Projects } from "./features/projects/Projects";
 import { Settings } from "./features/settings/Settings";
 import { Drop } from "./features/drop/Drop";
 import { NetTools } from "./features/nettools/NetTools";
-import { Docker } from "./features/docker/Docker";
 import { Tool } from "./features/tool/Tool";
 import { LogViewer } from "./features/log/LogViewer";
 import { Snippets } from "./features/snippets/Snippets";
@@ -32,7 +31,6 @@ const SECTIONS: { id: Page; icon: string; label: string; position: "top" | "bott
   { id: "dashboard", icon: "🖥", label: "Dashboard", position: "top" },
   { id: "projects", icon: "📁", label: "Progetti", position: "top" },
   { id: "net", icon: "🌐", label: "Rete", position: "top" },
-  { id: "docker", icon: "🐳", label: "Docker", position: "top" },
   { id: "tool", icon: "🧰", label: "Tool", position: "top" },
   { id: "log", icon: "📜", label: "Log", position: "top" },
   { id: "snippets", icon: "⌨️", label: "Snippet", position: "top" },
@@ -47,10 +45,12 @@ const SECTIONS: { id: Page; icon: string; label: string; position: "top" | "bott
 // direttamente un tab specifico (id storico risolto dallo store di navigazione).
 const QUICK_NAV: { id: string; title: string; icon: string }[] = [
   { id: "ports", title: "Porte in ascolto", icon: "🔌" },
+  { id: "docker", title: "Docker", icon: "🐳" },
   { id: "clipboard", title: "Appunti", icon: "📋" },
   { id: "launch", title: "Avvii compositi", icon: "🚀" },
   { id: "calc", title: "Calcolatrice", icon: "🧮" },
   { id: "color", title: "Colorimetro", icon: "🎨" },
+  { id: "compare", title: "Confronta cartelle", icon: "🔀" },
   { id: "services", title: "Servizi (ping)", icon: "📡" },
 ];
 
@@ -228,7 +228,6 @@ export default function App() {
           {page === "dashboard" && <Dashboard />}
           {page === "projects" && <Projects />}
           {page === "net" && <NetTools />}
-          {page === "docker" && <Docker />}
           {page === "tool" && <Tool />}
           {page === "log" && <LogViewer />}
           {page === "snippets" && <Snippets />}

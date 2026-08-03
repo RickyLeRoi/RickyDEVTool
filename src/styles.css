@@ -414,38 +414,66 @@ input {
 .metrics-history {
   margin-top: 18px;
 }
-/* Quando lo storico è una card nella riga gauges: niente margine sopra e header
-   compatto, così sta accanto a CPU e RAM. */
+/* Quando lo storico è una card nella riga gauges: niente margine sopra, così
+   sta accanto a CPU e RAM. */
 .metrics-card {
   gap: 6px;
 }
 .metrics-card .metrics-history {
   margin-top: 0;
 }
-.metrics-card .section-header {
-  margin-bottom: 2px;
+/* Intestazione alta come il titolo delle tile accanto (CPU/RAM): una riga,
+   niente padding sticky della .section-header, che qui rubava spazio al
+   grafico. */
+.metrics-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 22px;
 }
-.metrics-card .metrics-legend {
-  margin: 2px 0 4px;
-  gap: 10px;
-  flex-wrap: wrap;
+.metrics-head .segmented button {
+  padding: 1px 7px;
+  font-size: 11px;
 }
 .metrics-legend {
   display: flex;
-  gap: 14px;
-  margin: 4px 0 8px;
-  font-size: 12px;
+  gap: 10px;
+  margin: 4px 0 6px;
+  font-size: 11px;
+  flex-wrap: wrap;
 }
+/* Voci cliccabili: spengono/riaccendono la serie nel grafico. */
 .metrics-legend-item {
   display: flex;
   align-items: center;
   gap: 5px;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font-size: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.metrics-legend-item:hover {
+  background: var(--bg-hover);
+}
+.metrics-legend-item.off {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+.metrics-legend-item.off .metrics-swatch {
+  background: var(--text-dim) !important;
+  opacity: 0.45;
 }
 .metrics-swatch {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 2px;
   display: inline-block;
+  flex: none;
 }
 .metrics-plot {
   display: flex;
@@ -470,9 +498,19 @@ input {
   height: auto;
   display: block;
 }
-.metrics-axis-label {
-  fill: var(--text-dim);
-  font-size: 10px;
+/* Asse X in HTML (non dentro l'SVG): stesso font dell'asse Y, non scalato dal
+   viewBox. Il rientro a sinistra allinea la prima etichetta al grafico. */
+.metrics-xaxis {
+  display: flex;
+  justify-content: space-between;
+  margin-left: 22px;
+  padding-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.metrics-empty-note {
+  font-size: 11px;
 }
 
 /* ---------- docker ---------- */
@@ -638,12 +676,48 @@ input {
   border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
   border-radius: 8px;
 }
+/* Etichetta, host e Salva sulla stessa riga (il .form-row di default impila in
+   colonna, e il pulsante finiva largo quanto il pannello). */
 .docker-host .form-row {
   margin: 0;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.docker-host .form-row > span {
+  flex: none;
+}
+.docker-host .form-row input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.docker-host .form-row button {
+  flex: none;
 }
 .docker-host .hint {
   margin-top: 6px;
   max-width: none;
+}
+/* L'host configurato non risponde: il messaggio non deve somigliare a una nota
+   neutra, altrimenti sembra che il collegamento sia attivo. */
+.hint-error {
+  color: var(--error);
+}
+/* Nota in intestazione colonna (es. il dominio comune dello scan LAN, tolto
+   dalle righe perché uguale per tutti). */
+.th-note {
+  font-weight: 400;
+  text-transform: none;
+}
+/* Docker come tab di Rete: niente header proprio, solo la barra dei comandi. */
+.docker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
 }
 .docker-error-detail {
   margin: 8px 0 0;
@@ -2610,6 +2684,119 @@ button.ghost:hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* ---------- confronto di due alberature ---------- */
+.compare-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Etichetta, percorso e pulsante sulla stessa riga (il .form-row di default è
+   una colonna: qui i tre campi diventerebbero nove righe). Su schermi stretti
+   vanno a capo da soli. */
+.compare-form .form-row {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.compare-form .form-row > span {
+  flex: 0 0 92px;
+}
+.compare-form .form-row input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.compare-form .form-row button {
+  flex: none;
+}
+.compare-path .browser {
+  margin: 6px 0 0;
+}
+.compare-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.compare-summary .segmented {
+  margin-left: auto;
+}
+.compare-table td {
+  vertical-align: top;
+}
+.compare-rel {
+  word-break: break-all;
+}
+/* Pastiglia del verso della differenza: si legge a colpo d'occhio da che parte
+   sta il "di più". */
+.compare-badge {
+  display: inline-block;
+  width: 18px;
+  margin-right: 6px;
+  text-align: center;
+  font-weight: 700;
+}
+.compare-badge.onlyLeft {
+  color: var(--accent);
+}
+.compare-badge.onlyRight {
+  color: var(--accent2);
+}
+.compare-badge.different {
+  color: var(--warn);
+}
+.compare-missing {
+  opacity: 0.4;
+}
+/* Rientro dei figli di una cartella aperta. */
+.compare-indent {
+  display: inline-block;
+  flex: none;
+}
+/* Freccia di apertura: presente anche (vuota) sui file, così i nomi restano
+   incolonnati. */
+.compare-expand {
+  display: inline-block;
+  width: 18px;
+  margin-right: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  text-align: center;
+}
+button.compare-expand:hover {
+  color: var(--text);
+}
+.compare-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.compare-btn {
+  min-width: 28px;
+  padding: 2px 6px;
+  line-height: 1.4;
+}
+.compare-btn.danger:hover:not(:disabled) {
+  color: var(--error);
+  border-color: var(--error);
+}
+.compare-done {
+  opacity: 0.55;
+}
+.compare-row-error {
+  margin-top: 6px;
+}
+.compare-ignored {
+  font-size: 12px;
+}
+.compare-legend {
+  max-width: none;
 }
 
 /* ---------- command palette (⌘K) ---------- */
