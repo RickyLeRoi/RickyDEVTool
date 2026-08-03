@@ -62,3 +62,5 @@ windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse",
 
 [dev-dependencies]
 tempfile = "3"
+# Test del router: `oneshot` su un Router senza alzare un listener.
+tower = { version = "0.5", features = ["util"] }

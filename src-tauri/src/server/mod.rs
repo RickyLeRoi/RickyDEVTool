@@ -51,6 +51,34 @@ fn write_permitted(is_loopback: bool, remote_control_enabled: bool) -> bool {
     is_loopback || remote_control_enabled
 }
 
+/// I due controlli di permesso, applicati come layer sui gruppi di rotte in
+/// [`start`] invece che riscritti dentro ogni handler. Prima erano 48 copie a
+/// mano in un file da 2800 righe, e chi ne dimenticava una non se ne accorgeva:
+/// `set_remote_control` è rimasto scoperto a undici righe da `set_anti_idle`,
+/// che invece controllava.
+async fn require_loopback(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if peer.ip().is_loopback() {
+        return next.run(request).await;
+    }
+    remote_forbidden()
+}
+
+async fn require_write(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if write_allowed(&state, peer) {
+        return next.run(request).await;
+    }
+    remote_forbidden()
+}
+
 #[derive(Clone)]
 pub struct ServerInfo {
     pub port: u16,
@@ -134,64 +162,62 @@ pub async fn start(
         clipboard,
     };
 
-    let api = Router::new()
-        .route("/api/health", get(health))
-        .route("/api/lan", get(lan_info))
-        .route("/api/lan/qr.svg", get(lan_qr))
-        .route("/api/pair", post(pair))
-        .route("/api/log", post(client_log))
+    // Il permesso si legge dal gruppo in cui la rotta è scritta, non dal corpo
+    // dell'handler. Aggiungere un endpoint significa sceglierne uno: non esiste
+    // una posizione "senza controllo" in cui finirci per distrazione.
+    let local_layer = middleware::from_fn(require_loopback);
+    let write_layer = middleware::from_fn_with_state(state.clone(), require_write);
+
+    // (1) Solo dal desktop, sempre. Distruttive su disco, apertura di file/URL
+    // locali, notifiche, e gli interruttori che *concedono* permessi: il
+    // controllo remoto non le sblocca, altrimenti si auto-concederebbe.
+    let local_only = Router::new()
+        .route("/api/disks/eject", post(disk_eject))
+        .route("/api/disks/format", post(disk_format))
+        .route("/api/fs/compare/apply", post(fs_compare_apply))
+        .route("/api/push/test", post(push_test))
+        .route("/api/drop/received", get(drop_received))
+        .route("/api/drop/open/{name}", post(drop_open_file))
+        .route("/api/drop/reveal/{name}", post(drop_reveal_file))
+        .route("/api/drop/received/{name}", axum::routing::delete(drop_received_delete))
+        .route("/api/drop/open-folder", post(drop_open_folder))
+        .route("/api/config/remote-control", post(set_remote_control))
+        .route("/api/system/open-accessibility", post(open_accessibility))
+        .route("/api/system/color-meter", post(open_color_meter))
+        .route("/api/system/open-url", post(open_url))
+        .layer(local_layer.clone());
+
+    // (2) Modificano il sistema: locale, oppure LAN col controllo remoto
+    // attivo. Ci sono anche delle GET, ed è voluto — leggere un `.env` o
+    // sfogliare il filesystem espone segreti quanto scriverci.
+    let write = Router::new()
         .route("/api/pollers/{topic}/interval", post(set_interval))
-        .route("/api/processes/heavy", get(heavy_processes))
-        .route("/api/metrics/history", get(metrics_history))
         .route("/api/processes/kill", post(kill_process))
-        .route("/api/ports", get(list_ports))
-        .route("/api/disks", get(list_disks))
-        .route("/api/docker", get(docker_state))
-        .route("/api/docker/images", get(docker_images))
         .route("/api/docker/images/prune", post(docker_prune_images))
         .route("/api/docker/{id}/action", post(docker_action))
         .route("/api/docker/{id}/logs", post(docker_logs))
-        .route("/api/disks/eject", post(disk_eject))
-        .route("/api/disks/format", post(disk_format))
-        .route("/api/tools", get(list_tools))
         .route("/api/tools/{id}/launch", post(launch_tool))
         .route("/api/tools/{id}/path", post(set_tool_path))
-        .route("/api/fs/dirs", get(fs_dirs))
-        .route("/api/projects/scan", get(projects_scan))
-        .route("/api/projects/pinned", get(pinned_get).post(pinned_set))
-        .route("/api/git/info", get(git_info))
         .route("/api/git/fetch", post(git_fetch))
         .route("/api/git/pull", post(git_pull))
-        .route("/api/git/branches", get(git_branches))
         .route("/api/git/checkout", post(git_checkout))
         .route("/api/git/delete-branch", post(git_delete_branch))
-        .route("/api/git/commits", get(git_commits))
         .route("/api/git/checkout-commit", post(git_checkout_commit))
         .route("/api/git/revert", post(git_revert))
         .route("/api/git/cherry-pick", post(git_cherry_pick))
-        .route("/api/node/info", get(node_info))
         .route("/api/node/pm", post(node_set_pm))
         .route("/api/node/run", post(node_run))
-        .route("/api/tasks", get(tasks_list))
         .route("/api/tasks/{id}/stop", post(task_stop))
-        .route("/api/tasks/{id}/log", get(task_log))
         .route("/api/tasks/clear-finished", post(tasks_clear_finished))
-        .route("/api/dotnet/info", get(dotnet_info))
         .route("/api/dotnet/select", post(dotnet_select))
         .route("/api/dotnet/run", post(dotnet_run))
-        .route("/api/runner/info", get(runner_info))
         .route("/api/runner/run", post(runner_run))
-        .route("/api/launch/bundles", get(launch_bundles_list).post(launch_bundle_upsert))
         .route("/api/launch/bundles/delete", post(launch_bundle_delete))
         .route("/api/launch/run", post(launch_run))
-        .route("/api/snippets", get(snippets_list).post(snippets_upsert))
         .route("/api/snippets/delete", post(snippets_delete))
         .route("/api/snippets/run", post(snippets_run))
-        .route("/api/ssh/hosts", get(ssh_hosts_list).post(ssh_host_upsert))
         .route("/api/ssh/hosts/delete", post(ssh_host_delete))
         .route("/api/ssh/run", post(ssh_run))
-        .route("/api/clipboard/history", get(clipboard_history))
-        .route("/api/clipboard/blob", get(clipboard_blob))
         .route("/api/clipboard/copy", post(clipboard_copy))
         .route("/api/clipboard/send", post(clipboard_send))
         .route("/api/clipboard/record", post(clipboard_record))
@@ -199,22 +225,15 @@ pub async fn start(
         .route("/api/clipboard/delete", post(clipboard_delete))
         .route("/api/clipboard/clear", post(clipboard_clear))
         .route("/api/clipboard/enabled", post(clipboard_set_enabled))
-        .route("/api/services", get(services_get).post(services_upsert))
         .route("/api/services/{id}", axum::routing::delete(services_delete))
         .route("/api/services/{id}/toggle", post(services_toggle))
-        .route("/api/alerts", get(alerts_get))
         .route("/api/alerts/ack", post(alerts_ack))
-        .route("/api/alerts/config", get(alerts_config_get).post(alerts_config_set))
-        .route("/api/scheduler", get(scheduler_list))
-        .route("/api/scheduler/detail", get(scheduler_detail))
         .route("/api/fs/entries", get(fs_entries))
         .route("/api/fs/compare", post(fs_compare))
         .route("/api/fs/compare/children", post(fs_compare_children))
-        .route("/api/fs/compare/apply", post(fs_compare_apply))
         .route("/api/env/files", get(env_files))
         .route("/api/env/read", get(env_read))
         .route("/api/env/activate", post(env_activate))
-        .route("/api/logtail", get(logtail_list))
         .route("/api/logtail/start", post(logtail_start))
         .route("/api/logtail/{id}/stop", post(logtail_stop))
         .route("/api/net/ping", post(net_ping))
@@ -222,8 +241,73 @@ pub async fn start(
         .route("/api/net/portcheck", post(net_portcheck))
         .route("/api/net/scan", post(net_scan))
         .route("/api/net/traceroute", post(net_traceroute))
-        .route("/api/push", get(push_get).post(push_set))
-        .route("/api/push/test", post(push_test))
+        .route("/api/config/anti-idle", post(set_anti_idle))
+        .layer(write_layer.clone());
+
+    // (3) Sola lettura: qualsiasi device abbinato. Dove GET e POST condividono
+    // il path il layer sta sul singolo metodo, così la lettura resta aperta
+    // mentre la scrittura no.
+    let read = Router::new()
+        .route("/api/health", get(health))
+        .route("/api/lan", get(lan_info))
+        .route("/api/lan/qr.svg", get(lan_qr))
+        .route("/api/pair", post(pair))
+        .route("/api/log", post(client_log))
+        .route("/api/processes/heavy", get(heavy_processes))
+        .route("/api/metrics/history", get(metrics_history))
+        .route("/api/ports", get(list_ports))
+        .route("/api/disks", get(list_disks))
+        .route("/api/docker", get(docker_state))
+        .route("/api/docker/images", get(docker_images))
+        .route("/api/tools", get(list_tools))
+        .route("/api/fs/dirs", get(fs_dirs))
+        .route("/api/projects/scan", get(projects_scan))
+        .route(
+            "/api/projects/pinned",
+            get(pinned_get).merge(post(pinned_set).layer(write_layer.clone())),
+        )
+        .route("/api/git/info", get(git_info))
+        .route("/api/git/branches", get(git_branches))
+        .route("/api/git/commits", get(git_commits))
+        .route("/api/node/info", get(node_info))
+        .route("/api/tasks", get(tasks_list))
+        .route("/api/tasks/{id}/log", get(task_log))
+        .route("/api/dotnet/info", get(dotnet_info))
+        .route("/api/runner/info", get(runner_info))
+        .route(
+            "/api/launch/bundles",
+            get(launch_bundles_list).merge(post(launch_bundle_upsert).layer(write_layer.clone())),
+        )
+        .route(
+            "/api/snippets",
+            get(snippets_list).merge(post(snippets_upsert).layer(write_layer.clone())),
+        )
+        .route(
+            "/api/ssh/hosts",
+            get(ssh_hosts_list).merge(post(ssh_host_upsert).layer(write_layer.clone())),
+        )
+        .route("/api/clipboard/history", get(clipboard_history))
+        .route("/api/clipboard/blob", get(clipboard_blob))
+        .route(
+            "/api/services",
+            get(services_get).merge(post(services_upsert).layer(write_layer.clone())),
+        )
+        .route("/api/alerts", get(alerts_get))
+        .route(
+            "/api/alerts/config",
+            get(alerts_config_get).merge(post(alerts_config_set).layer(write_layer.clone())),
+        )
+        .route("/api/scheduler", get(scheduler_list))
+        .route("/api/scheduler/detail", get(scheduler_detail))
+        .route("/api/logtail", get(logtail_list))
+        .route(
+            "/api/push",
+            get(push_get).merge(post(push_set).layer(local_layer.clone())),
+        )
+        // drop/hello, /send e /text restano senza permesso di scrittura di
+        // proposito: sono il canale Drop verso i device abbinati e fra hub,
+        // autenticato in auth_middleware dalla reciprocità della discovery UDP.
+        // Chiuderli qui spegnerebbe Drop dal telefono.
         .route("/api/drop/hello", post(drop_hello))
         .route("/api/drop/peers", get(drop_peers))
         .route("/api/drop/self", get(drop_self))
@@ -234,19 +318,16 @@ pub async fn start(
         )
         .route("/api/drop/text", post(drop_text))
         .route("/api/drop/download/{id}", get(drop_download))
-        .route("/api/drop/received", get(drop_received))
-        .route("/api/drop/open/{name}", post(drop_open_file))
-        .route("/api/drop/reveal/{name}", post(drop_reveal_file))
-        .route("/api/drop/received/{name}",axum::routing::delete(drop_received_delete))
-        .route("/api/drop/open-folder", post(drop_open_folder))
-        .route("/api/config/remote-control", post(set_remote_control))
-        .route("/api/config/anti-idle", post(set_anti_idle))
-        .route("/api/config/docker-host", get(docker_host_get).post(docker_host_set))
+        .route(
+            "/api/config/docker-host",
+            get(docker_host_get).merge(post(docker_host_set).layer(local_layer.clone())),
+        )
         .route("/api/system/accessibility", get(accessibility_status))
-        .route("/api/system/open-accessibility", post(open_accessibility))
-        .route("/api/system/color-meter", post(open_color_meter))
-        .route("/api/system/open-url", post(open_url))
-        .route("/ws", get(ws::ws_handler))
+        .route("/ws", get(ws::ws_handler));
+
+    let api = local_only
+        .merge(write)
+        .merge(read)
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     let mut app = Router::new()
@@ -787,13 +868,8 @@ fn remote_forbidden() -> Response {
 }
 
 async fn git_fetch(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<GitActionBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::git::fetch(&body.path).await {
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(e) => git_error_response(e),
@@ -801,13 +877,8 @@ async fn git_fetch(
 }
 
 async fn git_pull(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<GitActionBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::git::pull(&body.path).await {
         Ok((info, summary)) => {
             Json(json!({ "ok": true, "data": { "info": info, "summary": summary } }))
@@ -836,13 +907,8 @@ struct CheckoutBody {
 }
 
 async fn git_checkout(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CheckoutBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::git::checkout(&body.path, &body.branch).await {
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(e) => git_error_response(e),
@@ -862,13 +928,8 @@ struct DeleteBranchBody {
 }
 
 async fn git_delete_branch(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<DeleteBranchBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::git::delete_branch(
         &body.path,
         &body.branch,
@@ -918,13 +979,8 @@ struct CheckoutCommitBody {
 }
 
 async fn git_checkout_commit(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CheckoutCommitBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::git::checkout_commit(&body.path, &body.hash).await {
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(e) => git_error_response(e),
@@ -932,13 +988,8 @@ async fn git_checkout_commit(
 }
 
 async fn git_revert(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CheckoutCommitBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::git::revert_commit(&body.path, &body.hash).await {
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(e) => git_error_response(e),
@@ -946,13 +997,8 @@ async fn git_revert(
 }
 
 async fn git_cherry_pick(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CheckoutCommitBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::git::cherry_pick_commit(&body.path, &body.hash).await {
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(e) => git_error_response(e),
@@ -1019,12 +1065,8 @@ struct NodeRunBody {
 
 async fn node_run(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<NodeRunBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let overrides = state.config.get().node_pm_overrides;
     let project = match crate::services::node::inspect(
         &body.path,
@@ -1132,12 +1174,8 @@ struct DotnetRunBody {
 
 async fn dotnet_run(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<DotnetRunBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let project = match dotnet_inspect_with_config(&state, &body.path) {
         Ok(p) => p,
         Err(message) => return internal_error(message),
@@ -1193,12 +1231,8 @@ struct RunnerRunBody {
 
 async fn runner_run(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<RunnerRunBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     // Il client manda solo l'id: il server rigenera lo spec verificato, così il
     // programma eseguito non è mai controllato dal chiamante.
     let spec = match crate::services::runners::resolve(&body.kind, &body.path, &body.action_id) {
@@ -1235,14 +1269,10 @@ struct LaunchBundleBody {
 
 async fn launch_bundle_upsert(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<LaunchBundleBody>,
 ) -> Response {
     // Un profilo contiene comandi che verranno eseguiti: un remoto non deve
     // poterne piantare uno senza il controllo remoto attivo.
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let bundle = crate::services::launch::LaunchBundle {
         id: body.id.unwrap_or_else(crate::services::launch::new_id),
         name: body.name,
@@ -1264,24 +1294,16 @@ async fn launch_bundle_upsert(
 
 async fn launch_bundle_delete(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<LaunchIdBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     state.config.update(|c| c.launch_bundles.retain(|b| b.id != body.id));
     Json(json!({ "ok": true, "data": { "bundles": state.config.get().launch_bundles } })).into_response()
 }
 
 async fn launch_run(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<LaunchIdBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let Some(bundle) = state.config.get().launch_bundles.into_iter().find(|b| b.id == body.id)
     else {
         return internal_error("profilo non trovato".into());
@@ -1316,12 +1338,8 @@ struct SnippetBody {
 
 async fn snippets_upsert(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<SnippetBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let snippet = crate::services::snippets::Snippet {
         id: body.id.unwrap_or_else(crate::services::snippets::new_id),
         name: body.name,
@@ -1353,24 +1371,16 @@ async fn snippets_upsert(
 
 async fn snippets_delete(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<LaunchIdBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     state.config.update(|c| c.snippets.retain(|s| s.id != body.id));
     Json(json!({ "ok": true, "data": { "snippets": state.config.get().snippets } })).into_response()
 }
 
 async fn snippets_run(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<LaunchIdBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let Some(snippet) = state.config.get().snippets.into_iter().find(|s| s.id == body.id) else {
         return internal_error("snippet non trovato".into());
     };
@@ -1428,12 +1438,8 @@ struct SshHostBody {
 
 async fn ssh_host_upsert(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<SshHostBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let host = crate::services::ssh::SshHost {
         id: body.id.unwrap_or_else(crate::services::ssh::new_id),
         name: body.name,
@@ -1462,12 +1468,8 @@ async fn ssh_host_upsert(
 
 async fn ssh_host_delete(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<LaunchIdBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     state.config.update(|c| c.ssh_hosts.retain(|h| h.id != body.id));
     Json(json!({ "ok": true, "data": { "hosts": state.config.get().ssh_hosts } })).into_response()
 }
@@ -1480,12 +1482,8 @@ struct SshRunBody {
 
 async fn ssh_run(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<SshRunBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let Some(host) = state.config.get().ssh_hosts.into_iter().find(|h| h.id == body.id) else {
         return internal_error("host non trovato".into());
     };
@@ -1523,14 +1521,10 @@ struct ClipIdBody {
 
 async fn clipboard_copy(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<ClipIdBody>,
 ) -> Response {
     // Scrivere negli appunti tocca lo stato del sistema: stessa guardia delle
     // altre scritture (locale, o LAN col controllo remoto attivo).
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match state.clipboard.copy_to_clipboard(body.id) {
         Ok(()) => Json(json!({ "ok": true, "data": { "copied": true } })).into_response(),
         Err(message) => internal_error(message),
@@ -1608,12 +1602,8 @@ struct ClipSendBody {
 
 async fn clipboard_send(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<ClipSendBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let text = match body.id {
         Some(id) => match state.clipboard.text_of(id) {
             Some(t) => t,
@@ -1750,12 +1740,8 @@ struct EjectBody {
 /// Eject e format sono distruttivi: sempre e solo da localhost, mai da remoto
 /// (nemmeno col controllo remoto attivo).
 async fn disk_eject(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<EjectBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     match crate::adapters::disks::eject(&body.mount_point).await {
         Ok(()) => Json(json!({ "ok": true, "data": { "ejected": true } })).into_response(),
         Err(e) => disk_error_response(e),
@@ -1763,12 +1749,8 @@ async fn disk_eject(
 }
 
 async fn disk_format(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(req): Json<crate::adapters::disks::FormatRequest>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     match crate::adapters::disks::format(req).await {
         Ok(()) => Json(json!({ "ok": true, "data": { "formatted": true } })).into_response(),
         Err(e) => disk_error_response(e),
@@ -1797,11 +1779,7 @@ async fn docker_images(State(state): State<ServerState>) -> Json<serde_json::Val
 /// Rimuove le immagini non usate (`docker image prune -a`): azione di scrittura.
 async fn docker_prune_images(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let host = state.config.get().docker_host;
     match crate::adapters::docker::prune_images(host.as_deref()).await {
         Ok(summary) => Json(json!({ "ok": true, "data": { "summary": summary } })).into_response(),
@@ -1827,12 +1805,8 @@ struct DockerHostBody {
 /// l'utente deve vedere l'errore invece di credere di esserci collegato.
 async fn docker_host_set(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<DockerHostBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     let host = body.host.map(|h| h.trim().to_string()).filter(|h| !h.is_empty());
     if let Some(h) = &host {
         if !crate::adapters::docker::valid_host(h) {
@@ -1862,14 +1836,10 @@ struct DockerActionBody {
 /// start/stop/restart di un container: azione di scrittura (guardia write_allowed).
 async fn docker_action(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     Json(body): Json<DockerActionBody>,
 ) -> Response {
     use crate::adapters::docker::DockerError;
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let host = state.config.get().docker_host;
     match crate::adapters::docker::action(host.as_deref(), &id, &body.action).await {
         Ok(()) => Json(json!({ "ok": true, "data": { "done": true } })).into_response(),
@@ -1883,12 +1853,8 @@ async fn docker_action(
 /// sensibile, dietro la stessa guardia degli altri comandi che spawnano processi.
 async fn docker_logs(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let host = state.config.get().docker_host;
     let Some((program, args)) = crate::adapters::docker::logs_command(host.as_deref(), &id) else {
         return internal_error("id container non valido".into());
@@ -1992,12 +1958,8 @@ struct AlertConfigBody {
 
 async fn alerts_config_set(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<AlertConfigBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let thresholds = crate::config::AlertThresholds {
         cpu_pct: body.cpu_pct.clamp(10.0, 100.0),
         mem_pct: body.mem_pct.clamp(10.0, 100.0),
@@ -2052,12 +2014,8 @@ async fn set_remote_control(
 /// dal telefono si può gestire l'anti-inattività una volta sbloccato il remoto.
 async fn set_anti_idle(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<RemoteControlBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     state.config.update(|c| c.anti_idle_enabled = body.enabled);
     tracing::info!(enabled = body.enabled, "anti-idle aggiornato");
     Json(json!({ "ok": true, "data": { "antiIdleEnabled": body.enabled } })).into_response()
@@ -2068,10 +2026,7 @@ async fn accessibility_status() -> Json<serde_json::Value> {
 }
 
 /// Apre il pannello Accessibilità delle impostazioni di sistema (solo macOS).
-async fn open_accessibility(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
+async fn open_accessibility() -> Response {
     match crate::adapters::accessibility::open_settings() {
         Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
         Err(message) => internal_error(message),
@@ -2079,10 +2034,7 @@ async fn open_accessibility(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Respo
 }
 
 /// Apre il Colorimetro digitale di macOS (fallback all'EyeDropper del color picker).
-async fn open_color_meter(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
+async fn open_color_meter() -> Response {
     match crate::adapters::accessibility::open_color_meter() {
         Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
         Err(message) => internal_error(message),
@@ -2097,12 +2049,8 @@ struct OpenUrlBody {
 /// Apre un URL nel browser di sistema del desktop. Serve alla webview Tauri
 /// (dove `window.open` è un no-op): i browser LAN aprono da soli con window.open.
 async fn open_url(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<OpenUrlBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     let url = body.url.trim();
     if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
         return internal_error("URL non valido".into());
@@ -2142,12 +2090,8 @@ async fn task_log(State(state): State<ServerState>, Path(id): Path<String>) -> R
 
 async fn task_stop(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match state.tasks.stop(&id) {
         Ok(()) => Json(json!({ "ok": true, "data": { "stopping": true } })).into_response(),
         Err(message) => internal_error(message),
@@ -2188,13 +2132,8 @@ async fn set_interval(
 // azioni di scrittura, è riservato a localhost o al controllo remoto attivo.
 
 async fn fs_entries(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     axum::extract::Query(query): axum::extract::Query<PathQuery>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::projects::list_entries(query.path).await {
         Ok(listing) => Json(json!({ "ok": true, "data": listing })).into_response(),
         Err(message) => (
@@ -2221,13 +2160,8 @@ struct CompareBody {
 /// Differenze tra due alberature. Elenca il contenuto di cartelle arbitrarie:
 /// stessa guardia della navigazione filesystem.
 async fn fs_compare(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CompareBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::fscompare::compare(body.left, body.right, body.excludes).await {
         Ok(result) => Json(json!({ "ok": true, "data": result })).into_response(),
         Err(message) => (
@@ -2254,13 +2188,8 @@ struct CompareChildrenBody {
 /// Contenuto di una cartella comparsa nel confronto come voce unica: permette
 /// alla UI di aprirla e agire sui singoli file.
 async fn fs_compare_children(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CompareChildrenBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::fscompare::children(body.left, body.right, body.rel_path, body.excludes)
         .await
     {
@@ -2292,13 +2221,9 @@ struct CompareApplyBody {
 /// oppure elimina. Scrive (e cancella) sul disco: solo dal desktop, come il
 /// format dei dischi — non basta il controllo remoto.
 async fn fs_compare_apply(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<CompareApplyBody>,
 ) -> Response {
     use crate::services::fscompare::{self, Side};
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     let result = match body.action.as_str() {
         "toRight" => {
             fscompare::copy_entry(body.left, body.right, body.rel_path, "di sinistra", "di destra")
@@ -2322,13 +2247,8 @@ async fn fs_compare_apply(
 }
 
 async fn env_files(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     axum::extract::Query(query): axum::extract::Query<PathQuery>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     let Some(path) = query.path else {
         return internal_error("parametro path mancante".into());
     };
@@ -2345,13 +2265,8 @@ struct EnvQuery {
 }
 
 async fn env_read(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     axum::extract::Query(query): axum::extract::Query<EnvQuery>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::env::read(&query.path, &query.file) {
         Ok(content) => Json(json!({ "ok": true, "data": content })).into_response(),
         Err(message) => internal_error(message),
@@ -2365,13 +2280,8 @@ struct EnvActivateBody {
 }
 
 async fn env_activate(
-    State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<EnvActivateBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match crate::services::env::activate(&body.path, &body.file) {
         Ok(()) => match crate::services::env::list(&body.path) {
             Ok(files) => Json(json!({ "ok": true, "data": { "files": files } })).into_response(),
@@ -2392,12 +2302,8 @@ struct TailStartBody {
 
 async fn logtail_start(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<TailStartBody>,
 ) -> Response {
-    if !write_allowed(&state, peer) {
-        return remote_forbidden();
-    }
     match state.tails.start(&body.path) {
         Ok(info) => Json(json!({ "ok": true, "data": info })).into_response(),
         Err(message) => internal_error(message),
@@ -2508,12 +2414,8 @@ struct PushBody {
 /// Configurabile solo dal desktop, come il controllo remoto.
 async fn push_set(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<PushBody>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     if let Some(severity) = &body.min_severity {
         if !["info", "warning", "critical"].contains(&severity.as_str()) {
             return internal_error(format!("severità non valida: {severity}"));
@@ -2544,11 +2446,7 @@ async fn push_set(
 
 async fn push_test(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     let cfg = state.config.get();
     match crate::notify::send(
         &cfg.push_server,
@@ -2782,11 +2680,7 @@ async fn drop_download(State(state): State<ServerState>, Path(id): Path<String>)
 /// (la cartella vive sul computer che ospita il server).
 async fn drop_received(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     Json(json!({
         "ok": true,
         "data": {
@@ -2799,12 +2693,8 @@ async fn drop_received(
 
 async fn drop_received_delete(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(name): Path<String>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     match state.drop.delete_received(&name) {
         Ok(()) => Json(json!({ "ok": true, "data": { "deleted": true } })).into_response(),
         Err(message) => internal_error(message),
@@ -2813,11 +2703,7 @@ async fn drop_received_delete(
 
 async fn drop_open_folder(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     let folder = state.drop.received_dir().clone();
     let _ = std::fs::create_dir_all(&folder);
     match tauri_plugin_opener::open_path(folder, None::<String>) {
@@ -2829,12 +2715,8 @@ async fn drop_open_folder(
 /// Apre un file ricevuto con l'app di default (solo desktop/localhost).
 async fn drop_open_file(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(name): Path<String>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     let path = match state.drop.received_path(&name) {
         Ok(p) => p,
         Err(message) => return internal_error(message),
@@ -2848,12 +2730,8 @@ async fn drop_open_file(
 /// Mostra il file nel file manager (Finder/Explorer), evidenziandolo.
 async fn drop_reveal_file(
     State(state): State<ServerState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(name): Path<String>,
 ) -> Response {
-    if !peer.ip().is_loopback() {
-        return remote_forbidden();
-    }
     let path = match state.drop.received_path(&name) {
         Ok(p) => p,
         Err(message) => return internal_error(message),
@@ -2890,6 +2768,81 @@ fn asset_response(path: &str, file: rust_embed::EmbeddedFile) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// POST/DELETE che stanno di proposito nel gruppo di sola lettura, con la
+    /// ragione per cui non richiedono il permesso di scrittura. Chi ne aggiunge
+    /// una deve motivarla qui: è il punto in cui ci si ferma a pensare.
+    const MUTANTI_SENZA_PERMESSO: &[(&str, &str)] = &[
+        ("/api/pair", "stabilisce il pairing: prima di lui non esiste un device abbinato"),
+        ("/api/log", "log del frontend, nessun effetto sul sistema"),
+        ("/api/drop/hello", "un device abbinato deve potersi annunciare, o Drop dal telefono non funziona"),
+        ("/api/drop/send", "hub-to-hub, autenticata in auth_middleware dalla discovery UDP"),
+        ("/api/drop/text", "hub-to-hub, come sopra"),
+    ];
+
+    /// Ogni rotta che modifica qualcosa deve stare in un gruppo con un layer di
+    /// permesso, o essere un'eccezione dichiarata sopra. È il seguito di
+    /// `write_permitted_invariante_di_sicurezza`: quello prova che la regola è
+    /// giusta, questo che è **applicata ovunque** — che è ciò che mancava
+    /// quando `set_remote_control` è rimasto scoperto.
+    #[test]
+    fn ogni_rotta_mutante_ha_un_permesso() {
+        let sorgente = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
+        let inizio = sorgente.find("let read = Router::new()").expect("gruppo read");
+        let fine = sorgente[inizio..].find("let api = ").expect("fine del gruppo read") + inizio;
+
+        let mut scoperte = Vec::new();
+        for blocco in sorgente[inizio..fine].split(".route(").skip(1) {
+            let Some(path) = blocco.split('"').nth(1) else { continue };
+            if !(blocco.contains("post(") || blocco.contains("delete(")) {
+                continue;
+            }
+            let protetta =
+                blocco.contains(".layer(write_layer") || blocco.contains(".layer(local_layer");
+            let dichiarata = MUTANTI_SENZA_PERMESSO.iter().any(|(p, _)| *p == path);
+            if !protetta && !dichiarata {
+                scoperte.push(path.to_string());
+            }
+        }
+        assert!(
+            scoperte.is_empty(),
+            "queste rotte modificano qualcosa dal gruppo di sola lettura, senza layer di \
+             permesso né una motivazione in MUTANTI_SENZA_PERMESSO: {scoperte:#?}"
+        );
+    }
+
+    /// Nel gruppo read alcune rotte hanno GET e POST sullo stesso path, col
+    /// layer applicato al singolo metodo. Questo test prova il meccanismo axum
+    /// su cui quella scelta si regge: se un aggiornamento lo cambiasse, la POST
+    /// resterebbe aperta in silenzio.
+    #[tokio::test]
+    async fn il_layer_per_metodo_protegge_solo_la_post() {
+        use tower::ServiceExt;
+
+        let app: Router = Router::new().route(
+            "/x",
+            get(|| async { "letto" })
+                .merge(post(|| async { "scritto" }).layer(middleware::from_fn(require_loopback))),
+        );
+        let lan: SocketAddr = "192.168.1.50:1234".parse().unwrap();
+        let chiama = |metodo: &str| {
+            let app = app.clone();
+            let mut req = Request::builder()
+                .method(metodo)
+                .uri("/x")
+                .body(Body::empty())
+                .unwrap();
+            req.extensions_mut().insert(ConnectInfo(lan));
+            async move { app.oneshot(req).await.unwrap().status() }
+        };
+
+        assert_eq!(chiama("GET").await, StatusCode::OK, "la lettura resta aperta");
+        assert_eq!(
+            chiama("POST").await,
+            StatusCode::FORBIDDEN,
+            "la scrittura sullo stesso path è bloccata da remoto"
+        );
+    }
 
     #[test]
     fn write_permitted_invariante_di_sicurezza() {

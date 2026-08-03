@@ -3913,6 +3913,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-appender",
