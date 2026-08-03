@@ -29,8 +29,7 @@ pub fn valid_host(s: &str) -> bool {
 /// stdin chiuso: con `ssh://` la CLI lancia ssh, che senza questo può restare
 /// appeso su una richiesta di password/host key che nessuno può digitare.
 fn docker_cmd(host: Option<&str>) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new("docker");
-    cmd.no_window();
+    let mut cmd = exec::cmd("docker");
     cmd.stdin(std::process::Stdio::null());
     if let Some(h) = host.filter(|h| valid_host(h)) {
         cmd.arg("-H").arg(h);
