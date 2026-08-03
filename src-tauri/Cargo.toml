@@ -1,6 +1,6 @@
 [package]
 name = "rickydevtool"
-version = "1.5.1"
+version = "2.0.0"
 description = "Developer operations console locale"
 authors = ["Riccardo Giordano"]
 edition = "2021"
