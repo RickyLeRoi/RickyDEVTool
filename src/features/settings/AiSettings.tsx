@@ -137,24 +137,26 @@ export function AiSettings() {
   return (
     <section className="ai-settings">
       <h3>RickyAI {saved && <span className="badge badge-ok">salvato</span>}</h3>
-      {error && <div className="banner banner-error">{error}</div>}
 
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-title">
-            Abilita of-free <span className="badge badge-beta">beta</span>
+            Abilita <span className="badge badge-beta">beta</span>
           </div>
           <div className="hint">
             Spento, la sezione RickyAI non compare affatto. Acceso, la chat usa il motore scelto
-            qui sotto.
+            qui sotto: dev’essere un servizio che espone API <strong>OpenAI-like</strong> (of-free,
+            Ollama, LM Studio, vLLM, OpenRouter…).
           </div>
         </div>
         <Toggle
           checked={status.enabled}
           onChange={(enabled) => save({ enabled })}
-          label="Abilita of-free"
+          label="Abilita RickyAI"
         />
       </div>
+
+      {error && <div className="banner banner-error">{error}</div>}
 
       {status.enabled && (
         <>
@@ -167,13 +169,7 @@ export function AiSettings() {
                   className={status.mode === m.id ? "active" : ""}
                   title={m.hint}
                   disabled={busy}
-                  onClick={() =>
-                    save(
-                      m.id === "remote"
-                        ? { mode: m.id, remoteUrl: draft.remoteUrl }
-                        : { mode: m.id },
-                    )
-                  }
+                  onClick={() => save({ mode: m.id })}
                 >
                   {m.label}
                 </button>

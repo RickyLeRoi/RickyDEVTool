@@ -476,6 +476,32 @@ test("impostazioni: modalità servizio in rete", async ({ page }) => {
   expect(salvati.at(-1)).toMatchObject({ remoteUrl: "192.168.1.50:4141" });
 });
 
+test("impostazioni: si passa al servizio in rete anche senza indirizzo", async ({ page }) => {
+  const salvati: Record<string, unknown>[] = [];
+  await page.route("**/api/ai/config", async (route) => {
+    salvati.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: { ...READY_STATUS, mode: "remote", remoteUrl: null, managed: false },
+      }),
+    });
+  });
+
+  await page.goto("/#/settings");
+  const panel = page.locator(".ai-settings");
+  await panel.locator(".segmented button", { hasText: "Servizio in rete" }).click();
+
+  expect(salvati).toEqual([{ mode: "remote" }]);
+  await expect(panel.locator(".banner-error")).toHaveCount(0);
+  const indirizzo = panel.locator("input[placeholder='es. 192.168.1.50:4141']");
+  await expect(indirizzo).toBeVisible();
+  await expect(indirizzo).toHaveValue("");
+  await expect(panel.locator(".ai-key-row", { hasText: "Groq" })).toHaveCount(0);
+});
+
 test("endpoint OpenAI generico: niente auto/private, niente quote", async ({ page }) => {
   await withStatus(page, {
     mode: "remote",

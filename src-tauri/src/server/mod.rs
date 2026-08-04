@@ -2675,18 +2675,8 @@ async fn ai_config_set(
         },
         None => None,
     };
-    let final_mode = body.mode.as_deref().map(str::trim).unwrap_or(&state.config.get().ai_mode).to_string();
-    if final_mode == "remote" {
-        let configured = match &remote_url {
-            Some(value) => value.clone(),
-            None => state.config.get().ai_remote_url,
-        };
-        if configured.is_none() {
-            return internal_error(
-                "indica l'indirizzo del servizio of-free (es. 192.168.1.50:4141)".into(),
-            );
-        }
-    }
+    // 20260804 ++ RG #RickyAI passare a "remote" senza indirizzo non è un errore: è il primo passo,
+    // il campo dell'indirizzo compare solo dopo. Ci pensa il supervisore a dirlo nello stato.
     if let Some(keys) = &body.keys {
         for name in keys.keys() {
             if !PROVIDER_KEYS.iter().any(|(_, _, var)| var == name) {

@@ -421,7 +421,16 @@ async fn supervise(service: Arc<AiService>) {
 
 async fn run_once(service: &Arc<AiService>, cfg: &AppConfig) -> Outcome {
     if is_remote(cfg) {
-        return match valid_remote_url(cfg.ai_remote_url.as_deref().unwrap_or_default()) {
+        // 20260804 ++ RG #RickyAI senza indirizzo non è un errore di configurazione ma un passo
+        // ancora da fare: lo si dice così, non con "indirizzo non valido: ...".
+        let Some(raw) = cfg.ai_remote_url.as_deref().filter(|u| !u.trim().is_empty()) else {
+            service.set_state(
+                AiState::Failed,
+                Some("indica l'indirizzo del servizio nelle impostazioni (es. 192.168.1.50:4141)".into()),
+            );
+            return Outcome::Idle;
+        };
+        return match valid_remote_url(raw) {
             Ok(base) => watch_remote(service, &base, cfg.ai_remote_key.as_deref()).await,
             Err(message) => {
                 service.set_state(
@@ -1830,6 +1839,9 @@ mod tests {
         assert!(matches!(outcome, Outcome::Idle));
         assert_eq!(service.status().state, AiState::Failed);
         assert!(service.status().managed == false);
+        let message = service.status().message.unwrap_or_default();
+        assert!(message.contains("indica l'indirizzo"), "messaggio poco chiaro: {message}");
+        assert!(!message.contains("non valido"), "non è un indirizzo sbagliato: {message}");
     }
 
     #[tokio::test]

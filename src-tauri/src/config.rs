@@ -101,7 +101,9 @@ impl Default for AppConfig {
             ssh_hosts: Vec::new(),
             alert_thresholds: AlertThresholds::default(),
             ai_enabled: false,
-            ai_mode: "local".to_string(),
+            // 20260804 ++ RG #RickyAI si parte dal servizio in rete: è il caso comune, il locale
+            // richiede of-free installato sulla macchina.
+            ai_mode: "remote".to_string(),
             ai_remote_url: None,
             ai_remote_key: None,
             ai_port: crate::services::rickyai::DEFAULT_PORT,
@@ -220,6 +222,7 @@ mod tests {
 
         assert_eq!(cfg.ai_port, crate::services::rickyai::DEFAULT_PORT);
         assert_eq!(cfg.ai_strategy, "balanced");
+        assert_eq!(cfg.ai_mode, "remote", "si parte dal servizio in rete");
         assert!(!cfg.ai_enabled);
         assert_eq!(cfg.port, 6969);
         assert_eq!(cfg.stats_interval_ms, 5000);
