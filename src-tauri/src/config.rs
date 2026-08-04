@@ -63,15 +63,21 @@ pub struct AppConfig {
     // default del *tipo*. Su `ai_enabled` significherebbe `false` per chiunque
     // abbia già un config.json — cioè RickyAI spenta su ogni installazione
     // esistente, senza che nessuno l'abbia disattivata.
-    /// RickyAI: avvia `of-free serve` all'accensione del tool.
+    /// RickyAI accesa: `local` avvia `of-free`, `remote` usa quello di un altro
+    /// computer. Spenta, la sezione non compare nemmeno.
     pub ai_enabled: bool,
-    /// Porta di `of-free` (con fallback sulle successive se occupata).
+    /// `local` (of-free avviato dal tool) | `remote` (servizio già in rete).
+    pub ai_mode: String,
+    /// Indirizzo del servizio in modalità `remote` (es. `http://192.168.1.50:4141`).
+    pub ai_remote_url: Option<String>,
+    /// Porta di `of-free` locale (con fallback sulle successive se occupata).
     pub ai_port: u16,
     /// Override del percorso del binario `of-free`; vuoto = risolto nel PATH.
     pub ai_command: Option<String>,
-    /// File con le chiavi dei provider; vuoto = catena di default di of-free
-    /// (`~/.onfeather/.env`, `~/.config/onfeather/.env`).
-    pub ai_env_file: Option<String>,
+    /// Chiavi dei provider (nome della variabile d'ambiente -> valore), passate
+    /// a `of-free` locale nel suo environment. Non escono mai da qui: la REST
+    /// espone quali sono impostate, mai il valore.
+    pub ai_keys: std::collections::BTreeMap<String, String>,
     /// Strategia di routing: balanced | fast | local.
     pub ai_strategy: String,
     /// Prompt di sistema anteposto alle conversazioni di RickyAI.
@@ -131,9 +137,11 @@ impl Default for AppConfig {
             ssh_hosts: Vec::new(),
             alert_thresholds: AlertThresholds::default(),
             ai_enabled: false,
+            ai_mode: "local".to_string(),
+            ai_remote_url: None,
             ai_port: crate::services::rickyai::DEFAULT_PORT,
             ai_command: None,
-            ai_env_file: None,
+            ai_keys: std::collections::BTreeMap::new(),
             ai_strategy: "balanced".to_string(),
             ai_system_prompt: String::new(),
         }
@@ -213,10 +221,29 @@ impl ConfigHandle {
         let cfg = self.get();
         let tmp = self.path.with_extension("json.tmp");
         let body = serde_json::to_string_pretty(&cfg).expect("config serializzabile");
-        if std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &self.path)).is_err() {
+        let written = std::fs::write(&tmp, body)
+            .and_then(|_| restrict_to_owner(&tmp))
+            .and_then(|_| std::fs::rename(&tmp, &self.path));
+        if written.is_err() {
             tracing::error!("impossibile salvare la config in {:?}", self.path);
         }
     }
+}
+
+/// Solo il proprietario può leggere il file: dentro ci sono il token di
+/// pairing e le chiavi API dei provider LLM, e il default di `fs::write`
+/// (0644) le rende leggibili da qualunque altro utente della macchina.
+/// I permessi si mettono sul temporaneo *prima* del rename, così il file
+/// definitivo non esiste mai con i permessi larghi.
+fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path; // su Windows valgono le ACL ereditate dalla cartella utente.
+    Ok(())
 }
 
 fn generate_token() -> String {
@@ -262,20 +289,42 @@ mod tests {
     #[test]
     fn un_config_completo_sopravvive_al_salvataggio() {
         let mut cfg = AppConfig::default();
-        cfg.ai_enabled = false;
+        cfg.ai_enabled = true;
+        cfg.ai_mode = "remote".into();
+        cfg.ai_remote_url = Some("http://192.168.1.50:4141".into());
         cfg.ai_port = 4300;
         cfg.ai_strategy = "fast".into();
         cfg.ai_system_prompt = "sei RickyAI".into();
-        cfg.ai_env_file = Some("/tmp/keys.env".into());
+        cfg.ai_keys.insert("GROQ_API_KEY".into(), "gsk_test".into());
 
         let json = serde_json::to_string(&cfg).expect("serializzabile");
         let riletto: AppConfig = serde_json::from_str(&json).expect("rileggibile");
 
-        assert!(!riletto.ai_enabled);
+        assert!(riletto.ai_enabled);
+        assert_eq!(riletto.ai_mode, "remote");
+        assert_eq!(riletto.ai_remote_url.as_deref(), Some("http://192.168.1.50:4141"));
         assert_eq!(riletto.ai_port, 4300);
         assert_eq!(riletto.ai_strategy, "fast");
         assert_eq!(riletto.ai_system_prompt, "sei RickyAI");
-        assert_eq!(riletto.ai_env_file.as_deref(), Some("/tmp/keys.env"));
+        assert_eq!(riletto.ai_keys.get("GROQ_API_KEY").map(String::as_str), Some("gsk_test"));
+    }
+
+    /// Le chiavi API stanno in questo file: non deve essere leggibile dagli
+    /// altri utenti della macchina, che è ciò che il default di `fs::write`
+    /// (0644) invece consente.
+    #[test]
+    #[cfg(unix)]
+    fn il_file_di_config_e_leggibile_solo_dal_proprietario() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let handle = ConfigHandle::in_memory();
+        handle.update(|c| {
+            c.ai_keys.insert("GROQ_API_KEY".into(), "gsk_segreta".into());
+        });
+
+        let mode = std::fs::metadata(&handle.path).expect("config salvata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "permessi troppo larghi: {:o}", mode & 0o777);
+        let _ = std::fs::remove_file(&handle.path);
     }
 }
 

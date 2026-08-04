@@ -50,10 +50,17 @@ function aiStatus() {
     restarts: 0,
     log: [],
     enabled: true,
+    mode: "local",
+    remoteUrl: null,
     configuredPort: 4141,
     strategy: "balanced",
-    envFile: null,
     systemPrompt: "",
+    keysSet: ["GROQ_API_KEY"],
+    providerKeys: [
+      { id: "groq", label: "Groq", env: "GROQ_API_KEY" },
+      { id: "google", label: "Google AI Studio", env: "GEMINI_API_KEY" },
+      { id: "mistral", label: "Mistral La Plateforme", env: "MISTRAL_API_KEY" },
+    ],
     providers: [
       {
         name: "groq",

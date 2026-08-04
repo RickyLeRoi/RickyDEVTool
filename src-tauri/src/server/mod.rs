@@ -2807,12 +2807,20 @@ struct AiConfigBody {
     /// Campo assente = invariato. Stringa vuota = torna al default.
     #[serde(default)]
     enabled: Option<bool>,
+    /// `local` (of-free avviato dal tool) | `remote` (servizio in rete).
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    remote_url: Option<String>,
     #[serde(default)]
     port: Option<u16>,
     #[serde(default)]
     command: Option<String>,
+    /// Chiavi dei provider: nome della variabile -> valore. Valore vuoto =
+    /// rimuovi. Le chiavi assenti dall'oggetto restano come sono, così la UI
+    /// può salvarne una sola senza rimandare (e senza conoscere) le altre.
     #[serde(default)]
-    env_file: Option<String>,
+    keys: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default)]
     strategy: Option<String>,
     #[serde(default)]
@@ -2836,18 +2844,50 @@ async fn ai_config_set(
     State(state): State<ServerState>,
     Json(body): Json<AiConfigBody>,
 ) -> Response {
-    use crate::services::rickyai::STRATEGIES;
+    use crate::services::rickyai::{valid_remote_url, MODES, PROVIDER_KEYS, STRATEGIES};
 
     let command = match body.command.as_deref().map(|p| existing_file(p, "binario of-free")) {
         Some(Err(message)) => return internal_error(message),
         Some(Ok(value)) => Some(value),
         None => None,
     };
-    let env_file = match body.env_file.as_deref().map(|p| existing_file(p, "file delle chiavi")) {
-        Some(Err(message)) => return internal_error(message),
-        Some(Ok(value)) => Some(value),
+    if let Some(mode) = &body.mode {
+        if !MODES.contains(&mode.trim()) {
+            return internal_error("modalità non valida: usa local o remote".into());
+        }
+    }
+    // L'indirizzo si normalizza qui (schema e porta impliciti) e si salva già
+    // pronto: il supervisore non deve indovinare, e l'errore lo vede chi lo sta
+    // scrivendo invece di comparire dopo, come "servizio irraggiungibile".
+    let remote_url = match body.remote_url.as_deref().map(str::trim) {
+        Some("") => Some(None),
+        Some(raw) => match valid_remote_url(raw) {
+            Ok(url) => Some(Some(url)),
+            Err(message) => return internal_error(message),
+        },
         None => None,
     };
+    // Modalità remota senza indirizzo: si rifiuta invece di accendere una
+    // sezione che non potrebbe funzionare.
+    let final_mode = body.mode.as_deref().map(str::trim).unwrap_or(&state.config.get().ai_mode).to_string();
+    if final_mode == "remote" {
+        let configured = match &remote_url {
+            Some(value) => value.clone(),
+            None => state.config.get().ai_remote_url,
+        };
+        if configured.is_none() {
+            return internal_error(
+                "indica l'indirizzo del servizio of-free (es. 192.168.1.50:4141)".into(),
+            );
+        }
+    }
+    if let Some(keys) = &body.keys {
+        for name in keys.keys() {
+            if !PROVIDER_KEYS.iter().any(|(_, _, var)| var == name) {
+                return internal_error(format!("chiave sconosciuta: {name}"));
+            }
+        }
+    }
     if let Some(strategy) = &body.strategy {
         if !STRATEGIES.contains(&strategy.trim()) {
             return internal_error(format!(
@@ -2867,14 +2907,27 @@ async fn ai_config_set(
         if let Some(enabled) = body.enabled {
             c.ai_enabled = enabled;
         }
+        if let Some(mode) = &body.mode {
+            c.ai_mode = mode.trim().to_string();
+        }
+        if let Some(url) = &remote_url {
+            c.ai_remote_url = url.clone();
+        }
         if let Some(port) = body.port {
             c.ai_port = port;
         }
         if let Some(command) = &command {
             c.ai_command = command.clone();
         }
-        if let Some(env_file) = &env_file {
-            c.ai_env_file = env_file.clone();
+        if let Some(keys) = &body.keys {
+            for (name, value) in keys {
+                let value = value.trim();
+                if value.is_empty() {
+                    c.ai_keys.remove(name);
+                } else {
+                    c.ai_keys.insert(name.clone(), value.to_string());
+                }
+            }
         }
         if let Some(strategy) = &body.strategy {
             c.ai_strategy = strategy.trim().to_string();

@@ -40,6 +40,30 @@ pub const DEFAULT_PORT: u16 = 4141;
 /// Strategie di routing accettate da `of-free`.
 pub const STRATEGIES: &[&str] = &["balanced", "fast", "local"];
 
+/// Le due provenienze possibili del motore.
+pub const MODES: &[&str] = &["local", "remote"];
+
+/// I provider di `of-free` e la variabile d'ambiente da cui legge la chiave di
+/// ciascuno (da `providers.yaml`). Serve a tre cose: comporre l'environment del
+/// processo figlio, popolare le impostazioni senza indovinare i nomi, e — la
+/// più importante — fare da **lista chiusa**: solo queste variabili vengono
+/// passate a of-free, così una chiave inventata nella config non diventa una
+/// variabile d'ambiente arbitraria in un processo che lanciamo noi.
+/// Ollama non compare: è locale e non ha chiave.
+pub const PROVIDER_KEYS: &[(&str, &str, &str)] = &[
+    ("groq", "Groq", "GROQ_API_KEY"),
+    ("google", "Google AI Studio", "GEMINI_API_KEY"),
+    ("cerebras", "Cerebras", "CEREBRAS_API_KEY"),
+    ("github", "GitHub Models", "GITHUB_TOKEN"),
+    ("mistral", "Mistral La Plateforme", "MISTRAL_API_KEY"),
+    ("openrouter", "OpenRouter", "OPENROUTER_API_KEY"),
+    ("cohere", "Cohere", "COHERE_API_KEY"),
+];
+
+/// Porta usata quando l'indirizzo remoto non ne indica una: è il default di
+/// `of-free serve`, cioè quello che si trova scrivendo solo l'IP.
+const REMOTE_DEFAULT_PORT: u16 = DEFAULT_PORT;
+
 /// Quante porte provare dopo quella configurata prima di arrendersi.
 const PORT_FALLBACK_RANGE: u16 = 10;
 
@@ -93,10 +117,12 @@ pub struct AiStatus {
     pub state: AiState,
     /// Porta effettiva (può differire da quella configurata: fallback).
     pub port: u16,
-    /// Base OpenAI-compatibile, esposta perché sia incollabile in altri client.
+    /// Radice dell'endpoint in uso — locale o remoto. È **questa** la sorgente
+    /// di verità per il proxy: la porta da sola non basta più a dire dove
+    /// andare a bussare.
     pub base_url: String,
-    /// `false` quando l'istanza era già in ascolto ed è stata adottata: in quel
-    /// caso il tool non la spegne e non la riavvia.
+    /// `false` quando l'istanza era già in ascolto ed è stata adottata (o è un
+    /// servizio remoto): in quel caso il tool non la spegne e non la riavvia.
     pub managed: bool,
     /// Path del binario risolto (o l'override configurato).
     pub command: Option<String>,
@@ -124,6 +150,54 @@ impl AiStatus {
 /// `http://127.0.0.1:{port}` — la radice; gli endpoint OpenAI stanno sotto `/v1`.
 pub fn base_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
+}
+
+/// Normalizza l'indirizzo di un of-free remoto in una radice utilizzabile.
+///
+/// Accetta quello che una persona scrive davvero — `192.168.1.50`,
+/// `192.168.1.50:4141`, `http://nas.local:4141/v1` — e restituisce sempre la
+/// sola radice, senza `/v1` finale: il path viene aggiunto da chi chiama, e un
+/// `/v1/v1/chat/completions` fallirebbe con un 404 che non spiega niente.
+pub fn valid_remote_url(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("indirizzo del servizio mancante".to_string());
+    }
+    // Senza schema si intende http: nessuno scrive "http://" per una macchina
+    // in salotto, e pretenderlo sarebbe solo un errore in più da leggere.
+    let explicit_scheme = trimmed.contains("://");
+    let candidate = if explicit_scheme {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    };
+    let url = reqwest::Url::parse(&candidate)
+        .map_err(|_| format!("indirizzo non valido: {trimmed}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("usa http:// o https://".to_string());
+    }
+    let host = url.host_str().filter(|h| !h.is_empty()).ok_or("manca l'indirizzo del server")?;
+    let path = url.path().trim_end_matches('/');
+    if !(path.is_empty() || path.eq_ignore_ascii_case("/v1")) {
+        return Err("l'indirizzo deve essere host:porta (eventualmente con /v1)".to_string());
+    }
+    let port = match url.port() {
+        Some(port) => format!(":{port}"),
+        // Solo se l'utente non ha nemmeno scritto lo schema: "192.168.1.50" è
+        // un of-free sulla sua porta di default. Con https:// esplicito vale
+        // la 443, che è quello che ci si aspetta dietro un reverse proxy.
+        None if !explicit_scheme => format!(":{REMOTE_DEFAULT_PORT}"),
+        None => String::new(),
+    };
+    Ok(format!("{}://{}{}", url.scheme(), host, port))
+}
+
+/// Porta di una radice già normalizzata, per la sola visualizzazione.
+fn port_of(base: &str) -> u16 {
+    reqwest::Url::parse(base)
+        .ok()
+        .and_then(|u| u.port_or_known_default())
+        .unwrap_or(0)
 }
 
 // ---------- richiesta / risposta di chat ----------
@@ -271,7 +345,7 @@ impl AiService {
         if status.state != AiState::Ready {
             return snapshot;
         }
-        let base = base_url(status.port);
+        let base = status.base_url.clone();
         if let Some(quota) = self.get_json(&format!("{base}/v1/status")).await {
             if let Some(providers) = quota.get("providers") {
                 snapshot["providers"] = providers.clone();
@@ -308,7 +382,9 @@ impl AiService {
             return Err(AiError::new("AI_NOT_READY", 503, not_ready_message(&status)));
         }
         let payload = build_payload(&request, &self.config.get().ai_system_prompt);
-        complete(&self.client, &base_url(status.port), &payload).await
+        // `base_url` e non la porta: in modalità remota l'endpoint è su un'altra
+        // macchina, e 127.0.0.1 punterebbe a un servizio che qui non esiste.
+        complete(&self.client, &status.base_url, &payload).await
     }
 
     // -- transizioni di stato ------------------------------------------------
@@ -318,7 +394,6 @@ impl AiService {
             let cfg = self.config.get();
             let mut inner = self.inner.lock().expect("ai lock");
             f(&mut inner.status);
-            inner.status.base_url = base_url(inner.status.port);
             snapshot_of(&inner.status, &inner.log, &cfg)
         };
         // Pubblicato fuori dal lock: il bus ha i suoi subscriber, tenerlo dentro
@@ -446,12 +521,27 @@ async fn supervise(service: Arc<AiService>) {
 
 /// Un giro completo: adozione o avvio, attesa della salute, sorveglianza.
 async fn run_once(service: &Arc<AiService>, cfg: &AppConfig) -> Outcome {
+    if is_remote(cfg) {
+        return match valid_remote_url(cfg.ai_remote_url.as_deref().unwrap_or_default()) {
+            Ok(base) => watch_remote(service, &base).await,
+            Err(message) => {
+                service.set_state(
+                    AiState::Failed,
+                    Some(format!("indirizzo del servizio non valido: {message}")),
+                );
+                // Non ha senso riprovare da soli: serve che l'utente corregga
+                // l'indirizzo, e quel salvataggio ci sveglia.
+                Outcome::Idle
+            }
+        };
+    }
     match choose_port(service, configured_port(cfg)).await {
         PortChoice::Adopt(port) => {
             tracing::info!(port, "of-free già in ascolto: istanza adottata");
             service.update(|s| {
                 s.state = AiState::Ready;
                 s.port = port;
+                s.base_url = base_url(port);
                 s.managed = false;
                 s.command = None;
                 s.message = Some("istanza esterna già in ascolto (non gestita dal tool)".into());
@@ -494,6 +584,7 @@ async fn spawn_and_watch(service: &Arc<AiService>, cfg: &AppConfig, port: u16) -
     service.update(|s| {
         s.state = AiState::Starting;
         s.port = port;
+        s.base_url = base_url(port);
         s.managed = true;
         s.command = Some(program.clone());
         s.message = None;
@@ -580,7 +671,7 @@ async fn wait_healthy(
                 (_, true) => "of-free non è partito".to_string(),
             });
         }
-        if identify(&service.client, port).await {
+        if identify(&service.client, &base_url(port)).await {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -598,16 +689,55 @@ async fn wait_healthy(
 /// Sorveglia un'istanza non nostra: l'unico modo di accorgersi che è sparita è
 /// interrogarla.
 async fn watch_adopted(service: &Arc<AiService>, port: u16) -> Outcome {
+    watch_external(
+        service,
+        &base_url(port),
+        "l'istanza esterna di of-free non risponde più",
+    )
+    .await
+}
+
+/// Modalità `remote`: il motore gira altrove (un container su un altro
+/// computer). Qui non si avvia e non si spegne niente — si verifica che
+/// dall'altra parte ci sia davvero of-free e lo si tiene d'occhio.
+async fn watch_remote(service: &Arc<AiService>, base: &str) -> Outcome {
+    if !identify(&service.client, base).await {
+        service.update(|s| {
+            s.state = AiState::Failed;
+            s.managed = false;
+            s.command = None;
+            s.base_url = base.to_string();
+            s.port = port_of(base);
+            s.message = Some(format!(
+                "nessun of-free raggiungibile su {base}: controlla che il servizio sia acceso e \
+                 che sia in ascolto su tutte le interfacce, non solo su 127.0.0.1"
+            ));
+            s.started_at = None;
+        });
+        return Outcome::Crashed;
+    }
+    tracing::info!(%base, "of-free remoto raggiungibile");
+    service.update(|s| {
+        s.state = AiState::Ready;
+        s.managed = false;
+        s.command = None;
+        s.base_url = base.to_string();
+        s.port = port_of(base);
+        s.message = None;
+        s.started_at = Some(now_ms());
+    });
+    watch_external(service, base, "il servizio remoto non risponde più").await
+}
+
+/// Polling di un endpoint che non è un nostro figlio (adottato o remoto).
+async fn watch_external(service: &Arc<AiService>, base: &str, caduto: &str) -> Outcome {
     loop {
         tokio::select! {
             _ = service.restart.notified() => return Outcome::Restart,
             _ = tokio::time::sleep(ADOPTED_POLL) => {}
         }
-        if !alive(&service.client, port).await {
-            service.set_state(
-                AiState::Failed,
-                Some("l'istanza esterna di of-free non risponde più".into()),
-            );
+        if !alive(&service.client, base).await {
+            service.set_state(AiState::Failed, Some(caduto.to_string()));
             return Outcome::Crashed;
         }
     }
@@ -651,7 +781,7 @@ enum PortChoice {
 
 async fn choose_port(service: &Arc<AiService>, base: u16) -> PortChoice {
     for candidate in base..base.saturating_add(PORT_FALLBACK_RANGE) {
-        if identify(&service.client, candidate).await {
+        if identify(&service.client, &base_url(candidate)).await {
             return PortChoice::Adopt(candidate);
         }
         if port_free(candidate).await {
@@ -669,11 +799,24 @@ pub fn configured_port(cfg: &AppConfig) -> u16 {
     }
 }
 
+pub fn is_remote(cfg: &AppConfig) -> bool {
+    cfg.ai_mode.trim() == "remote"
+}
+
+pub fn mode(cfg: &AppConfig) -> String {
+    let requested = cfg.ai_mode.trim();
+    if MODES.contains(&requested) {
+        requested.to_string()
+    } else {
+        "local".to_string()
+    }
+}
+
 /// C'è **of-free** dall'altra parte? Un 200 su `/health` non basta: qualsiasi
 /// servizio può rispondere così, e adottarne uno sbagliato manderebbe le chat
 /// dentro un tritacarne. `auto` è il modello virtuale che solo of-free espone.
-async fn identify(client: &reqwest::Client, port: u16) -> bool {
-    let url = format!("{}/v1/models", base_url(port));
+async fn identify(client: &reqwest::Client, base: &str) -> bool {
+    let url = format!("{base}/v1/models");
     let Ok(response) = client.get(&url).timeout(PROBE_TIMEOUT).send().await else {
         return false;
     };
@@ -687,8 +830,8 @@ async fn identify(client: &reqwest::Client, port: u16) -> bool {
 }
 
 /// Liveness di un endpoint già identificato: basta `/health`.
-async fn alive(client: &reqwest::Client, port: u16) -> bool {
-    let url = format!("{}/health", base_url(port));
+async fn alive(client: &reqwest::Client, base: &str) -> bool {
+    let url = format!("{base}/health");
     match client.get(&url).timeout(PROBE_TIMEOUT).send().await {
         Ok(response) => response.status().is_success(),
         Err(_) => false,
@@ -732,15 +875,8 @@ async fn which(name: &str) -> Option<String> {
 }
 
 /// Riga di comando di `of-free serve`.
-///
-/// `--env` e `--ledger` sono opzioni **globali**: argparse le accetta solo prima
-/// del sottocomando, metterle dopo `serve` fa fallire l'avvio.
 pub fn serve_args(cfg: &AppConfig, port: u16) -> Vec<String> {
     let mut args = Vec::new();
-    if let Some(env) = env_file(cfg) {
-        args.push("--env".to_string());
-        args.push(env);
-    }
     args.push("serve".to_string());
     args.push("--host".to_string());
     // Mai 0.0.0.0: l'endpoint non ha autenticazione. In LAN ci si arriva dal
@@ -762,12 +898,27 @@ pub fn strategy(cfg: &AppConfig) -> String {
     }
 }
 
-fn env_file(cfg: &AppConfig) -> Option<String> {
-    cfg.ai_env_file
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+/// Le chiavi da mettere nell'environment del processo figlio.
+///
+/// Solo le variabili di [`PROVIDER_KEYS`]: la config è un file che si può
+/// modificare a mano, e "tutto ciò che c'è dentro `ai_keys`" significherebbe
+/// poter iniettare qualunque variabile d'ambiente in un processo che avviamo
+/// noi (`PATH`, `LD_PRELOAD`, …). of-free legge comunque anche i suoi `.env`:
+/// queste vincono, perché una variabile esportata batte il file.
+pub fn serve_env(cfg: &AppConfig) -> Vec<(String, String)> {
+    PROVIDER_KEYS
+        .iter()
+        .filter_map(|(_, _, var)| {
+            let value = cfg.ai_keys.get(*var)?.trim();
+            (!value.is_empty()).then(|| ((*var).to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+/// I nomi delle chiavi configurate — mai i valori. È ciò che finisce nella
+/// REST, che è leggibile da qualunque device abbinato.
+pub fn keys_set(cfg: &AppConfig) -> Vec<String> {
+    serve_env(cfg).into_iter().map(|(name, _)| name).collect()
 }
 
 fn spawn_serve(
@@ -778,6 +929,10 @@ fn spawn_serve(
     let mut command = exec::cmd(program);
     command
         .args(serve_args(cfg, port))
+        // Le chiavi passano dall'environment, non da un file su disco: restano
+        // in un solo posto (la config del tool, leggibile solo dall'utente) e
+        // non se ne semina una copia in giro.
+        .envs(serve_env(cfg))
         .current_dir(working_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -792,8 +947,8 @@ fn spawn_serve(
 /// Cartella di lavoro del processo. **Non** la home: `of-free` cerca le chiavi
 /// nel primo `.env` che trova partendo da `Path.cwd()/.env`, e un `~/.env` di
 /// tutt'altro contenuto interromperebbe la ricerca prima di `~/.onfeather/.env`.
-/// La data dir del tool non contiene `.env`, quindi la catena resta quella
-/// prevista da of-free.
+/// La data dir del tool non contiene `.env`, quindi per chi le chiavi le tiene
+/// già lì la catena di of-free resta quella prevista.
 fn working_dir() -> std::path::PathBuf {
     crate::config::data_dir()
 }
@@ -824,10 +979,22 @@ fn snapshot_of(status: &AiStatus, log: &[String], cfg: &AppConfig) -> Value {
         "restarts": status.restarts,
         "log": log,
         "enabled": cfg.ai_enabled,
+        "mode": mode(cfg),
+        "remoteUrl": cfg.ai_remote_url,
         "configuredPort": configured_port(cfg),
         "strategy": strategy(cfg),
-        "envFile": cfg.ai_env_file,
         "systemPrompt": cfg.ai_system_prompt,
+        // Quali chiavi sono impostate, mai il loro valore: questo oggetto lo
+        // legge anche il telefono, e una chiave che esce di qui è una chiave da
+        // revocare. In UI diventano dei pallini.
+        "keysSet": keys_set(cfg),
+        // Catalogo dei provider per le impostazioni: nomi delle variabili presi
+        // da qui e non riscritti a mano nel frontend, dove un refuso
+        // significherebbe una chiave salvata che of-free non legge mai.
+        "providerKeys": PROVIDER_KEYS
+            .iter()
+            .map(|(id, label, var)| json!({ "id": id, "label": label, "env": var }))
+            .collect::<Vec<_>>(),
         "providers": Value::Null,
         "next": Value::Null,
         "models": Vec::<String>::new(),
@@ -1070,23 +1237,92 @@ mod tests {
         assert_eq!(args[strategy + 1], "fast");
     }
 
+    // -- chiavi dei provider ------------------------------------------------
+
     #[test]
-    fn env_file_precede_il_sottocomando() {
-        // `--env` è un'opzione globale di of-free: dopo `serve` argparse la
-        // rifiuta e il processo non parte affatto.
-        let cfg = config_with(|c| c.ai_env_file = Some("/tmp/keys.env".into()));
-        let args = serve_args(&cfg, 4141);
-        let env = args.iter().position(|a| a == "--env").expect("--env presente");
-        let serve = args.iter().position(|a| a == "serve").expect("sottocomando");
-        assert!(env < serve, "--env deve stare prima di `serve`: {args:?}");
-        assert_eq!(args[env + 1], "/tmp/keys.env");
+    fn le_chiavi_finiscono_nellenvironment_del_figlio() {
+        let cfg = config_with(|c| {
+            c.ai_keys.insert("GROQ_API_KEY".into(), "  gsk_abc  ".into());
+            c.ai_keys.insert("MISTRAL_API_KEY".into(), "".into());
+        });
+        let env = serve_env(&cfg);
+        // Spazi tolti (un incolla porta sempre qualcosa dietro) e chiave vuota
+        // ignorata: passarla farebbe credere a of-free di avere quel provider.
+        assert_eq!(env, vec![("GROQ_API_KEY".to_string(), "gsk_abc".to_string())]);
+        // Niente riga di comando: una chiave negli argomenti la vedrebbe
+        // chiunque faccia `ps`.
+        assert!(!serve_args(&cfg, 4141).iter().any(|a| a.contains("gsk_abc")));
     }
 
     #[test]
-    fn env_file_vuoto_non_viene_passato() {
-        let cfg = config_with(|c| c.ai_env_file = Some("   ".into()));
-        assert!(!serve_args(&cfg, 4141).iter().any(|a| a == "--env"));
-        assert!(!serve_args(&AppConfig::default(), 4141).iter().any(|a| a == "--env"));
+    fn solo_le_variabili_note_diventano_environment() {
+        // La config è un file modificabile a mano: "tutto ciò che c'è in
+        // ai_keys" significherebbe poter iniettare PATH o LD_PRELOAD in un
+        // processo che avviamo noi.
+        let cfg = config_with(|c| {
+            c.ai_keys.insert("PATH".into(), "/tmp/evil".into());
+            c.ai_keys.insert("LD_PRELOAD".into(), "/tmp/evil.so".into());
+            c.ai_keys.insert("GROQ_API_KEY".into(), "gsk_ok".into());
+        });
+        let names: Vec<String> = serve_env(&cfg).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["GROQ_API_KEY"]);
+    }
+
+    #[test]
+    fn lo_stato_dice_quali_chiavi_ci_sono_non_quali_sono() {
+        let config = ConfigHandle::in_memory();
+        config.update(|c| {
+            c.ai_keys.insert("GROQ_API_KEY".into(), "gsk_segretissima".into());
+            c.ai_keys.insert("GEMINI_API_KEY".into(), "AIza_segretissima".into());
+        });
+        let service = Arc::new(AiService::new(config, EventBus::new()));
+        let snapshot = service.snapshot();
+
+        assert_eq!(snapshot["keysSet"], json!(["GROQ_API_KEY", "GEMINI_API_KEY"]));
+        // Lo stato lo legge anche un telefono abbinato: una chiave che esce di
+        // qui è una chiave da revocare.
+        let serialized = snapshot.to_string();
+        assert!(!serialized.contains("gsk_segretissima"), "chiave esposta: {serialized}");
+        assert!(!serialized.contains("AIza_segretissima"), "chiave esposta: {serialized}");
+    }
+
+    #[test]
+    fn il_catalogo_dei_provider_combacia_con_of_free() {
+        // I nomi delle variabili vengono da providers.yaml di of-free: un refuso
+        // qui è una chiave salvata che il router non legge mai, senza errori.
+        let vars: Vec<&str> = PROVIDER_KEYS.iter().map(|(_, _, var)| *var).collect();
+        assert!(vars.contains(&"GROQ_API_KEY"));
+        assert!(vars.contains(&"GEMINI_API_KEY"));
+        assert!(vars.contains(&"GITHUB_TOKEN"));
+        assert_eq!(vars.len(), 7);
+        // Ollama è locale e non ha chiave: chiederne una sarebbe un campo che
+        // non serve a niente.
+        assert!(!PROVIDER_KEYS.iter().any(|(id, _, _)| *id == "ollama"));
+    }
+
+    // -- indirizzo del servizio remoto --------------------------------------
+
+    #[test]
+    fn indirizzo_remoto_accetta_quello_che_si_scrive_davvero() {
+        // Solo l'IP: schema e porta di of-free sottintesi.
+        assert_eq!(valid_remote_url("192.168.1.50").unwrap(), "http://192.168.1.50:4141");
+        assert_eq!(valid_remote_url(" 192.168.1.50:8080 ").unwrap(), "http://192.168.1.50:8080");
+        assert_eq!(valid_remote_url("nas.local:4141").unwrap(), "http://nas.local:4141");
+        // Il /v1 finale viene tolto: lo rimette chi compone la richiesta, e un
+        // /v1/v1/chat/completions darebbe un 404 che non spiega niente.
+        assert_eq!(
+            valid_remote_url("http://192.168.1.50:4141/v1").unwrap(),
+            "http://192.168.1.50:4141"
+        );
+        // Con schema esplicito vale la porta di default dello schema.
+        assert_eq!(valid_remote_url("https://ai.casa.lan").unwrap(), "https://ai.casa.lan");
+    }
+
+    #[test]
+    fn indirizzo_remoto_rifiuta_il_resto() {
+        for bad in ["", "   ", "ftp://host", "http://", "192.168.1.50/percorso/strano"] {
+            assert!(valid_remote_url(bad).is_err(), "doveva rifiutare: {bad:?}");
+        }
     }
 
     #[test]
@@ -1376,8 +1612,8 @@ mod tests {
     async fn identify_riconosce_of_free() {
         use axum::routing::post;
         let (port, server) = fake_of_free(post(|| async { axum::Json(json!({})) })).await;
-        assert!(identify(&test_client(), port).await);
-        assert!(alive(&test_client(), port).await);
+        assert!(identify(&test_client(), &base_url(port)).await);
+        assert!(alive(&test_client(), &base_url(port)).await);
         server.abort();
     }
 
@@ -1393,7 +1629,7 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
 
-        assert!(!identify(&test_client(), port).await);
+        assert!(!identify(&test_client(), &base_url(port)).await);
         server.abort();
     }
 
@@ -1479,6 +1715,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn in_modalita_remota_la_chat_va_sul_servizio_remoto() {
+        use axum::routing::post;
+        // Il "remoto" è un of-free finto su una porta a caso: quello che conta
+        // è che la richiesta non finisca sulla 4141 locale.
+        let (port, server) = fake_of_free(post(|| async {
+            (
+                [("X-OnFeather-Provider", "groq")],
+                axum::Json(json!({
+                    "choices": [{ "message": { "content": "dal server di casa" } }]
+                })),
+            )
+        }))
+        .await;
+
+        let config = ConfigHandle::in_memory();
+        config.update(|c| {
+            c.ai_enabled = true;
+            c.ai_mode = "remote".into();
+            c.ai_remote_url = Some(format!("127.0.0.1:{port}"));
+            // La porta locale resta configurata e deve restare ignorata.
+            c.ai_port = 4141;
+        });
+        let service = Arc::new(AiService::new(config.clone(), EventBus::new()));
+
+        // watch_remote resta in polling: qui interessa solo che diventi pronto.
+        let watched = service.clone();
+        let base = valid_remote_url(&format!("127.0.0.1:{port}")).unwrap();
+        let watcher = tokio::spawn(async move {
+            watch_remote(&watched, &base).await;
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let status = service.status();
+        assert_eq!(status.state, AiState::Ready);
+        assert!(!status.managed, "un servizio remoto non è gestito dal tool");
+        assert_eq!(status.base_url, format!("http://127.0.0.1:{port}"));
+
+        let reply = service
+            .chat(request(vec![message("user", "ciao")]))
+            .await
+            .expect("risposta dal remoto");
+        assert_eq!(reply.content, "dal server di casa");
+
+        watcher.abort();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn modalita_remota_senza_risposta_lo_dice_e_riprova() {
+        let config = ConfigHandle::in_memory();
+        config.update(|c| {
+            c.ai_enabled = true;
+            c.ai_mode = "remote".into();
+            // Porta chiusa: è il caso "ho spento il PC in cameretta".
+            c.ai_remote_url = Some("127.0.0.1:1".into());
+        });
+        let service = Arc::new(AiService::new(config.clone(), EventBus::new()));
+        let outcome = run_once(&service, &config.get()).await;
+
+        assert!(matches!(outcome, Outcome::Crashed), "deve riprovare col backoff");
+        let status = service.status();
+        assert_eq!(status.state, AiState::Failed);
+        let message = status.message.unwrap_or_default();
+        assert!(message.contains("127.0.0.1:1"), "deve dire quale indirizzo: {message}");
+        // Il motivo più frequente è quello, e nessuno ci arriva da solo.
+        assert!(message.contains("127.0.0.1"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn modalita_remota_senza_indirizzo_non_avvia_niente_in_locale() {
+        let config = ConfigHandle::in_memory();
+        config.update(|c| {
+            c.ai_enabled = true;
+            c.ai_mode = "remote".into();
+            c.ai_remote_url = None;
+        });
+        let service = Arc::new(AiService::new(config.clone(), EventBus::new()));
+        let outcome = run_once(&service, &config.get()).await;
+
+        // Senza indirizzo non si ricade sull'avvio locale: sarebbe l'opposto di
+        // ciò che l'utente ha chiesto, e per giunta in silenzio.
+        assert!(matches!(outcome, Outcome::Idle));
+        assert_eq!(service.status().state, AiState::Failed);
+        assert!(service.status().managed == false);
+    }
+
+    #[tokio::test]
     async fn choose_port_adotta_chi_risponde_gia() {
         use axum::routing::post;
         let (port, server) = fake_of_free(post(|| async { axum::Json(json!({})) })).await;
@@ -1547,7 +1870,7 @@ mod tests {
 
         assert!(ready.managed, "doveva essere un processo avviato da noi");
         assert_eq!(ready.port, 4390);
-        assert!(identify(&service.client, ready.port).await, "endpoint non riconosciuto");
+        assert!(identify(&service.client, &ready.base_url).await, "endpoint non riconosciuto");
 
         // Spegnimento: prima si disattiva, o il supervisore lo rimetterebbe su
         // (che è esattamente ciò che deve fare quando cade da solo).
@@ -1556,7 +1879,7 @@ mod tests {
         service.shutdown();
 
         let spento = tokio::time::timeout(Duration::from_secs(15), async {
-            while alive(&service.client, ready.port).await {
+            while alive(&service.client, &ready.base_url).await {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         })

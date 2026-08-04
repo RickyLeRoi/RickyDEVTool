@@ -3467,3 +3467,52 @@ button.compare-expand:hover {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* Chiavi dei provider: etichetta, campo mascherato e azioni sulla stessa riga. */
+.ai-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+.ai-key-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+.ai-key-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ai-key-row input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .ai-key-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .ai-key-label {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Nel pannello RickyAI diversi pulsanti sono disabilitati per default (niente
+   da salvare, chiave assente): senza questo sembrano premibili e non lo sono.
+   Regola locale, come le altre del progetto: `button:disabled` globale
+   cambierebbe l'aspetto di tutta l'app. */
+.ai-settings button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

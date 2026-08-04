@@ -13,7 +13,7 @@ Developer operations console locale per macOS e Windows (Linux best-effort). Un 
 - **Servizi online**: health check HTTP/TCP dei preset (Google, Cloudflare, WhatsApp, …) e di servizi personali, solo a sezione aperta.
 - **Rete**: scan LAN, port scan, ping, traceroute, DNS/DoH, certificati TLS.
 - **Docker**: lista container e immagini, start/stop/restart, log in streaming, immagini non usate con **prune**, e connessione a un **host Docker remoto** via `ssh://` o `tcp://` (vedi [Docker remoto](#docker-remoto)).
-- **RickyAI** (beta, spenta di default): chatbot servito da [`of-free`](#rickyai-of-free), avviato in automatico all'accensione del tool una volta attivato dalle Impostazioni — routing sui piani gratuiti degli LLM, quote residue per provider, scelta del modello (automatico / solo locale / uno preciso) e conversazioni multiple.
+- **RickyAI** (beta, spenta di default): chatbot servito da [`of-free`](#rickyai-of-free) — avviato in automatico su questa macchina, oppure puntato a un servizio già in rete (es. Docker su un altro PC). Routing sui piani gratuiti degli LLM, quote residue per provider, scelta del modello (automatico / solo locale / uno preciso) e conversazioni multiple.
 - **Task**: log persistente (ring buffer) di ogni task avviato dal tool, riapribile anche dopo la fine.
 - **Utility**: avvii compositi, calcolatrice scientifica, color picker (eyedropper su Windows/WebView2, Colorimetro digitale su macOS), storico appunti (in memoria) con clipboard di rete.
 - **Drop**: invio file/testo tra dispositivi in LAN (e tra host via discovery UDP), toast in ricezione.
@@ -82,7 +82,11 @@ La sezione **RickyAI** è una chat che parla con [`of-free`](https://github.com/
 
 La funzione è in **beta e nasce spenta**: finché non la si attiva da *Impostazioni → RickyAI*, il tool non avvia nessun processo e **la sezione non compare nemmeno** nella barra laterale (né nella command palette). Spegnendola torna a sparire, senza riavviare niente.
 
-Una volta attiva non c'è più niente da avviare a mano: **a ogni accensione il tool fa partire `of-free serve` da solo**, in ascolto su `127.0.0.1:4141` (fallback sulle porte successive se occupata). Se un `of-free serve` è già in ascolto — perché lo hai lanciato tu da terminale — quello viene **adottato** invece di avviarne un secondo: due router sullo stesso ledger SQLite si pesterebbero i piedi sul conteggio delle quote. Un'istanza adottata non viene mai spenta dal tool.
+Accesa, si sceglie **dove gira il motore**:
+
+### Su questo computer
+
+**A ogni accensione il tool fa partire `of-free serve` da solo**, in ascolto su `127.0.0.1:4141` (fallback sulle porte successive se occupata). Se un `of-free serve` è già in ascolto — perché lo hai lanciato tu da terminale — quello viene **adottato** invece di avviarne un secondo: due router sullo stesso ledger SQLite si pesterebbero i piedi sul conteggio delle quote. Un'istanza adottata non viene mai spenta dal tool.
 
 Il binario si risolve nel PATH. Se manca, la pagina lo dice e spiega come installarlo, e il supervisore riprova da solo quando compare (nessun riavvio del tool).
 
@@ -90,13 +94,23 @@ Il binario si risolve nel PATH. Se manca, la pagina lo dice e spiega come instal
 git clone https://github.com/RickyLeRoi/onfeather-free && cd onfeather-free && pip install -e .
 ```
 
-**Chiavi dei provider**: `of-free` le cerca in `~/.onfeather/.env`, poi `~/.config/onfeather/.env`. Senza nessuna chiave restano i modelli locali via Ollama. Un file diverso si indica con `envFile` (vedi sotto). Il tool avvia `of-free` con working directory nella propria data dir proprio per non intercettare un `~/.env` di tutt'altro contenuto, che interromperebbe quella ricerca.
+**Chiavi dei provider**: si incollano nelle Impostazioni, una per provider, e da lì in poi non sono più rileggibili — la UI mostra solo *impostata* e un campo mascherato. Vengono passate a `of-free` nel suo **environment**: niente file di chiavi da gestire, e niente chiavi sulla riga di comando (`ps` le mostrerebbe a tutti). Sono facoltative: senza nessuna, of-free ripiega sui modelli locali via Ollama. Chi le tiene già in `~/.onfeather/.env` non deve toccare niente — of-free continua a leggerle da lì, e quelle delle Impostazioni hanno la precedenza.
 
-La SPA **non parla mai con la 4141**: passa da `/api/ai/chat`, che fa da proxy. Così la chat funziona anche dal telefono (che la 4141 del desktop non la vede) e l'endpoint — che non ha autenticazione, `api_key: unused` — non ha bisogno di uscire da localhost. Per lo stesso motivo `of-free` viene avviato sempre con `--host 127.0.0.1`, mai su `0.0.0.0`.
+> Le chiavi finiscono in `config.json` in chiaro, come il token di pairing. Il file viene scritto `0600` (leggibile solo dal tuo utente).
+
+### Servizio in rete
+
+Un `of-free` che gira **altrove** — tipicamente in Docker su un altro computer. Si indica l'indirizzo (`192.168.1.50:4141`; schema e porta di default sottintesi) e il tool non avvia né spegne niente: verifica che dall'altra parte ci sia davvero of-free, tiene d'occhio che risponda, e ci inoltra le chat. Le chiavi stanno su **quella** macchina, quindi la sezione delle chiavi qui sparisce.
+
+Il servizio remoto deve essere in ascolto su `0.0.0.0` e non solo su `127.0.0.1`, altrimenti da fuori non risponde: è il motivo per cui un container "non si vede", ed è scritto nel messaggio d'errore.
+
+### In comune
+
+La SPA **non parla mai con of-free**: passa da `/api/ai/chat`, che fa da proxy. Così la chat funziona anche dal telefono e l'endpoint locale — che non ha autenticazione, `api_key: unused` — non ha bisogno di uscire da localhost. Per lo stesso motivo l'of-free avviato dal tool usa sempre `--host 127.0.0.1`, mai `0.0.0.0`.
 
 Le conversazioni **restano nel browser** che le ha scritte (localStorage): il backend non ne conserva nessuna. Desktop e telefono hanno quindi chat separate.
 
-Configurazione dalle **Impostazioni** (`POST /api/ai/config`, solo dal desktop — decide quale binario il tool avvia da solo): avvio automatico, porta, percorso del binario, file delle chiavi, strategia (`balanced` | `fast` | `local`) e prompt di sistema.
+Configurazione dalle **Impostazioni** (`POST /api/ai/config`, solo dal desktop — decide quale binario il tool avvia da solo): abilitazione, modalità, indirizzo del servizio remoto, porta, percorso del binario, chiavi, strategia (`balanced` | `fast` | `local`) e prompt di sistema. `GET /api/ai/status` è in lettura e riporta **quali** chiavi sono impostate, mai il loro valore.
 
 > Streaming non ancora supportato da `of-free`: la risposta arriva intera e la UI mostra l'attesa. Quando lo aggiungerà, il proxy andrà esteso di conseguenza.
 

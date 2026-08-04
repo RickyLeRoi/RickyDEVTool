@@ -16,10 +16,17 @@ const READY_STATUS = {
   restarts: 0,
   log: [],
   enabled: true,
+  mode: "local",
+  remoteUrl: null,
   configuredPort: 4141,
   strategy: "balanced",
-  envFile: null,
   systemPrompt: "",
+  keysSet: ["GROQ_API_KEY"],
+  providerKeys: [
+    { id: "groq", label: "Groq", env: "GROQ_API_KEY" },
+    { id: "google", label: "Google AI Studio", env: "GEMINI_API_KEY" },
+    { id: "mistral", label: "Mistral La Plateforme", env: "MISTRAL_API_KEY" },
+  ],
   providers: [
     { name: "groq", label: "Groq", available: true, headroom: 0.82, local: false, limits: [] },
   ],
@@ -378,16 +385,17 @@ test("impostazioni: la strategia si salva con un click", async ({ page }) => {
   const panel = page.locator(".ai-settings");
   // La funzione è dichiarata beta accanto al suo interruttore.
   await expect(panel.locator(".badge-beta")).toHaveText("beta");
-  await expect(panel.locator(".segmented button.active")).toHaveText("Bilanciata");
+  const strategia = panel.locator(".form-row", { hasText: "Strategia di routing" });
+  await expect(strategia.locator("button.active")).toHaveText("Bilanciata");
 
-  await panel.locator(".segmented button", { hasText: "Locale" }).click();
+  await strategia.locator("button", { hasText: "Locale" }).click();
   expect(salvati).toEqual([{ strategy: "local" }]);
   // Lo stato mostrato viene dalla risposta del server, non dal click: se il
   // salvataggio fallisse, il pulsante non resterebbe acceso a mentire.
-  await expect(panel.locator(".segmented button.active")).toHaveText("Locale");
+  await expect(strategia.locator("button.active")).toHaveText("Locale");
 });
 
-test("impostazioni: binario, chiavi e prompt si salvano insieme", async ({ page }) => {
+test("impostazioni: binario e prompt si salvano insieme", async ({ page }) => {
   const salvati: Record<string, unknown>[] = [];
   await page.route("**/api/ai/config", async (route) => {
     salvati.push(route.request().postDataJSON() as Record<string, unknown>);
@@ -404,17 +412,132 @@ test("impostazioni: binario, chiavi e prompt si salvano insieme", async ({ page 
   // Niente da salvare finché non si tocca niente.
   await expect(salva).toBeDisabled();
 
-  await panel.locator("input[placeholder='vuoto = ~/.onfeather/.env']").fill("/home/ricky/keys.env");
+  await panel.locator("input[placeholder='vuoto = cercato nel PATH']").fill("/opt/of-free");
   await panel.locator("textarea").fill("Sei RickyAI, rispondi in italiano.");
   await expect(salva).toBeEnabled();
   await salva.click();
 
   expect(salvati).toHaveLength(1);
   expect(salvati[0]).toMatchObject({
-    envFile: "/home/ricky/keys.env",
+    command: "/opt/of-free",
     systemPrompt: "Sei RickyAI, rispondi in italiano.",
     port: 4141,
   });
+});
+
+test("impostazioni: le chiavi si incollano una alla volta e non tornano più indietro", async ({
+  page,
+}) => {
+  const salvati: Record<string, unknown>[] = [];
+  await page.route("**/api/ai/config", async (route) => {
+    const body = route.request().postDataJSON() as { keys?: Record<string, string> };
+    salvati.push(body);
+    const keys = body.keys ?? {};
+    const set = new Set(READY_STATUS.keysSet);
+    for (const [name, value] of Object.entries(keys)) {
+      if (value) set.add(name);
+      else set.delete(name);
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, data: { ...READY_STATUS, keysSet: [...set] } }),
+    });
+  });
+
+  await page.goto("/#/settings");
+  const groq = page.locator(".ai-key-row", { hasText: "Groq" });
+  const gemini = page.locator(".ai-key-row", { hasText: "Google AI Studio" });
+
+  // Una già impostata si vede solo come stato, mai come valore.
+  await expect(groq.locator(".badge-ok")).toHaveText("impostata");
+  await expect(groq.locator("input")).toHaveValue("");
+  await expect(groq.locator("input")).toHaveAttribute("type", "password");
+  await expect(gemini.locator(".badge-ok")).toHaveCount(0);
+
+  await gemini.locator("input").fill("AIzaSyTOPSECRET");
+  await gemini.getByRole("button", { name: "Salva" }).click();
+
+  // Si manda solo quella toccata: la UI non conosce (e non rimanda) le altre.
+  expect(salvati).toEqual([{ keys: { GEMINI_API_KEY: "AIzaSyTOPSECRET" } }]);
+  await expect(gemini.locator(".badge-ok")).toHaveText("impostata");
+  // Il campo si svuota: la chiave non resta a schermo dopo il salvataggio.
+  await expect(gemini.locator("input")).toHaveValue("");
+
+  await groq.getByRole("button", { name: "Rimuovi" }).click();
+  expect(salvati[1]).toEqual({ keys: { GROQ_API_KEY: "" } });
+  await expect(groq.locator(".badge-ok")).toHaveCount(0);
+});
+
+test("impostazioni: modalità servizio in rete", async ({ page }) => {
+  const salvati: Record<string, unknown>[] = [];
+  await page.route("**/api/ai/config", async (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    salvati.push(body);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          ...READY_STATUS,
+          mode: "remote",
+          remoteUrl: "http://192.168.1.50:4141",
+          baseUrl: "http://192.168.1.50:4141",
+          managed: false,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/#/settings");
+  const panel = page.locator(".ai-settings");
+  await panel.locator(".segmented button", { hasText: "Servizio in rete" }).click();
+
+  const indirizzo = panel.locator("input[placeholder='es. 192.168.1.50:4141']");
+  await expect(indirizzo).toBeVisible();
+  // In modalità remota le chiavi stanno sull'altra macchina: chiederle qui
+  // sarebbe un campo che non ha effetto su niente.
+  await expect(panel.locator(".ai-key-row")).toHaveCount(0);
+  await expect(panel.locator("input[placeholder='vuoto = cercato nel PATH']")).toHaveCount(0);
+
+  await indirizzo.fill("192.168.1.50:4141");
+  await panel.getByRole("button", { name: "Salva e riavvia" }).click();
+  expect(salvati.at(-1)).toMatchObject({ remoteUrl: "192.168.1.50:4141" });
+});
+
+test("modalità remota: la chat dice che il motore è in rete", async ({ page }) => {
+  await withStatus(page, {
+    mode: "remote",
+    remoteUrl: "http://192.168.1.50:4141",
+    baseUrl: "http://192.168.1.50:4141",
+    managed: false,
+  });
+  await open(page);
+
+  await expect(page.locator(".ai-status .badge")).toHaveText("pronto");
+  await expect(page.locator(".ai-status")).toContainText("servizio in rete");
+  await expect(page.locator(".ai-status")).toContainText("192.168.1.50:4141");
+  await expect(composer(page)).toBeEnabled();
+});
+
+test("modalità remota: servizio irraggiungibile, con il motivo", async ({ page }) => {
+  await withStatus(page, {
+    mode: "remote",
+    remoteUrl: "http://192.168.1.50:4141",
+    state: "failed",
+    message:
+      "nessun of-free raggiungibile su http://192.168.1.50:4141: controlla che il servizio sia acceso e che sia in ascolto su tutte le interfacce, non solo su 127.0.0.1",
+    providers: null,
+    models: [],
+    next: null,
+  });
+  await open(page);
+
+  await expect(page.locator(".ai-status")).toContainText("192.168.1.50:4141");
+  // L'errore più frequente con un container è proprio il bind su 127.0.0.1.
+  await expect(page.locator(".ai-status")).toContainText("tutte le interfacce");
+  await expect(composer(page)).toBeDisabled();
 });
 
 test("impostazioni: un percorso sbagliato viene rifiutato e detto", async ({ page }) => {

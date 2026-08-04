@@ -606,11 +606,21 @@ export interface AiProvider {
   limits: AiQuotaLimit[];
 }
 
+export type AiMode = "local" | "remote";
+
+/** Un provider e la variabile d'ambiente da cui of-free legge la sua chiave. */
+export interface AiProviderKey {
+  id: string;
+  label: string;
+  env: string;
+}
+
 export interface AiStatus {
   state: AiState;
   port: number;
+  /** Radice dell'endpoint in uso: locale o del servizio remoto. */
   baseUrl: string;
-  /** false = istanza esterna adottata: il tool non la spegne né la riavvia. */
+  /** false = istanza esterna o remota: il tool non la spegne né la riavvia. */
   managed: boolean;
   command: string | null;
   message: string | null;
@@ -619,10 +629,14 @@ export interface AiStatus {
   /** Ultime righe di of-free: spiegano un avvio fallito. */
   log: string[];
   enabled: boolean;
+  mode: AiMode;
+  remoteUrl: string | null;
   configuredPort: number;
   strategy: string;
-  envFile: string | null;
   systemPrompt: string;
+  /** Nomi delle chiavi impostate — mai il valore. */
+  keysSet: string[];
+  providerKeys: AiProviderKey[];
   providers: AiProvider[] | null;
   next: { provider: string; model: string } | null;
   models: string[];

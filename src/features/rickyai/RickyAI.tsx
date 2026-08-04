@@ -58,8 +58,11 @@ function StatusBar({
         <span className={`badge ${badgeClass}`}>{STATE_LABEL[status.state]}</span>
         {ready && (
           <span className="dim" title={`endpoint OpenAI-compatibile su ${status.baseUrl}/v1`}>
-            {status.managed ? "of-free" : "of-free (istanza esterna)"} · porta {status.port} ·
-            strategia {status.strategy}
+            {status.mode === "remote"
+              ? `servizio in rete · ${status.baseUrl}`
+              : `${status.managed ? "of-free" : "of-free (istanza esterna)"} · porta ${
+                  status.port
+                } · strategia ${status.strategy}`}
           </span>
         )}
         {ready && status.next && (
@@ -101,10 +104,11 @@ function StatusBar({
           {status.state === "notInstalled" && (
             <div className="hint">
               RickyAI usa <code>of-free</code> (OnFeather Free): installalo con{" "}
-              <code>pip install -e .</code> dal repo <code>onfeather-free</code>, oppure indica il
-              percorso del binario dalle impostazioni. Le chiavi dei provider si mettono in{" "}
-              <code>~/.onfeather/.env</code> — senza nessuna chiave restano i soli modelli locali
-              via Ollama.
+              <code>pip install -e .</code> dal repo <code>onfeather-free</code>, indica il
+              percorso del binario dalle impostazioni, oppure — se lo fai già girare altrove —
+              passa a <strong>Servizio in rete</strong> e mettine l'indirizzo. Le chiavi dei
+              provider si incollano nelle impostazioni; senza nessuna chiave restano i soli
+              modelli locali via Ollama.
             </div>
           )}
           {status.log.length > 0 && (
