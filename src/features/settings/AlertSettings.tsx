@@ -3,7 +3,6 @@ import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
 import type { AlertThresholds } from "../../lib/types";
 
-/** Soglie configurabili degli alert (CPU/RAM/temperatura/batteria). */
 export function AlertSettings() {
   const [t, setT] = useState<AlertThresholds | null>(null);
   const [saved, setSaved] = useState(false);
@@ -25,8 +24,6 @@ export function AlertSettings() {
       setSaved(true);
       setTimeout(() => setSaved(false), 1200);
     } else {
-      // Salvataggio rifiutato (es. dal telefono senza controllo remoto): ripristina
-      // il valore reale e spiega perché, invece di mostrare una soglia mai salvata.
       if (prev) setT(prev);
       setError(r.error.message);
     }

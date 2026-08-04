@@ -10,8 +10,6 @@ const KIND_META: Record<string, { icon: string; title: string }> = {
   flutter: { icon: "🐦", title: "Flutter" },
 };
 
-// Le azioni "primarie" (avvio/esecuzione) sono evidenziate; le altre restano
-// bottoni piccoli neutri.
 const PRIMARY: RunnerAction["category"][] = ["run"];
 
 export function RunnerPanel({ path, kind }: { path: string; kind: string }) {

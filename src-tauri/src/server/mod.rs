@@ -32,7 +32,6 @@ pub struct ServerState {
     pub bus: EventBus,
     pub pollers: Arc<PollerRegistry>,
     pub port: u16,
-    /// Cache della discovery tool: invalidata su refresh esplicito o override.
     pub tools_cache: Arc<tokio::sync::Mutex<Option<Vec<crate::adapters::tools::DiscoveredTool>>>>,
     pub tasks: Arc<crate::tasks::TaskRegistry>,
     pub alerts: Arc<crate::alerts::AlertService>,
@@ -40,12 +39,9 @@ pub struct ServerState {
     pub drop: Arc<crate::services::drop::DropService>,
     pub metrics: Arc<crate::services::metrics::MetricsService>,
     pub clipboard: Arc<crate::services::clipboard::ClipboardHistory>,
-    /// RickyAI: supervisore di `of-free` e proxy verso il suo endpoint.
     pub ai: Arc<crate::services::rickyai::AiService>,
 }
 
-/// Le azioni che modificano il sistema sono locali, oppure LAN se l'utente
-/// ha attivato esplicitamente il controllo remoto.
 fn write_allowed(state: &ServerState, peer: SocketAddr) -> bool {
     write_permitted(peer.ip().is_loopback(), state.config.get().remote_control_enabled)
 }
@@ -53,11 +49,6 @@ fn write_permitted(is_loopback: bool, remote_control_enabled: bool) -> bool {
     is_loopback || remote_control_enabled
 }
 
-/// I due controlli di permesso, applicati come layer sui gruppi di rotte in
-/// [`start`] invece che riscritti dentro ogni handler. Prima erano 48 copie a
-/// mano in un file da 2800 righe, e chi ne dimenticava una non se ne accorgeva:
-/// `set_remote_control` è rimasto scoperto a undici righe da `set_anti_idle`,
-/// che invece controllava.
 async fn require_loopback(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request<Body>,
@@ -85,12 +76,9 @@ async fn require_write(
 pub struct ServerInfo {
     pub port: u16,
     pub lan_enabled: bool,
-    /// Handle condiviso col resto del backend: usato dal tray per costruire i
-    /// menu (dischi/porte/servizi/strumenti) e per l'invio diretto via Drop.
     pub state: ServerState,
 }
 
-/// Binda su config.port con fallback alle porte successive, poi serve in background.
 pub async fn start(
     config: ConfigHandle,
     bus: EventBus,
@@ -121,28 +109,16 @@ pub async fn start(
     let tasks = Arc::new(crate::tasks::TaskRegistry::new(bus.clone()));
     let alerts = crate::alerts::AlertService::start(bus.clone(), config.clone());
     let tails = Arc::new(crate::services::logtail::TailRegistry::new(bus.clone()));
-    // Beacon UDP broadcast: permette ad altre istanze RickyDEVTool sulla LAN
-    // (altri computer) di scoprirsi a vicenda per Drop, indipendentemente
-    // dall'hub a cui un browser/telefono è connesso.
     let hub_registry = crate::services::hubdiscovery::start(&config, port);
     let drop_service = Arc::new(crate::services::drop::DropService::new(
         bus.clone(),
         config.clone(),
         hub_registry,
     ));
-    // Avviato qui perché serve il runtime tokio (attivo dentro server::start).
     crate::jiggler::start(config.clone());
-    // Campionamento metriche sempre attivo (thread OS dedicato).
     let metrics = crate::services::metrics::MetricsService::start();
-    // Storico appunti sempre attivo (solo in memoria), thread OS dedicato.
     let clipboard = crate::services::clipboard::ClipboardHistory::start();
-    // RickyAI: `of-free serve` acceso in background (solo su 127.0.0.1). Se il
-    // binario non c'è, il supervisore lo dice nello stato senza far rumore.
     let ai = crate::services::rickyai::AiService::start(config.clone(), bus.clone());
-    // Campionatore sensori a bassa frequenza SEMPRE attivo, solo per gli alert
-    // termici/batteria: il poller "sensors" gira solo con la dashboard aperta,
-    // ma questi alert devono scattare anche in background. Topic "sensorsbg"
-    // (base diverso da "sensors": non arriva alle dashboard, niente flicker).
     {
         let bus_bg = bus.clone();
         tokio::spawn(async move {
@@ -168,15 +144,12 @@ pub async fn start(
         ai,
     };
 
-    // Il permesso si legge dal gruppo in cui la rotta è scritta, non dal corpo
-    // dell'handler. Aggiungere un endpoint significa sceglierne uno: non esiste
-    // una posizione "senza controllo" in cui finirci per distrazione.
     let local_layer = middleware::from_fn(require_loopback);
     let write_layer = middleware::from_fn_with_state(state.clone(), require_write);
 
-    // (1) Solo dal desktop, sempre. Distruttive su disco, apertura di file/URL
-    // locali, notifiche, e gli interruttori che *concedono* permessi: il
-    // controllo remoto non le sblocca, altrimenti si auto-concederebbe.
+    // 20260704 RG il permesso viene dal gruppo in cui la rotta è scritta, non dall'handler:
+    // aggiungere un endpoint obbliga a sceglierne uno. (1) solo desktop: distruttive
+    // e interruttori che concedono permessi — il controllo remoto non li sblocca.
     let local_only = Router::new()
         .route("/api/disks/eject", post(disk_eject))
         .route("/api/disks/format", post(disk_format))
@@ -188,17 +161,14 @@ pub async fn start(
         .route("/api/drop/received/{name}", axum::routing::delete(drop_received_delete))
         .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
-        // Decide quale binario il tool avvia da solo e con quale file di
-        // chiavi: sta accanto agli altri interruttori che concedono qualcosa.
         .route("/api/ai/config", post(ai_config_set))
         .route("/api/system/open-accessibility", post(open_accessibility))
         .route("/api/system/color-meter", post(open_color_meter))
         .route("/api/system/open-url", post(open_url))
         .layer(local_layer.clone());
 
-    // (2) Modificano il sistema: locale, oppure LAN col controllo remoto
-    // attivo. Ci sono anche delle GET, ed è voluto — leggere un `.env` o
-    // sfogliare il filesystem espone segreti quanto scriverci.
+    // 20260704 RG (2) modificano il sistema: locale, o LAN col controllo remoto attivo.
+    // Include delle GET: leggere un .env espone segreti quanto scriverci.
     let write = Router::new()
         .route("/api/pollers/{topic}/interval", post(set_interval))
         .route("/api/processes/kill", post(kill_process))
@@ -251,16 +221,12 @@ pub async fn start(
         .route("/api/net/scan", post(net_scan))
         .route("/api/net/traceroute", post(net_traceroute))
         .route("/api/config/anti-idle", post(set_anti_idle))
-        // Una chat esce dalla macchina e consuma quote condivise fra tutti i
-        // client del tool: è una scrittura, non una lettura, e dal telefono
-        // segue il "Controllo remoto" come tutto il resto.
         .route("/api/ai/chat", post(ai_chat))
         .route("/api/ai/restart", post(ai_restart))
         .layer(write_layer.clone());
 
-    // (3) Sola lettura: qualsiasi device abbinato. Dove GET e POST condividono
-    // il path il layer sta sul singolo metodo, così la lettura resta aperta
-    // mentre la scrittura no.
+    // 20260704 RG (3) sola lettura, per ogni device abbinato. Dove GET e POST condividono
+    // il path il layer sta sul singolo metodo.
     let read = Router::new()
         .route("/api/health", get(health))
         .route("/api/lan", get(lan_info))
@@ -318,10 +284,6 @@ pub async fn start(
             "/api/push",
             get(push_get).merge(post(push_set).layer(local_layer.clone())),
         )
-        // drop/hello, /send e /text restano senza permesso di scrittura di
-        // proposito: sono il canale Drop verso i device abbinati e fra hub,
-        // autenticato in auth_middleware dalla reciprocità della discovery UDP.
-        // Chiuderli qui spegnerebbe Drop dal telefono.
         .route("/api/drop/hello", post(drop_hello))
         .route("/api/drop/peers", get(drop_peers))
         .route("/api/drop/self", get(drop_self))
@@ -336,7 +298,6 @@ pub async fn start(
             "/api/config/docker-host",
             get(docker_host_get).merge(post(docker_host_set).layer(local_layer.clone())),
         )
-        // Lo stato è una lettura: il telefono deve poter vedere se è pronto.
         .route("/api/ai/status", get(ai_status))
         .route("/api/system/accessibility", get(accessibility_status))
         .route("/ws", get(ws::ws_handler));
@@ -351,7 +312,6 @@ pub async fn start(
         .fallback(static_assets)
         .with_state(state.clone());
 
-    // In dev il frontend gira su Vite (porta 1420): serve CORS permissivo.
     if cfg!(debug_assertions) {
         app = app.layer(tower_http::cors::CorsLayer::very_permissive());
     }
@@ -373,8 +333,6 @@ pub async fn start(
     Ok(ServerInfo { port, lan_enabled, state })
 }
 
-/// Localhost: sempre autorizzato. LAN: serve il cookie di pairing.
-/// /api/pair è escluso (è l'endpoint che valida il token e imposta il cookie).
 async fn auth_middleware(
     State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -384,11 +342,6 @@ async fn auth_middleware(
     if peer.ip().is_loopback() || request.uri().path() == "/api/pair" {
         return next.run(request).await;
     }
-    // Richieste hub-to-hub (Drop cross-computer, proxy_send_*): non hanno il
-    // pairing dell'utente (ogni hub genera il proprio token indipendente), ma
-    // sono già verificate dalla discovery UDP reciproca — l'IP di provenienza
-    // deve combaciare con un hub che abbiamo visto beaconare con quello
-    // stesso hub_id. Vale solo per i due endpoint di trasferimento.
     if matches!(request.uri().path(), "/api/drop/send" | "/api/drop/text") {
         if let Some(claimed) = request
             .headers()
@@ -451,14 +404,10 @@ async fn lan_info(
         .collect();
     Json(json!({
         "ok": true,
-        // `remote`: la richiesta arriva da un device LAN (non dal desktop). La UI
-        // lo usa per disabilitare i toggle finché il controllo remoto non è attivo.
         "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled, "antiIdleEnabled": cfg.anti_idle_enabled, "remote": !peer.ip().is_loopback() }
     }))
 }
 
-/// QR con URL primario + token di pairing nel fragment.
-/// Protetto dall'auth middleware: lo vede solo il desktop (o un device già abbinato).
 async fn lan_qr(State(state): State<ServerState>) -> Response {
     let cfg = state.config.get();
     let Some(ip) = netinfo::lan_ips().into_iter().next() else {
@@ -546,8 +495,6 @@ struct MetricsHistoryQuery {
     hours: Option<u32>,
 }
 
-/// Storico metriche (CPU/RAM/disco di sistema) delle ultime `hours` ore.
-/// La query SQLite è bloccante: fuori dal runtime async.
 async fn metrics_history(
     State(state): State<ServerState>,
     axum::extract::Query(query): axum::extract::Query<MetricsHistoryQuery>,
@@ -582,8 +529,6 @@ async fn list_ports(
     }
 }
 
-/// Kill di un processo. Azione distruttiva: dalla LAN è negata finché
-/// non esisterà il toggle "Remote control" (v1).
 async fn kill_process(
     State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -647,8 +592,6 @@ async fn kill_process(
     }
 }
 
-// ---------- tools ----------
-
 #[derive(Deserialize)]
 struct ToolsQuery {
     refresh: Option<bool>,
@@ -679,7 +622,6 @@ struct LaunchBody {
     target: Option<String>,
 }
 
-/// Avvio di applicazioni: azione locale, negata dalla LAN come il kill.
 async fn launch_tool(
     State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -722,7 +664,6 @@ async fn launch_tool(
 
 #[derive(Deserialize)]
 struct ToolPathBody {
-    /// null/assente = rimuovi l'override e torna alla discovery automatica.
     path: Option<String>,
 }
 
@@ -752,8 +693,6 @@ async fn set_tool_path(
     let tools = cached_tools(&state, true).await;
     Json(json!({ "ok": true, "data": { "tools": tools } })).into_response()
 }
-
-// ---------- progetti / filesystem / git ----------
 
 #[derive(Deserialize)]
 struct PathQuery {
@@ -809,7 +748,7 @@ async fn pinned_get(State(state): State<ServerState>) -> Json<serde_json::Value>
 #[derive(Deserialize)]
 struct PinBody {
     path: String,
-    action: String, // "add" | "remove"
+    action: String,
 }
 
 async fn pinned_set(State(state): State<ServerState>, Json(body): Json<PinBody>) -> Response {
@@ -904,8 +843,6 @@ async fn git_pull(
     }
 }
 
-// ---------- git branches / checkout ----------
-
 async fn git_branches(axum::extract::Query(query): axum::extract::Query<PathQuery>) -> Response {
     let Some(path) = query.path else {
         return internal_error("parametro path mancante".into());
@@ -937,8 +874,6 @@ struct DeleteBranchBody {
     branch: String,
     #[serde(default)]
     force: bool,
-    /// Nome del remote (es. "origin") da cui eliminare anche il branch; assente
-    /// = solo locale.
     #[serde(default)]
     remote: Option<String>,
 }
@@ -967,7 +902,6 @@ struct CommitsQuery {
     limit: Option<u32>,
     #[serde(default)]
     skip: Option<u32>,
-    /// Ref (branch/tag/hash) di cui elencare i commit; assente = HEAD.
     #[serde(default, rename = "ref")]
     git_ref: Option<String>,
 }
@@ -1021,8 +955,6 @@ async fn git_cherry_pick(
     }
 }
 
-// ---------- node ----------
-
 async fn node_info(
     State(state): State<ServerState>,
     axum::extract::Query(query): axum::extract::Query<PathQuery>,
@@ -1047,7 +979,6 @@ async fn node_info(
 #[derive(Deserialize)]
 struct NodePmBody {
     path: String,
-    /// null = torna alla detection automatica.
     pm: Option<String>,
 }
 
@@ -1075,7 +1006,6 @@ async fn node_set_pm(State(state): State<ServerState>, Json(body): Json<NodePmBo
 #[derive(Deserialize)]
 struct NodeRunBody {
     path: String,
-    /// None = install.
     script: Option<String>,
 }
 
@@ -1112,8 +1042,6 @@ async fn node_run(
         Err(message) => internal_error(message),
     }
 }
-
-// ---------- dotnet ----------
 
 fn dotnet_inspect_with_config(
     state: &ServerState,
@@ -1185,7 +1113,7 @@ async fn dotnet_select(
 #[derive(Deserialize)]
 struct DotnetRunBody {
     path: String,
-    action: String, // run | build | rebuild | clean
+    action: String,
 }
 
 async fn dotnet_run(
@@ -1211,8 +1139,6 @@ async fn dotnet_run(
 fn short_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
-
-// ---------- runner generico (python / rust / tauri / flutter) ----------
 
 #[derive(Deserialize)]
 struct RunnerQuery {
@@ -1249,8 +1175,6 @@ async fn runner_run(
     State(state): State<ServerState>,
     Json(body): Json<RunnerRunBody>,
 ) -> Response {
-    // Il client manda solo l'id: il server rigenera lo spec verificato, così il
-    // programma eseguito non è mai controllato dal chiamante.
     let spec = match crate::services::runners::resolve(&body.kind, &body.path, &body.action_id) {
         Ok(s) => s,
         Err(message) => return internal_error(message),
@@ -1263,8 +1187,6 @@ async fn runner_run(
     }
 }
 
-// ---------- profili di avvio composito ----------
-
 #[derive(Deserialize)]
 struct LaunchIdBody {
     id: String,
@@ -1276,7 +1198,6 @@ async fn launch_bundles_list(State(state): State<ServerState>) -> Json<serde_jso
 
 #[derive(Deserialize)]
 struct LaunchBundleBody {
-    /// Assente = nuovo profilo (id generato dal server).
     #[serde(default)]
     id: Option<String>,
     name: String,
@@ -1287,8 +1208,6 @@ async fn launch_bundle_upsert(
     State(state): State<ServerState>,
     Json(body): Json<LaunchBundleBody>,
 ) -> Response {
-    // Un profilo contiene comandi che verranno eseguiti: un remoto non deve
-    // poterne piantare uno senza il controllo remoto attivo.
     let bundle = crate::services::launch::LaunchBundle {
         id: body.id.unwrap_or_else(crate::services::launch::new_id),
         name: body.name,
@@ -1335,8 +1254,6 @@ async fn launch_run(
     }
     Json(json!({ "ok": true, "data": { "tasks": tasks, "errors": errors } })).into_response()
 }
-
-// ---------- snippet / comandi salvati ----------
 
 async fn snippets_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "snippets": state.config.get().snippets } }))
@@ -1411,18 +1328,12 @@ async fn snippets_run(
     }
 }
 
-// ---------- ssh quick-connect ----------
-
 fn home_dir_string() -> String {
     dirs::home_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| ".".to_string())
 }
 
-/// Espande un `~`/`~/…` iniziale nella home dell'utente: la shell lo farebbe da
-/// sé, ma qui la cartella è passata a `current_dir` senza shell, quindi un path
-/// come "~/Documents/…" darebbe "No such file or directory". Nessun altro
-/// glob/variabile viene toccato.
 fn expand_tilde(path: &str) -> String {
     if path == "~" {
         return home_dir_string();
@@ -1516,8 +1427,6 @@ async fn ssh_run(
     }
 }
 
-// ---------- storico appunti ----------
-
 fn clipboard_payload(state: &ServerState) -> serde_json::Value {
     json!({
         "entries": state.clipboard.list(),
@@ -1539,8 +1448,6 @@ async fn clipboard_copy(
     State(state): State<ServerState>,
     Json(body): Json<ClipIdBody>,
 ) -> Response {
-    // Scrivere negli appunti tocca lo stato del sistema: stessa guardia delle
-    // altre scritture (locale, o LAN col controllo remoto attivo).
     match state.clipboard.copy_to_clipboard(body.id) {
         Ok(()) => Json(json!({ "ok": true, "data": { "copied": true } })).into_response(),
         Err(message) => internal_error(message),
@@ -1550,7 +1457,6 @@ async fn clipboard_copy(
 #[derive(Deserialize)]
 struct ClipBlobQuery {
     id: u64,
-    /// Indice del file in una voce multi-file (default 0; ignorato per immagini).
     #[serde(default)]
     i: usize,
 }
@@ -1579,7 +1485,6 @@ async fn clipboard_blob(
         headers.insert(header::CONTENT_TYPE, v);
     }
     if !serve.inline {
-        // RFC 5987 per i nomi non-ASCII; fallback ASCII per i client vecchi.
         let ascii: String = serve
             .name
             .chars()
@@ -1604,14 +1509,11 @@ async fn clipboard_blob(
     (headers, Body::from_stream(stream)).into_response()
 }
 
-/// Invia il testo di una voce (o l'attuale clipboard di sistema) a un peer come
-/// "clipboard di rete": sul ricevente finisce nel suo storico appunti.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ClipSendBody {
     to: String,
     from_name: String,
-    /// Voce dello storico da inviare; assente = clipboard di sistema attuale.
     #[serde(default)]
     id: Option<u64>,
 }
@@ -1630,8 +1532,6 @@ async fn clipboard_send(
             None => return internal_error("clipboard di sistema vuota".into()),
         },
     };
-    // Verso un hub remoto non c'è il canale "clipboard": ripiega sul testo Drop
-    // normale (arriva comunque, come testo ricevuto).
     if let Some(hub) = state.drop.remote_hub(&body.to) {
         return match state.drop.proxy_send_text(&hub, &body.from_name, &text).await {
             Ok(()) => Json(json!({ "ok": true, "data": { "sent": true } })).into_response(),
@@ -1644,8 +1544,6 @@ async fn clipboard_send(
     }
 }
 
-/// Registra nello storico locale un testo ricevuto via clipboard di rete
-/// (nessuna scrittura sulla clipboard di sistema: la applica l'utente con Copia).
 #[derive(Deserialize)]
 struct ClipTextBody {
     text: String,
@@ -1708,8 +1606,6 @@ async fn clipboard_set_enabled(
     Json(json!({ "ok": true, "data": { "enabled": state.clipboard.enabled() } }))
 }
 
-// ---------- dischi ----------
-
 async fn list_disks() -> Json<serde_json::Value> {
     let disks = tokio::task::spawn_blocking(crate::adapters::disks::list)
         .await
@@ -1753,8 +1649,6 @@ struct EjectBody {
     mount_point: String,
 }
 
-/// Eject e format sono distruttivi: sempre e solo da localhost, mai da remoto
-/// (nemmeno col controllo remoto attivo).
 async fn disk_eject(
     Json(body): Json<EjectBody>,
 ) -> Response {
@@ -1773,10 +1667,6 @@ async fn disk_format(
     }
 }
 
-// ---------- docker ----------
-
-/// Stato Docker + lista container: read-only, aperto come la lista porte.
-/// Include l'host configurato (vuoto = daemon locale) così la UI lo mostra.
 async fn docker_state(State(state): State<ServerState>) -> Json<serde_json::Value> {
     let host = state.config.get().docker_host;
     let docker = crate::adapters::docker::state(host.as_deref()).await;
@@ -1785,14 +1675,12 @@ async fn docker_state(State(state): State<ServerState>) -> Json<serde_json::Valu
     Json(json!({ "ok": true, "data": data }))
 }
 
-/// Immagini locali: read-only.
 async fn docker_images(State(state): State<ServerState>) -> Json<serde_json::Value> {
     let host = state.config.get().docker_host;
     let images = crate::adapters::docker::images(host.as_deref()).await;
     Json(json!({ "ok": true, "data": { "images": images } }))
 }
 
-/// Rimuove le immagini non usate (`docker image prune -a`): azione di scrittura.
 async fn docker_prune_images(
     State(state): State<ServerState>,
 ) -> Response {
@@ -1804,21 +1692,15 @@ async fn docker_prune_images(
     }
 }
 
-/// Host Docker remoto configurato (vuoto = locale).
 async fn docker_host_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "host": state.config.get().docker_host } }))
 }
 
 #[derive(Deserialize)]
 struct DockerHostBody {
-    /// Vuoto/null = torna al daemon locale.
     host: Option<String>,
 }
 
-/// Configura l'host Docker remoto. Solo dal desktop: cambia dove puntano tutte
-/// le azioni Docker. L'host viene provato davvero prima di accettarlo: uno
-/// schema valido non basta, se dall'altra parte non risponde nessun daemon
-/// l'utente deve vedere l'errore invece di credere di esserci collegato.
 async fn docker_host_set(
     State(state): State<ServerState>,
     Json(body): Json<DockerHostBody>,
@@ -1846,10 +1728,9 @@ async fn docker_host_set(
 
 #[derive(Deserialize)]
 struct DockerActionBody {
-    action: String, // start | stop | restart
+    action: String,
 }
 
-/// start/stop/restart di un container: azione di scrittura (guardia write_allowed).
 async fn docker_action(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1865,8 +1746,6 @@ async fn docker_action(
     }
 }
 
-/// Log del container in streaming come task (topic WS `task:{id}`): read
-/// sensibile, dietro la stessa guardia degli altri comandi che spawnano processi.
 async fn docker_logs(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1881,8 +1760,6 @@ async fn docker_logs(
         Err(message) => internal_error(message),
     }
 }
-
-// ---------- servizi online / alerts / remote control ----------
 
 async fn services_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "services": state.config.get().services } }))
@@ -1899,7 +1776,6 @@ async fn services_upsert(
         match c.services.iter_mut().find(|s| s.id == def.id) {
             Some(existing) => {
                 if existing.builtin {
-                    // Dei preset si può cambiare solo enabled (via toggle): ignora il resto.
                     return;
                 }
                 *existing = crate::services::online::ServiceDef { builtin: false, ..def.clone() };
@@ -1948,7 +1824,6 @@ async fn alerts_get(State(state): State<ServerState>) -> Json<serde_json::Value>
 
 #[derive(Deserialize)]
 struct AckBody {
-    /// None = ack di tutti.
     id: Option<String>,
 }
 
@@ -1988,7 +1863,6 @@ async fn alerts_config_set(
     Json(json!({ "ok": true, "data": state.config.get().alert_thresholds })).into_response()
 }
 
-/// Elenco (sola lettura) di cron/launchd/schtasks. On-demand come porte/servizi.
 async fn scheduler_list() -> Json<serde_json::Value> {
     let listing = crate::adapters::scheduler::list().await;
     Json(json!({ "ok": true, "data": listing }))
@@ -2000,8 +1874,6 @@ struct SchedDetailQuery {
     id: String,
 }
 
-/// Dettagli di una voce pianificata (sola lettura): plist di launchd, query
-/// verbosa di schtasks. crontab calcola il prossimo avvio lato client.
 async fn scheduler_detail(
     axum::extract::Query(query): axum::extract::Query<SchedDetailQuery>,
 ) -> Json<serde_json::Value> {
@@ -2014,9 +1886,6 @@ struct RemoteControlBody {
     enabled: bool,
 }
 
-/// Attivabile anche da un device LAN abbinato: è il toggle che sblocca gli altri
-/// dal telefono. Il pairing (cookie) è già la barriera di fiducia; parte comunque
-/// spento, così azioni distruttive non capitano per un tocco accidentale.
 async fn set_remote_control(
     State(state): State<ServerState>,
     Json(body): Json<RemoteControlBody>,
@@ -2026,8 +1895,6 @@ async fn set_remote_control(
     Json(json!({ "ok": true, "data": { "remoteControlEnabled": body.enabled } })).into_response()
 }
 
-/// Come le altre scritture: locale, oppure LAN col controllo remoto attivo. Così
-/// dal telefono si può gestire l'anti-inattività una volta sbloccato il remoto.
 async fn set_anti_idle(
     State(state): State<ServerState>,
     Json(body): Json<RemoteControlBody>,
@@ -2041,7 +1908,6 @@ async fn accessibility_status() -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": crate::adapters::accessibility::status() }))
 }
 
-/// Apre il pannello Accessibilità delle impostazioni di sistema (solo macOS).
 async fn open_accessibility() -> Response {
     match crate::adapters::accessibility::open_settings() {
         Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
@@ -2049,7 +1915,6 @@ async fn open_accessibility() -> Response {
     }
 }
 
-/// Apre il Colorimetro digitale di macOS (fallback all'EyeDropper del color picker).
 async fn open_color_meter() -> Response {
     match crate::adapters::accessibility::open_color_meter() {
         Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
@@ -2062,8 +1927,6 @@ struct OpenUrlBody {
     url: String,
 }
 
-/// Apre un URL nel browser di sistema del desktop. Serve alla webview Tauri
-/// (dove `window.open` è un no-op): i browser LAN aprono da soli con window.open.
 async fn open_url(
     Json(body): Json<OpenUrlBody>,
 ) -> Response {
@@ -2077,8 +1940,6 @@ async fn open_url(
     }
 }
 
-// ---------- tasks ----------
-
 async fn tasks_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "tasks": state.tasks.list() } }))
 }
@@ -2088,8 +1949,6 @@ async fn tasks_clear_finished(State(state): State<ServerState>) -> Json<serde_js
     Json(json!({ "ok": true, "data": { "tasks": state.tasks.list() } }))
 }
 
-/// Log bufferizzato di un task (per riaprirlo dopo la fine o da un'altra
-/// sezione). 404 se il task è stato ripulito.
 async fn task_log(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
     match state.tasks.log(&id) {
         Some(lines) => Json(json!({ "ok": true, "data": { "lines": lines } })).into_response(),
@@ -2143,10 +2002,6 @@ async fn set_interval(
     Json(json!({ "ok": true, "data": { "intervalMs": body.interval_ms } })).into_response()
 }
 
-// ---------- fs / env / logtail ----------
-// Leggere file arbitrari (log, .env) espone contenuti sensibili: come le
-// azioni di scrittura, è riservato a localhost o al controllo remoto attivo.
-
 async fn fs_entries(
     axum::extract::Query(query): axum::extract::Query<PathQuery>,
 ) -> Response {
@@ -2168,13 +2023,10 @@ async fn fs_entries(
 struct CompareBody {
     left: String,
     right: String,
-    /// Nomi di file/cartelle da saltare (es. ".git", "node_modules").
     #[serde(default)]
     excludes: Vec<String>,
 }
 
-/// Differenze tra due alberature. Elenca il contenuto di cartelle arbitrarie:
-/// stessa guardia della navigazione filesystem.
 async fn fs_compare(
     Json(body): Json<CompareBody>,
 ) -> Response {
@@ -2201,8 +2053,6 @@ struct CompareChildrenBody {
     excludes: Vec<String>,
 }
 
-/// Contenuto di una cartella comparsa nel confronto come voce unica: permette
-/// alla UI di aprirla e agire sui singoli file.
 async fn fs_compare_children(
     Json(body): Json<CompareChildrenBody>,
 ) -> Response {
@@ -2227,15 +2077,10 @@ struct CompareApplyBody {
     left: String,
     right: String,
     rel_path: String,
-    /// toRight | toLeft | delete
     action: String,
-    /// Solo per "delete": da quale dei due rami eliminare.
     side: Option<crate::services::fscompare::Side>,
 }
 
-/// Applica la scelta dell'utente su una differenza: copia da un lato all'altro
-/// oppure elimina. Scrive (e cancella) sul disco: solo dal desktop, come il
-/// format dei dischi — non basta il controllo remoto.
 async fn fs_compare_apply(
     Json(body): Json<CompareApplyBody>,
 ) -> Response {
@@ -2333,8 +2178,6 @@ async fn logtail_stop(State(state): State<ServerState>, Path(id): Path<String>) 
     }
 }
 
-// ---------- toolbox di rete ----------
-
 #[derive(Deserialize)]
 struct PingBody {
     host: String,
@@ -2387,8 +2230,6 @@ struct TracerouteBody {
     resolve_hostnames: bool,
 }
 
-/// Traceroute come task in streaming (stessa infrastruttura di node/dotnet
-/// run): l'output grezzo arriva riga per riga sul topic WS `task:{id}`.
 async fn net_traceroute(State(state): State<ServerState>, Json(body): Json<TracerouteBody>) -> Response {
     let host = body.host.trim();
     if !crate::services::nettools::valid_host(host) {
@@ -2401,8 +2242,6 @@ async fn net_traceroute(State(state): State<ServerState>, Json(body): Json<Trace
         Err(message) => internal_error(message),
     }
 }
-
-// ---------- push (ntfy) ----------
 
 fn push_settings_json(state: &ServerState) -> serde_json::Value {
     let cfg = state.config.get();
@@ -2427,7 +2266,6 @@ struct PushBody {
     min_severity: Option<String>,
 }
 
-/// Configurabile solo dal desktop, come il controllo remoto.
 async fn push_set(
     State(state): State<ServerState>,
     Json(body): Json<PushBody>,
@@ -2478,8 +2316,6 @@ async fn push_test(
     }
 }
 
-// ---------- file drop ----------
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DropHelloBody {
@@ -2499,7 +2335,6 @@ async fn drop_hello(
     if !valid_device_id(&body.device_id) {
         return internal_error("deviceId non valido".into());
     }
-    // "Desktop" = la webview locale: è il peer che salva su disco.
     let peers = state
         .drop
         .hello(&body.device_id, &body.name, peer.ip().is_loopback());
@@ -2520,22 +2355,16 @@ async fn drop_peers(
     Json(json!({ "ok": true, "data": { "peers": peers } }))
 }
 
-/// Identità stabile di questo hub: la UI la usa per sottoscriversi anche al
-/// canale WS su cui arrivano i trasferimenti proxati da altri computer.
 async fn drop_self(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "hubId": state.drop.hub_id() } }))
 }
 
-/// Altri computer RickyDEVTool visti in LAN via beacon UDP (indipendenti da
-/// questo hub): utile per capire se la discovery cross-macchina funziona.
 async fn drop_hubs(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "hubs": state.drop.remote_hubs() } }))
 }
 
 const MAX_PROXY_BYTES: usize = crate::services::drop::MAX_PROXY_BYTES;
 
-/// Upload multipart: campi `to`, `fromName` e poi `file` (l'ordine conta,
-/// i campi testo devono precedere il file).
 async fn drop_send(
     State(state): State<ServerState>,
     mut multipart: axum::extract::Multipart,
@@ -2562,8 +2391,6 @@ async fn drop_send(
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "file".to_string());
 
-                // Il destinatario è un altro computer (scoperto in LAN via UDP),
-                // non un peer di questo hub: si proxa l'intero file via HTTP.
                 if let Some(hub) = state.drop.remote_hub(&to) {
                     let bytes = match field.bytes().await {
                         Ok(b) => b,
@@ -2664,7 +2491,6 @@ async fn drop_download(State(state): State<ServerState>, Path(id): Path<String>)
         Err(e) => return internal_error(format!("file non leggibile: {e}")),
     };
     let stream = tokio_util::io::ReaderStream::new(file);
-    // RFC 5987 per i nomi non-ASCII; fallback ASCII per i client vecchi.
     let ascii: String = name
         .chars()
         .map(|c| if c.is_ascii() && c != '"' && c != '\\' { c } else { '_' })
@@ -2692,8 +2518,6 @@ async fn drop_download(State(state): State<ServerState>, Path(id): Path<String>)
         .into_response()
 }
 
-/// Lista/gestione dei file ricevuti sul desktop: solo da localhost
-/// (la cartella vive sul computer che ospita il server).
 async fn drop_received(
     State(state): State<ServerState>,
 ) -> Response {
@@ -2728,7 +2552,6 @@ async fn drop_open_folder(
     }
 }
 
-/// Apre un file ricevuto con l'app di default (solo desktop/localhost).
 async fn drop_open_file(
     State(state): State<ServerState>,
     Path(name): Path<String>,
@@ -2743,7 +2566,6 @@ async fn drop_open_file(
     }
 }
 
-/// Mostra il file nel file manager (Finder/Explorer), evidenziandolo.
 async fn drop_reveal_file(
     State(state): State<ServerState>,
     Path(name): Path<String>,
@@ -2758,9 +2580,6 @@ async fn drop_reveal_file(
     }
 }
 
-// ---------- RickyAI ----------
-
-/// Stato del supervisore + quote e modelli letti da `of-free` quando è pronto.
 async fn ai_status(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": state.ai.detailed_snapshot().await }))
 }
@@ -2775,8 +2594,6 @@ fn ai_error_response(error: crate::services::rickyai::AiError) -> Response {
             "error": {
                 "code": error.code,
                 "message": error.message,
-                // Secondi da attendere: su quota esaurita la UI propone il
-                // riprova invece di far ripetere il messaggio a vuoto.
                 "retryAfter": error.retry_after,
                 "retryable": error.status == 429 || error.status >= 500,
             }
@@ -2795,7 +2612,6 @@ async fn ai_chat(
     }
 }
 
-/// Riavvia `of-free` (o ne ritenta l'avvio dopo un fallimento).
 async fn ai_restart(State(state): State<ServerState>) -> Json<serde_json::Value> {
     state.ai.request_restart();
     Json(json!({ "ok": true, "data": { "restarting": true } }))
@@ -2804,21 +2620,18 @@ async fn ai_restart(State(state): State<ServerState>) -> Json<serde_json::Value>
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AiConfigBody {
-    /// Campo assente = invariato. Stringa vuota = torna al default.
     #[serde(default)]
     enabled: Option<bool>,
-    /// `local` (of-free avviato dal tool) | `remote` (servizio in rete).
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
     remote_url: Option<String>,
     #[serde(default)]
+    remote_key: Option<String>,
+    #[serde(default)]
     port: Option<u16>,
     #[serde(default)]
     command: Option<String>,
-    /// Chiavi dei provider: nome della variabile -> valore. Valore vuoto =
-    /// rimuovi. Le chiavi assenti dall'oggetto restano come sono, così la UI
-    /// può salvarne una sola senza rimandare (e senza conoscere) le altre.
     #[serde(default)]
     keys: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default)]
@@ -2827,8 +2640,6 @@ struct AiConfigBody {
     system_prompt: Option<String>,
 }
 
-/// Un percorso configurato che non esiste va rifiutato subito: altrimenti il
-/// supervisore lo riprova a ogni giro e l'utente vede solo "non installato".
 fn existing_file(path: &str, what: &str) -> Result<Option<String>, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -2856,9 +2667,6 @@ async fn ai_config_set(
             return internal_error("modalità non valida: usa local o remote".into());
         }
     }
-    // L'indirizzo si normalizza qui (schema e porta impliciti) e si salva già
-    // pronto: il supervisore non deve indovinare, e l'errore lo vede chi lo sta
-    // scrivendo invece di comparire dopo, come "servizio irraggiungibile".
     let remote_url = match body.remote_url.as_deref().map(str::trim) {
         Some("") => Some(None),
         Some(raw) => match valid_remote_url(raw) {
@@ -2867,8 +2675,6 @@ async fn ai_config_set(
         },
         None => None,
     };
-    // Modalità remota senza indirizzo: si rifiuta invece di accendere una
-    // sezione che non potrebbe funzionare.
     let final_mode = body.mode.as_deref().map(str::trim).unwrap_or(&state.config.get().ai_mode).to_string();
     if final_mode == "remote" {
         let configured = match &remote_url {
@@ -2897,7 +2703,6 @@ async fn ai_config_set(
         }
     }
     if let Some(port) = body.port {
-        // Sotto la 1024 servono privilegi di root: of-free non partirebbe.
         if port < 1024 {
             return internal_error("porta non valida: usane una da 1024 in su".into());
         }
@@ -2912,6 +2717,10 @@ async fn ai_config_set(
         }
         if let Some(url) = &remote_url {
             c.ai_remote_url = url.clone();
+        }
+        if let Some(key) = &body.remote_key {
+            let key = key.trim();
+            c.ai_remote_key = (!key.is_empty()).then(|| key.to_string());
         }
         if let Some(port) = body.port {
             c.ai_port = port;
@@ -2936,13 +2745,10 @@ async fn ai_config_set(
             c.ai_system_prompt = prompt.trim().to_string();
         }
     });
-    // Il supervisore rilegge la config al giro successivo: senza questa sveglia
-    // resterebbe fermo sull'attesa in corso (fino a cinque minuti).
     state.ai.request_restart();
     Json(json!({ "ok": true, "data": state.ai.snapshot() })).into_response()
 }
 
-/// Serve la SPA embedded; fallback su index.html per le route client-side.
 async fn static_assets(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -2969,9 +2775,6 @@ fn asset_response(path: &str, file: rust_embed::EmbeddedFile) -> Response {
 mod tests {
     use super::*;
 
-    /// POST/DELETE che stanno di proposito nel gruppo di sola lettura, con la
-    /// ragione per cui non richiedono il permesso di scrittura. Chi ne aggiunge
-    /// una deve motivarla qui: è il punto in cui ci si ferma a pensare.
     const MUTANTI_SENZA_PERMESSO: &[(&str, &str)] = &[
         ("/api/pair", "stabilisce il pairing: prima di lui non esiste un device abbinato"),
         ("/api/log", "log del frontend, nessun effetto sul sistema"),
@@ -2980,11 +2783,6 @@ mod tests {
         ("/api/drop/text", "hub-to-hub, come sopra"),
     ];
 
-    /// Ogni rotta che modifica qualcosa deve stare in un gruppo con un layer di
-    /// permesso, o essere un'eccezione dichiarata sopra. È il seguito di
-    /// `write_permitted_invariante_di_sicurezza`: quello prova che la regola è
-    /// giusta, questo che è **applicata ovunque** — che è ciò che mancava
-    /// quando `set_remote_control` è rimasto scoperto.
     #[test]
     fn ogni_rotta_mutante_ha_un_permesso() {
         let sorgente = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
@@ -3011,10 +2809,6 @@ mod tests {
         );
     }
 
-    /// Nel gruppo read alcune rotte hanno GET e POST sullo stesso path, col
-    /// layer applicato al singolo metodo. Questo test prova il meccanismo axum
-    /// su cui quella scelta si regge: se un aggiornamento lo cambiasse, la POST
-    /// resterebbe aperta in silenzio.
     #[tokio::test]
     async fn il_layer_per_metodo_protegge_solo_la_post() {
         use tower::ServiceExt;
@@ -3044,10 +2838,6 @@ mod tests {
         );
     }
 
-    /// Il testo di una chat esce dalla macchina e consuma quote condivise, e la
-    /// configurazione decide *quale binario* il tool avvia da solo: nessuna
-    /// delle due può stare fra le letture aperte ai device abbinati. Spostare
-    /// una riga di rotta è un attimo, e da fuori non si vedrebbe.
     #[test]
     fn le_rotte_di_rickyai_stanno_nel_gruppo_giusto() {
         let sorgente = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
@@ -3061,9 +2851,6 @@ mod tests {
         assert!(write.contains("\"/api/ai/chat\""), "la chat deve stare nel gruppo di scrittura");
         assert!(write.contains("\"/api/ai/restart\""), "il riavvio deve stare nel gruppo di scrittura");
 
-        // La configurazione dice *quale binario* il tool avvia da solo: come
-        // l'host Docker, si tocca solo dal desktop, e il controllo remoto non
-        // la sblocca.
         let local = gruppo("let local_only = Router::new()", "let write = ");
         assert!(local.contains("\"/api/ai/config\""), "la config deve essere solo dal desktop");
 
@@ -3073,10 +2860,8 @@ mod tests {
 
     #[test]
     fn write_permitted_invariante_di_sicurezza() {
-        // Loopback: sempre concesso, anche col controllo remoto spento.
         assert!(write_permitted(true, false));
         assert!(write_permitted(true, true));
-        // Remoto: negato salvo controllo remoto attivo.
         assert!(!write_permitted(false, false));
         assert!(write_permitted(false, true));
     }
@@ -3089,7 +2874,6 @@ mod tests {
             expand_tilde("~/Documents/Progetti/Share WebUI"),
             format!("{}/Documents/Progetti/Share WebUI", home.trim_end_matches('/'))
         );
-        // Nessun tilde iniziale: invariato (anche i path assoluti restano tali).
         assert_eq!(expand_tilde("/var/log/app.log"), "/var/log/app.log");
         assert_eq!(expand_tilde("relativo/dir"), "relativo/dir");
     }

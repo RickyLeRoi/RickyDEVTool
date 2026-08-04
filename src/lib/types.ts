@@ -1,6 +1,3 @@
-// Modello dati condiviso col backend.
-// Quando i tipi cresceranno (M1+) verranno generati dalle struct Rust con ts-rs.
-
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ApiError };
@@ -10,7 +7,6 @@ export interface ApiError {
   message: string;
   osHint?: string;
   retryable: boolean;
-  /** Secondi da attendere prima di riprovare (quota LLM esaurita). */
   retryAfter?: number | null;
 }
 
@@ -49,7 +45,6 @@ export interface DockerState {
   daemonDown: boolean;
   containers: DockerContainer[];
   error?: string;
-  /** Host Docker remoto configurato (null/"" = daemon locale). */
   host?: string | null;
 }
 
@@ -67,7 +62,6 @@ export interface DockerImage {
   tag: string;
   size: string;
   created: string;
-  /** Non usata da nessun container (candidata al prune). */
   unused: boolean;
 }
 
@@ -113,7 +107,6 @@ export interface PortProcess {
   isSystem: boolean;
   knownApp: string | null;
   killProtection: "confirm" | "typed-confirm";
-  /** Listener orfano: il processo che l'ha avviato non è più attivo. */
   zombie: boolean;
 }
 
@@ -157,8 +150,6 @@ export interface DiscoveredTool {
   platformNote?: string;
   editions?: ToolEdition[];
 }
-
-// ---------- progetti / git ----------
 
 export interface DirEntryInfo {
   name: string;
@@ -233,7 +224,6 @@ export interface GitBranch {
   name: string;
   isCurrent: boolean;
   isRemoteOnly: boolean;
-  /** Ref remoto corrispondente (es. "origin/main"), se esiste. */
   remoteRef?: string | null;
   lastCommit: {
     shortHash: string;
@@ -306,11 +296,8 @@ export interface LanInfo {
   lanEnabled: boolean;
   remoteControlEnabled: boolean;
   antiIdleEnabled: boolean;
-  /** La richiesta arriva da un device LAN (non dal desktop). */
   remote: boolean;
 }
-
-// ---------- net tools ----------
 
 export interface PingResult {
   host: string;
@@ -341,7 +328,6 @@ export interface LanHost {
   isSelf: boolean;
 }
 
-/** Confronto di due alberature: una differenza tra il ramo sinistro e destro. */
 export type DiffStatus = "onlyLeft" | "onlyRight" | "different";
 
 export interface DiffEntry {
@@ -444,7 +430,6 @@ export type ClipKind = "text" | "image" | "files";
 export interface ClipFile {
   name: string;
   size: number;
-  /** Copia del contenuto disponibile in cache (scaricabile / ri-copiabile). */
   hasBlob: boolean;
 }
 
@@ -475,8 +460,6 @@ export interface AccessibilityStatus {
   supported: boolean;
   trusted: boolean;
 }
-
-// ---------- sensori / gpu / alert / scheduler ----------
 
 export interface TempReading {
   label: string;
@@ -538,8 +521,6 @@ export interface DiskInfo {
   isSystem: boolean;
 }
 
-// ---------- servizi online / alerts ----------
-
 export interface ServiceDef {
   id: string;
   label: string;
@@ -583,8 +564,6 @@ export interface Alert {
   acknowledged: boolean;
 }
 
-// ---------- RickyAI (of-free) ----------
-
 export type AiState = "disabled" | "notInstalled" | "starting" | "ready" | "failed";
 
 export interface AiQuotaLimit {
@@ -592,7 +571,6 @@ export interface AiQuotaLimit {
   window: string;
   remaining: number | null;
   limit: number | null;
-  /** Confermato dagli header del provider, non solo dedotto dal registro. */
   authoritative: boolean;
 }
 
@@ -600,7 +578,6 @@ export interface AiProvider {
   name: string;
   label: string;
   available: boolean;
-  /** Quota residua, 0–1. */
   headroom: number;
   local: boolean;
   limits: AiQuotaLimit[];
@@ -608,7 +585,6 @@ export interface AiProvider {
 
 export type AiMode = "local" | "remote";
 
-/** Un provider e la variabile d'ambiente da cui of-free legge la sua chiave. */
 export interface AiProviderKey {
   id: string;
   label: string;
@@ -618,23 +594,21 @@ export interface AiProviderKey {
 export interface AiStatus {
   state: AiState;
   port: number;
-  /** Radice dell'endpoint in uso: locale o del servizio remoto. */
   baseUrl: string;
-  /** false = istanza esterna o remota: il tool non la spegne né la riavvia. */
   managed: boolean;
   command: string | null;
   message: string | null;
   startedAt: number | null;
   restarts: number;
-  /** Ultime righe di of-free: spiegano un avvio fallito. */
   log: string[];
+  ofFree: boolean;
   enabled: boolean;
   mode: AiMode;
   remoteUrl: string | null;
+  remoteKeySet: boolean;
   configuredPort: number;
   strategy: string;
   systemPrompt: string;
-  /** Nomi delle chiavi impostate — mai il valore. */
   keysSet: string[];
   providerKeys: AiProviderKey[];
   providers: AiProvider[] | null;

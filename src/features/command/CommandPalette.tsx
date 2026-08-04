@@ -3,15 +3,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 export interface Command {
   id: string;
   title: string;
-  /** Etichetta secondaria (es. "Pagina", "Tema"). */
   hint?: string;
-  /** Termini extra per la ricerca (non mostrati). */
   keywords?: string;
   icon?: string;
   run: () => void;
 }
 
-/** Match a sottosequenza case-insensitive: "dsh" trova "Dashboard". */
 function subsequence(query: string, target: string): boolean {
   if (!query) return true;
   let i = 0;
@@ -33,10 +30,6 @@ function score(query: string, cmd: Command): number | null {
   return null;
 }
 
-/**
- * Palette di comandi (⌘K / Ctrl+K): salto rapido tra pagine e azioni globali.
- * La lista di comandi è costruita dall'App e passata come prop.
- */
 export function CommandPalette({
   open,
   onClose,
@@ -63,13 +56,10 @@ export function CommandPalette({
     if (open) {
       setQuery("");
       setSel(0);
-      // Focus dopo il paint, così l'input riceve i tasti.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
 
-  // Escape a livello window: chiude anche se l'input non ha ancora preso il
-  // focus (l'onKeyDown dell'input da solo aveva una race sul focus iniziale).
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -83,7 +73,6 @@ export function CommandPalette({
     setSel(0);
   }, [query]);
 
-  // Tiene la voce selezionata nel viewport durante la navigazione da tastiera.
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`[data-idx="${sel}"]`)?.scrollIntoView({
       block: "nearest",

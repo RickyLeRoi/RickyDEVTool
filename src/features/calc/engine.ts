@@ -1,18 +1,3 @@
-// Motore della calcolatrice: parsing + valutazione di espressioni matematiche
-// senza `eval` (parser a discesa ricorsiva). Modulo puro e testabile.
-//
-// Grammatica (precedenza crescente):
-//   expr   := term (('+' | '-') term)*
-//   term   := unary (('*' | '/' | '%' | 'mod') unary)*
-//   unary  := ('+' | '-') unary | power     // meno unario più lasco di '^'
-//   power  := postfix ('^' unary)?          // esponente associativo a destra
-//   postfix:= primary ('!')*                // fattoriale
-//   primary:= number | const | func '(' expr ')' | '(' expr ')'
-//
-// L'ordine (unario sopra power) rende `-2^2 = -(2^2) = -4`, convenzione di
-// Python/Google e della gran parte delle calcolatrici, mentre `2^-3` resta
-// valido perché la destra di '^' rientra in `unary`.
-
 export type AngleMode = "deg" | "rad";
 
 const CONSTS: Record<string, number> = {
@@ -70,7 +55,6 @@ function tokenize(input: string): Token[] {
     if (c >= "0" && c <= "9") {
       let j = i;
       while (j < s.length && /[0-9._]/.test(s[j])) j++;
-      // notazione esponenziale: 1e3, 2.5e-4
       if (s[j] === "e" || s[j] === "E") {
         if (s[j + 1] === "+" || s[j + 1] === "-" || /[0-9]/.test(s[j + 1] ?? "")) {
           j++;
@@ -103,7 +87,6 @@ function tokenize(input: string): Token[] {
       continue;
     }
     if ("+-*/^%!×÷".includes(c)) {
-      // normalizza i simboli "belli"
       const v = c === "×" ? "*" : c === "÷" ? "/" : c;
       tokens.push({ t: "op", v });
       i++;
@@ -116,7 +99,7 @@ function tokenize(input: string): Token[] {
 
 function factorial(n: number): number {
   if (n < 0 || !Number.isInteger(n)) throw new Error("fattoriale definito solo su interi ≥ 0");
-  if (n > 170) return Infinity; // oltre, overflow del double
+  if (n > 170) return Infinity;
   let r = 1;
   for (let k = 2; k <= n; k++) r *= k;
   return r;
@@ -188,7 +171,6 @@ class Parser {
     const tk = this.peek();
     if (tk?.t === "op" && tk.v === "^") {
       this.next();
-      // destra in `unary` → 2^-3 valido; associativo a destra: 2^3^2 = 2^(3^2)
       return Math.pow(base, this.unary());
     }
     return base;
@@ -218,17 +200,15 @@ class Parser {
     }
     if (tk.t === "ident") {
       const name = tk.v.toLowerCase();
-      // funzione: identificatore seguito da '('
       if (this.peek()?.t === "lparen") {
         const fn = this.fns[name];
         if (!fn) throw new Error(`funzione sconosciuta: ${tk.v}`);
-        this.next(); // consuma '('
+        this.next();
         const arg = this.expr();
         const close = this.next();
         if (close?.t !== "rparen") throw new Error("parentesi ) mancante");
         return fn(arg);
       }
-      // costante
       const c = CONSTS[name] ?? CONSTS[tk.v];
       if (c !== undefined) return c;
       throw new Error(`identificatore sconosciuto: ${tk.v}`);
@@ -246,14 +226,10 @@ export function evaluate(expr: string, angle: AngleMode = "rad"): number {
   return result;
 }
 
-// ------------------------------------------------------------- convertitore basi
-
 export type Base = "dec" | "hex" | "oct" | "bin";
 
 const RADIX: Record<Base, number> = { dec: 10, hex: 16, oct: 8, bin: 2 };
 
-/** Interpreta una stringa in una data base come intero (BigInt per non perdere
- *  precisione oltre i 53 bit). Ammette segno e prefissi 0x/0o/0b. */
 export function parseInBase(text: string, base: Base): bigint | null {
   let s = text.trim().toLowerCase().replace(/[_\s]/g, "");
   if (!s || s === "-" || s === "+") return null;
@@ -280,7 +256,6 @@ export function parseInBase(text: string, base: Base): bigint | null {
   return neg ? -acc : acc;
 }
 
-/** Formatta un intero in tutte e quattro le basi. */
 export function formatBases(value: bigint): Record<Base, string> {
   const neg = value < 0n;
   const abs = neg ? -value : value;

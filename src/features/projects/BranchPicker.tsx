@@ -7,9 +7,7 @@ interface BranchPickerProps {
   path: string;
   dirty: boolean;
   onCheckout: (info: GitRepoInfo) => void;
-  /** Branch di cui si stanno mostrando i commit (per evidenziarlo). */
   selectedRef: string | null;
-  /** Click sulla riga: mostra i commit di quel branch (null = torna a HEAD). */
   onSelectBranch: (name: string | null) => void;
 }
 
@@ -146,7 +144,6 @@ export function BranchPicker({
             setDeleting(null);
             if (updated) {
               setBranches(updated);
-              // Se stavo mostrando i commit del branch eliminato, torna a HEAD.
               if (selectedRef === deleting.name) onSelectBranch(null);
             }
           }}

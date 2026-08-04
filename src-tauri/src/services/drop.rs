@@ -8,20 +8,9 @@ use serde::Serialize;
 use crate::config::ConfigHandle;
 use crate::events::{now_ms, EventBus};
 
-/// File drop stile Snapdrop: ogni client con la UI aperta si annuncia come
-/// peer (hello periodico), vede gli altri e gli invia file o testo. Il
-/// trasferimento passa dal server (che gira sul desktop): mittente → upload,
-/// destinatario → notifica WS su `drop:{deviceId}` e download. Se il
-/// destinatario è il desktop, il file viene salvato direttamente in
-/// Downloads/RickyDEVTool (la webview non ha un download manager).
-
-/// Un peer sparisce se non si annuncia da 45s (hello ogni 15s).
 const PEER_TTL_MS: u64 = 45_000;
-/// I file in transito non ritirati vengono eliminati dopo 1h.
 const TRANSFER_TTL_MS: u64 = 3_600_000;
 const MAX_TEXT_LEN: usize = 64 * 1024;
-/// Limite per i file proxati integralmente in memoria verso un altro hub
-/// (sia dall'upload HTTP che dall'invio diretto da tray).
 pub const MAX_PROXY_BYTES: usize = 200 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,8 +20,6 @@ pub struct PeerInfo {
     pub name: String,
     pub is_desktop: bool,
     pub last_seen: u64,
-    /// true se rappresenta un altro hub (altro computer) scoperto in LAN,
-    /// non un browser/telefono collegato a QUESTO hub.
     #[serde(default)]
     pub remote: bool,
 }
@@ -40,7 +27,6 @@ pub struct PeerInfo {
 struct Transfer {
     name: String,
     path: PathBuf,
-    /// Percorso finale se salvato direttamente su disco (destinatario desktop).
     saved_path: Option<String>,
     created_at: u64,
 }
@@ -74,7 +60,6 @@ fn sanitize_name(name: &str) -> String {
     }
 }
 
-/// "report.pdf" → "report (1).pdf" finché non trova un nome libero.
 fn dedupe_path(dir: &PathBuf, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
@@ -100,7 +85,6 @@ impl DropService {
         hub_registry: Arc<crate::services::hubdiscovery::HubRegistry>,
     ) -> Self {
         let transfer_dir = crate::config::data_dir().join("drop-transfers");
-        // Residui di sessioni precedenti: si riparte puliti.
         let _ = std::fs::remove_dir_all(&transfer_dir);
         let _ = std::fs::create_dir_all(&transfer_dir);
         let received_dir = dirs::download_dir()
@@ -122,25 +106,18 @@ impl DropService {
         &self.received_dir
     }
 
-    /// Identità permanente di questo hub (sopravvive a riavvii e all'assenza
-    /// di browser collegati): è il target che un altro hub usa per proxare un
-    /// invio "al computer", indipendentemente da eventuali peer via hello.
     pub fn hub_id(&self) -> String {
         self.config.get().drop_hub_id
     }
 
-    /// Altri hub (altri computer con RickyDEVTool) scoperti in LAN via beacon UDP.
     pub fn remote_hubs(&self) -> Vec<crate::services::hubdiscovery::RemoteHub> {
         self.hub_registry.list()
     }
 
-    /// Un hub remoto specifico, se ancora visto di recente: usato per capire
-    /// se un invio va proxato verso un'altra macchina.
     pub fn remote_hub(&self, hub_id: &str) -> Option<crate::services::hubdiscovery::RemoteHub> {
         self.hub_registry.get(hub_id)
     }
 
-    /// Registra/aggiorna un peer e ritorna la lista aggiornata (senza il chiamante).
     pub fn hello(&self, device_id: &str, name: &str, is_desktop: bool) -> Vec<PeerInfo> {
         let now = now_ms();
         {
@@ -162,8 +139,6 @@ impl DropService {
         self.peers_except(device_id)
     }
 
-    /// Peer locali (via hello) + hub remoti scoperti in LAN, uniti in una
-    /// sola lista per la UI. `device_id` è escluso (è chi sta chiedendo).
     pub fn peers_except(&self, device_id: &str) -> Vec<PeerInfo> {
         let now = now_ms();
         let mut list: Vec<PeerInfo> = {
@@ -190,10 +165,6 @@ impl DropService {
         list
     }
 
-    /// true/false se il device è un peer noto; None se non registrato. Il
-    /// proprio hub_id è sempre riconosciuto come desktop, anche senza hello:
-    /// è il target stabile che un altro hub usa per proxare un invio "a
-    /// questo computer" indipendentemente da eventuali browser aperti.
     fn peer_is_desktop(&self, device_id: &str) -> Option<bool> {
         if device_id == self.hub_id() {
             return Some(true);
@@ -206,8 +177,6 @@ impl DropService {
             .map(|p| p.is_desktop)
     }
 
-    /// Dove scrivere il file in arrivo per `to_device`.
-    /// Desktop → direttamente nella cartella dei ricevuti; altri → dir di transito.
     pub fn prepare_incoming(&self, to_device: &str, file_name: &str) -> Result<(String, PathBuf, bool), String> {
         let is_desktop = self
             .peer_is_desktop(to_device)
@@ -223,7 +192,6 @@ impl DropService {
         Ok((id, path, is_desktop))
     }
 
-    /// Registra il trasferimento completato e notifica il destinatario via WS.
     pub fn finish_incoming(
         &self,
         id: &str,
@@ -235,7 +203,6 @@ impl DropService {
         saved_on_disk: bool,
     ) {
         let name = if saved_on_disk {
-            // Il nome può essere stato dedupato: usa quello reale su disco.
             path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| sanitize_name(file_name))
@@ -278,9 +245,6 @@ impl DropService {
         Ok(())
     }
 
-    /// Come [`send_text`] ma con `kind: "clipboard"`: il ricevente lo registra
-    /// nel proprio storico appunti (clipboard di rete) invece di trattarlo come
-    /// un semplice testo ricevuto.
     pub fn send_clipboard(&self, to_device: &str, from_name: &str, text: &str) -> Result<(), String> {
         if text.is_empty() || text.len() > MAX_TEXT_LEN {
             return Err("testo vuoto o troppo lungo".to_string());
@@ -294,11 +258,6 @@ impl DropService {
         Ok(())
     }
 
-    /// Invia un file locale (path su disco di QUESTO processo, es. scelto da
-    /// un dialog nativo del tray) a un peer o a un altro hub. Verso un peer
-    /// locale/desktop copia senza passare da un buffer in memoria; verso un
-    /// hub remoto legge il file e lo proxa via HTTP multipart (limite
-    /// [`MAX_PROXY_BYTES`], come per l'upload dal browser).
     pub async fn send_local_file(&self, to: &str, from_name: &str, source: &std::path::Path) -> Result<(), String> {
         let file_name = source
             .file_name()
@@ -325,10 +284,6 @@ impl DropService {
         Ok(())
     }
 
-    /// Inoltra un file all'hub remoto via HTTP (l'utente ha scelto un peer che
-    /// vive su un'altra macchina, scoperta via UDP broadcast). `to` per il
-    /// ricevente è il SUO hub_id: ogni hub riconosce sempre il proprio come
-    /// "il desktop", quindi non serve che il destinatario abbia fatto hello.
     pub async fn proxy_send_file(
         &self,
         hub: &crate::services::hubdiscovery::RemoteHub,
@@ -379,7 +334,6 @@ impl DropService {
         Ok(())
     }
 
-    /// (path, nome) per servire il download di un trasferimento.
     pub fn transfer_file(&self, id: &str) -> Option<(PathBuf, String)> {
         let transfers = self.transfers.lock().expect("transfers lock");
         let t = transfers.get(id)?;
@@ -391,7 +345,6 @@ impl DropService {
         let mut transfers = self.transfers.lock().expect("transfers lock");
         transfers.retain(|_, t| {
             let keep = now.saturating_sub(t.created_at) < TRANSFER_TTL_MS;
-            // I file già salvati nei ricevuti restano: si elimina solo il transito.
             if !keep && t.saved_path.is_none() {
                 let _ = std::fs::remove_file(&t.path);
             }
@@ -411,7 +364,6 @@ impl DropService {
             .publish("drop-peers", serde_json::json!({ "peers": list }));
     }
 
-    /// File ricevuti sul desktop (cartella Downloads/RickyDEVTool).
     pub fn received_files(&self) -> Vec<ReceivedFile> {
         let mut files = Vec::new();
         let Ok(entries) = std::fs::read_dir(&self.received_dir) else {
@@ -447,8 +399,6 @@ impl DropService {
         std::fs::remove_file(self.received_dir.join(&clean)).map_err(|e| e.to_string())
     }
 
-    /// Percorso validato di un file ricevuto (per aprirlo/mostrarlo).
-    /// Il nome deve restare dentro la cartella dei ricevuti: niente traversal.
     pub fn received_path(&self, name: &str) -> Result<PathBuf, String> {
         let clean = sanitize_name(name);
         if clean != name {
@@ -518,7 +468,6 @@ mod tests {
         assert_eq!(event.topic, "drop:b");
         assert_eq!(event.payload.get("kind").and_then(|v| v.as_str()), Some("clipboard"));
         assert_eq!(event.payload.get("text").and_then(|v| v.as_str()), Some("segreto"));
-        // peer inesistente → errore
         assert!(service.send_clipboard("nessuno", "X", "ciao").is_err());
     }
 
@@ -526,8 +475,6 @@ mod tests {
     fn il_proprio_hub_id_e_sempre_desktop_anche_senza_hello() {
         let service = test_service();
         let hub_id = service.hub_id();
-        // Nessun hello mai fatto: eppure il proprio hub_id deve funzionare come
-        // target valido, perché è così che un altro hub ci invia qualcosa.
         assert!(service.send_text(&hub_id, "Altro PC", "ciao dal proxy").is_ok());
     }
 }

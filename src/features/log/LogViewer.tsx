@@ -13,11 +13,6 @@ function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
-/**
- * Segue file di log arbitrari (tail -f) in streaming via WS. Sezione top-level:
- * i tail restano vivi lato backend anche cambiando pagina (max 5, auto-stop 2h),
- * così puoi tenerne aperti diversi e tornarci sopra da qualsiasi dispositivo.
- */
 export function LogViewer() {
   const [tails, setTails] = useState<TailInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -43,7 +38,6 @@ export function LogViewer() {
     loadList();
   }, [loadList]);
 
-  // Streaming del tail attivo.
   useEffect(() => {
     if (!activeId) {
       setLines([]);

@@ -5,11 +5,6 @@ import type { AccessibilityStatus, LanInfo } from "../../lib/types";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 
-/**
- * Interruttore anti-inattività (muove il mouse dopo minuti di idle) con la
- * gestione del permesso Accessibilità di macOS. Estratto dalle Impostazioni per
- * vivere come tab della pagina Tool: recupera da solo LAN e stato accessibilità.
- */
 export function AntiIdlePanel() {
   const [lan, setLan] = useState<LanInfo | null>(null);
   const [access, setAccess] = useState<AccessibilityStatus | null>(null);
@@ -50,16 +45,15 @@ export function AntiIdlePanel() {
     }
   };
 
-  // Dal telefono resta bloccato finché non è attivo il controllo remoto.
   const locked = !!lan?.remote && !lan?.remoteControlEnabled;
-  const needsAccessibility =
-    !!lan?.antiIdleEnabled && !!access?.supported && !access.trusted;
+  const needsAccessibility = !!lan?.antiIdleEnabled && !!access?.supported && !access.trusted;
 
   return (
-    <section className="tool-panel">
+    <section>
+      <h3>Anti-inattività</h3>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-title">Anti-inattività</div>
+          <div className="setting-title">Muovi il mouse quando sono inattivo</div>
           <div className="hint">
             Dopo 5 minuti di inattività muove il mouse ogni 3 minuti, così lo schermo non si
             spegne e le chat non ti segnano assente. Se torni attivo, si ferma da solo.
@@ -75,7 +69,7 @@ export function AntiIdlePanel() {
       {locked && (
         <div className="hint hint-locked">
           🔒 Dal telefono i comandi sono in sola lettura: attiva il <strong>Controllo
-          remoto</strong> dalle Impostazioni per gestire questo interruttore.
+          remoto</strong> qui sotto per gestire questo interruttore.
         </div>
       )}
       {needsAccessibility && (

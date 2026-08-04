@@ -9,7 +9,6 @@ function StateDot({ state }: { state: ServiceState }) {
 
 function CertBadge({ daysLeft }: { daysLeft: number | null }) {
   if (daysLeft === null) return null;
-  // Mostra il badge solo se merita attenzione (scaduto o < 21 giorni).
   if (daysLeft > 21) return null;
   if (daysLeft < 0) {
     return <span className="badge badge-cert-expired" title="Certificato TLS scaduto">cert scaduto</span>;
@@ -46,7 +45,6 @@ export function Services() {
 
   useEffect(() => {
     loadDefs();
-    // Sottoscrizione = il backend inizia i check; uscendo dalla sezione si ferma tutto.
     return ws.subscribe("services", (event) => {
       if (event.topic === "services")
         setStatuses((event.payload as { statuses: ServiceStatus[] }).statuses);
@@ -67,8 +65,6 @@ export function Services() {
   };
 
   const startEdit = (d: ServiceDef) => {
-    // I preset non sono editabili: il backend ignora label/target/kind e
-    // cambia solo "enabled" (già gestito dal toggle Attiva/Disattiva).
     if (d.builtin) return;
     setEditingId(d.id);
     setForm({ label: d.label, target: d.target, kind: d.kind });

@@ -4,7 +4,6 @@ import { post } from "../../lib/api";
 import { useSubmit } from "../../lib/useSubmit";
 import type { GitBranch } from "../../lib/types";
 
-// Nome del remote dal ref completo: "origin/feature/x" → "origin".
 function remoteName(remoteRef: string): string {
   return remoteRef.split("/")[0];
 }
@@ -24,7 +23,6 @@ export function DeleteBranchDialog({
   const [needForce, setNeedForce] = useState(false);
   const { busy, error, run } = useSubmit();
 
-  // Se si elimina anche dal remoto serve la conferma extra esplicita.
   const blocked = alsoRemote && !confirmRemote;
 
   const submit = async (force: boolean) => {
@@ -38,7 +36,6 @@ export function DeleteBranchDialog({
         }),
       (data) => onClose(data.branches),
     );
-    // git rifiuta i branch non uniti: mostra l'opzione di forzatura.
     if (!r.ok && !force && /not fully merged|non.*mergiat/i.test(r.error.message)) {
       setNeedForce(true);
     }
@@ -48,8 +45,6 @@ export function DeleteBranchDialog({
     <Modal
       title={`Elimina branch «${branch.name}»`}
       onCancel={() => onClose(null)}
-      // Quando si offre la forzatura il banner giallo spiega già il problema:
-      // ripetere l'errore grezzo di git sarebbe solo rumore.
       error={needForce ? null : error}
       busy={busy}
       confirm={{

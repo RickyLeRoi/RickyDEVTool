@@ -9,20 +9,16 @@ function fmtGb(bytes: number) {
   return (bytes / 1024 ** 3).toFixed(1);
 }
 
-// Pagina d'origine di un alert, dal suo `kind`: cliccando l'alert ci si va.
 function alertTarget(kind: string): string | null {
-  if (kind === "service-down" || kind.startsWith("cert")) return "services"; // → Rete/Servizi
+  if (kind === "service-down" || kind.startsWith("cert")) return "services";
   if (kind === "task-failed") return "tasks";
   if (kind === "cpu-sustained" || kind === "mem-high" || kind === "temp-high" || kind === "battery-low")
     return "dashboard";
   return null;
 }
 
-// Poll lento: lo shortcut Docker è un indicatore, non un monitor. Su host remoto
-// ssh:// non vogliamo aprire una connessione ogni pochi secondi.
 const DOCKER_POLL_MS = 60_000;
 
-/** Pannello destro sempre visibile: CPU/RAM, avvii rapidi, Docker e alert. */
 export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => void }) {
   const { latest, cpuHistory, memHistory } = useStatsStore();
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -39,14 +35,12 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
     });
   }, []);
 
-  // Profili di avvio: se ne hai configurati, li mostro qui come quick-launch.
   useEffect(() => {
     api<{ bundles: LaunchBundle[] }>("/api/launch/bundles").then((r) => {
       if (r.ok) setBundles(r.data.bundles ?? []);
     });
   }, []);
 
-  // Stato Docker: lo shortcut appare solo se Docker è attivo.
   useEffect(() => {
     let alive = true;
     const load = () =>

@@ -7,16 +7,6 @@ import type { DropIncoming, DropPeer } from "../../lib/types";
 
 const HELLO_INTERVAL_MS = 15000;
 
-/**
- * Rende il dispositivo visibile agli altri (hello periodico) e resta in ascolto
- * dei file/testo in arrivo — attivo per tutta la vita della UI, così puoi
- * ricevere anche mentre sei su un'altra sezione.
- *
- * Oltre al proprio canale, si sottoscrive anche a quello dell'hub di QUESTO
- * server (id stabile, indipendente dal browser): è il canale su cui arrivano
- * i file/testo proxati da un altro computer scoperto in LAN, che non passano
- * per un hello di questo browser.
- */
 export function usePresence() {
   const setPeers = useDropStore((s) => s.setPeers);
   const addIncoming = useDropStore((s) => s.addIncoming);
@@ -26,9 +16,6 @@ export function usePresence() {
     let stopped = false;
     let unsubHub: (() => void) | null = null;
 
-    // La clipboard di rete arriva come Drop di tipo "clipboard": oltre a
-    // mostrare il toast, la registra nello storico appunti locale (senza
-    // sovrascrivere la clipboard di sistema: la applica l'utente con Copia).
     const handleIncoming = (data: DropIncoming) => {
       if (data.kind === "clipboard") {
         post("/api/clipboard/record", { text: data.text });
@@ -56,7 +43,6 @@ export function usePresence() {
 
     const unsubPeers = ws.subscribe("drop-peers", (event) => {
       const all = (event.payload as { peers: DropPeer[] }).peers;
-      // Il broadcast include tutti: togli me stesso.
       setPeers(all.filter((p) => p.deviceId !== deviceId));
     });
     const unsubMine = ws.subscribe(`drop:${deviceId}`, (event) => {

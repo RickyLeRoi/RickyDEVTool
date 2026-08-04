@@ -100,9 +100,21 @@ git clone https://github.com/RickyLeRoi/onfeather-free && cd onfeather-free && p
 
 ### Servizio in rete
 
-Un `of-free` che gira **altrove** — tipicamente in Docker su un altro computer. Si indica l'indirizzo (`192.168.1.50:4141`; schema e porta di default sottintesi) e il tool non avvia né spegne niente: verifica che dall'altra parte ci sia davvero of-free, tiene d'occhio che risponda, e ci inoltra le chat. Le chiavi stanno su **quella** macchina, quindi la sezione delle chiavi qui sparisce.
+Un endpoint **OpenAI-compatibile** che gira altrove. Si indica l'indirizzo (`192.168.1.50:4141`; schema e porta di default sottintesi, `/v1` finale tollerato, path conservato per chi sta dietro un reverse proxy) più — se il servizio la richiede — una **chiave API**, mandata come `Authorization: Bearer`. Il tool non avvia né spegne niente: verifica che dall'altra parte risponda qualcosa di sensato, tiene d'occhio che continui a farlo, e ci inoltra le chat.
 
-Il servizio remoto deve essere in ascolto su `0.0.0.0` e non solo su `127.0.0.1`, altrimenti da fuori non risponde: è il motivo per cui un container "non si vede", ed è scritto nel messaggio d'errore.
+Funziona con tre famiglie di destinatari, provate una per una:
+
+| Destinatario | Indirizzo | Chiave | Cosa cambia |
+|---|---|---|---|
+| `of-free` (anche in Docker) | `192.168.1.50:4141` | no | tutto come in locale: routing fra provider, quote, `auto`/`private` |
+| Ollama, LM Studio, vLLM… | `192.168.1.50:11434` | no | si sceglie il modello dalla lista del servizio |
+| OpenRouter e API hosted | `https://openrouter.ai/api/v1` | sì | idem, e la chiave viaggia solo verso quel servizio |
+
+Quando dall'altra parte **non** c'è of-free il tool lo dice e si comporta di conseguenza: niente pannello quote (`/v1/status` è suo e altrove è un 404), e niente `auto`/`private` nel selettore — sono modelli virtuali del router, che su Ollama sarebbero nomi inesistenti. La liveness usa `/v1/models`, che è standard: `/health` esiste solo in of-free e su Ollama risponde 404, cioè "caduto" per un servizio che sta benissimo.
+
+Un servizio in LAN deve essere in ascolto su `0.0.0.0` e non solo su `127.0.0.1`, altrimenti da fuori non risponde: è il motivo per cui un container "non si vede", ed è scritto nel messaggio d'errore.
+
+> L'**adozione automatica** in locale resta invece stretta: lì nessuno ha indicato niente, e adottare per sbaglio un servizio qualsiasi in ascolto sulla 4141 significherebbe mandargli le conversazioni. Solo un endpoint che espone il modello `auto` viene adottato.
 
 ### In comune
 

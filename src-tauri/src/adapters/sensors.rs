@@ -1,8 +1,3 @@
-//! Sensori di sistema: temperature (sysinfo), batteria (CLI di piattaforma) e
-//! GPU (adapter dedicato). Best-effort: ogni pezzo può mancare — Apple Silicon
-//! non espone quasi mai le temperature senza permessi elevati, un desktop non ha
-//! batteria — e in quel caso torna vuoto/None invece di fallire.
-
 use serde::Serialize;
 
 use crate::adapters::gpu::GpuInfo;
@@ -20,9 +15,7 @@ pub struct TempReading {
 #[serde(rename_all = "camelCase")]
 pub struct Battery {
     pub percent: f32,
-    /// true se l'alimentazione è collegata (in carica o già carica).
     pub charging: bool,
-    /// Stato in forma umana ("carica", "in carica", "in scarica").
     pub state: String,
 }
 
@@ -32,7 +25,6 @@ pub struct SensorsSnapshot {
     pub temps: Vec<TempReading>,
     pub battery: Option<Battery>,
     pub gpus: Vec<GpuInfo>,
-    /// Temperatura più alta rilevata: comoda per la card e per gli alert termici.
     pub max_temp_c: Option<f32>,
 }
 
@@ -47,9 +39,6 @@ pub async fn read() -> SensorsSnapshot {
     SensorsSnapshot { temps, battery, gpus, max_temp_c }
 }
 
-/// Lettura leggera per gli alert in background: solo temperatura massima e
-/// batteria (niente GPU). Pensata per girare sempre, a bassa frequenza, anche
-/// senza dashboard aperta — così gli alert termici/batteria scattano comunque.
 pub async fn read_for_alerts() -> serde_json::Value {
     let temps = tokio::task::spawn_blocking(read_temps).await.unwrap_or_default();
     let battery = read_battery().await;
@@ -75,15 +64,11 @@ fn read_temps() -> Vec<TempReading> {
     out
 }
 
-// ---------- batteria (per piattaforma) ----------
-
 #[cfg(target_os = "macos")]
 async fn read_battery() -> Option<Battery> {
     parse_pmset(&exec::text(exec::cmd("pmset").args(["-g", "batt"])).await?)
 }
 
-/// Estrae percentuale e stato dall'output di `pmset -g batt`. None se non c'è
-/// una batteria interna (desktop / Mac fisso).
 #[cfg(target_os = "macos")]
 fn parse_pmset(text: &str) -> Option<Battery> {
     let line = text.lines().find(|l| l.contains('%'))?;
@@ -150,7 +135,6 @@ async fn read_battery() -> Option<Battery> {
     let mut parts = line.split(';');
     let percent: f32 = parts.next()?.trim().parse().ok()?;
     let status: i32 = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
-    // Win32_Battery.BatteryStatus: 1 = in scarica; tutto il resto = collegata.
     let charging = status != 1;
     let state = if status == 1 { "in scarica" } else { "alimentazione collegata" };
     Some(Battery { percent, charging, state: state.to_string() })

@@ -1,8 +1,3 @@
-//! Menu contestuale dell'icona nella barra applicazioni.
-//! I dati mostrati (CPU/RAM/porte/servizi/strumenti) vengono da uno snapshot
-//! rinfrescato in background (vedi `snapshot.rs`): il click sul tray non
-//! aspetta mai uno scan o un check servizi dal vivo.
-
 mod snapshot;
 
 use std::sync::Arc;
@@ -19,8 +14,6 @@ use crate::services::drop::DropService;
 use snapshot::{SharedSnapshot, TraySnapshot};
 
 const TRAY_ID: &str = "main-tray";
-/// Tool discovery id → può essere avviato direttamente (gli altri sono CLI
-/// senza una "apertura" diretta: si usano dai pannelli Node/.NET).
 const LAUNCHABLE_TOOLS: [&str; 3] = ["vscode", "visualstudio", "terminal"];
 
 pub fn setup(app: &AppHandle, info: ServerInfo) -> tauri::Result<()> {
@@ -50,12 +43,6 @@ pub fn setup(app: &AppHandle, info: ServerInfo) -> tauri::Result<()> {
             handle_menu_event(app, event.id().as_ref(), &config_for_menu, &drop_for_menu, &snapshot_for_menu, port)
         })
         .on_tray_icon_event(move |tray, event| {
-            // Rinfresca SOLO al passaggio del mouse sull'icona (Enter), mai
-            // su un timer né al click stesso: un `set_menu` mentre il menu
-            // è aperto (o mentre l'OS lo sta aprendo, sul click) lo fa
-            // chiudere di scatto — bug osservato con entrambi gli approcci.
-            // Il mouse entra sempre nell'icona PRIMA del click, quindi
-            // arriviamo comunque con dati freschi.
             if !matches!(event, TrayIconEvent::Enter { .. }) {
                 return;
             }
@@ -122,8 +109,6 @@ fn build_menu(
         .build()
 }
 
-// ---------- sezioni ----------
-
 fn build_system_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Submenu<Wry>> {
     let cpu_item = MenuItemBuilder::new(format!("CPU: {:.0}%", snap.cpu_pct))
         .enabled(false)
@@ -175,8 +160,6 @@ fn build_ports_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Su
         if !entry.processes.is_empty() {
             sub = sub.separator();
         }
-        // Kill diretto dal tray (con conferma nativa) per i processi normali;
-        // i protetti (typed-confirm) e quelli di sistema restano solo nell'app.
         for p in &entry.processes {
             if p.is_system {
                 let item = MenuItemBuilder::new(format!("{} (pid {}) — di sistema", p.name, p.pid))
@@ -230,8 +213,6 @@ fn build_services_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result
     builder.build()
 }
 
-/// Strumenti di rete raggiungibili in un clic (sono tutti tab della sezione
-/// Rete: il tab richiesto viaggia come "extra" dell'evento di navigazione).
 fn build_net_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let scan_item = MenuItemBuilder::with_id("nav:net:scan", "Scansiona rete locale…").build(app)?;
     let mut builder = SubmenuBuilder::new(app, "Rete").item(&scan_item).separator();
@@ -242,7 +223,6 @@ fn build_net_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     builder.build()
 }
 
-/// Tab della sezione Rete (Docker incluso: da questa versione è un tab di Rete).
 const NET_TABS: &[(&str, &str)] = &[
     ("listen", "Porte in ascolto"),
     ("services", "Servizi"),
@@ -254,7 +234,6 @@ const NET_TABS: &[(&str, &str)] = &[
     ("docker", "🐳 Docker"),
 ];
 
-/// Tab della sezione Tool.
 const TOOL_TABS: &[(&str, &str)] = &[
     ("clipboard", "📋 Appunti"),
     ("launch", "🚀 Avvii"),
@@ -262,7 +241,6 @@ const TOOL_TABS: &[(&str, &str)] = &[
     ("color", "🎨 Colorimetro"),
     ("cron", "⏱ Cron"),
     ("compare", "🔀 Confronta cartelle"),
-    ("antiidle", "🕒 Anti-inattività"),
     ("tools", "🔧 Strumenti"),
 ];
 
@@ -305,10 +283,6 @@ fn build_pairing_submenu(app: &AppHandle, cfg: &crate::config::AppConfig) -> tau
         .build()
 }
 
-/// Scorciatoie che aprono l'app direttamente dove serve: le sezioni semplici
-/// come voce singola, quelle a tab (Rete, Tool) come sottomenu con dentro tutti
-/// i loro strumenti. È la mappa completa delle funzioni dell'app: quando ne
-/// nasce una nuova va aggiunta qui (e nei TABS sopra).
 fn build_sections_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let mut builder = SubmenuBuilder::new(app, "Apri sezione");
 
@@ -388,8 +362,6 @@ fn tool_label(id: &str) -> &'static str {
     }
 }
 
-// ---------- azioni ----------
-
 fn handle_menu_event(
     app: &AppHandle,
     id: &str,
@@ -443,12 +415,9 @@ fn focus_window(app: &AppHandle) {
     }
 }
 
-/// Porta in primo piano la finestra e la naviga sulla sezione giusta via un
-/// evento ascoltato dal frontend: le voci del tray che servono UI ricca
-/// (invio testo, QR) non possono farlo direttamente da un menu nativo.
 fn navigate(app: &AppHandle, id: &str) {
     let mut parts = id.splitn(3, ':');
-    parts.next(); // "nav"
+    parts.next();
     let Some(section) = parts.next() else { return };
     let extra = parts.next();
 
@@ -472,11 +441,6 @@ fn launch_tool(snapshot: &SharedSnapshot, tool_id: String) {
     });
 }
 
-/// Kill diretto dal tray: conferma nativa semplice (non il typed-confirm
-/// robusto dell'app, riservato ai processi protetti — quelli restano
-/// raggiungibili solo da lì). Il processo va ri-cercato nello snapshot
-/// corrente: l'id del menu porta solo (porta, pid), non nome/orario di
-/// avvio, che servono a `kill_process` per rifiutare un PID riusato.
 fn confirm_and_kill_port_process(app: &AppHandle, snapshot: &SharedSnapshot, port: u16, pid: u32) {
     let proc = snapshot
         .read()
@@ -534,9 +498,6 @@ fn kill_error_message(e: crate::adapters::kill::KillError) -> String {
     }
 }
 
-/// Dialog nativo di selezione file → invio diretto (peer locale: copia su
-/// disco; hub remoto: proxy HTTP). Nessuna conferma nel tray: un eventuale
-/// errore viene solo loggato e mostrato in un avviso non bloccante.
 fn pick_and_send_file(app: &AppHandle, drop: Arc<DropService>, config: ConfigHandle, device_id: String) {
     let app_for_error = app.clone();
     app.dialog().file().pick_file(move |file_path| {

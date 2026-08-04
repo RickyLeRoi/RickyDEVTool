@@ -7,7 +7,6 @@ import {
   type Base,
 } from "./engine";
 
-// Tastiera scientifica: ogni tasto inserisce testo nell'espressione.
 const KEYS: { label: string; insert?: string; act?: "eq" | "clear" | "back" }[][] = [
   [
     { label: "sin", insert: "sin(" },
@@ -73,7 +72,6 @@ function Calculator() {
   const [angle, setAngle] = useState<AngleMode>("rad");
   const [history, setHistory] = useState<{ expr: string; result: string }[]>([]);
 
-  // Anteprima live: risultato se l'espressione è valida, altrimenti niente.
   const preview = useMemo(() => {
     if (!expr.trim()) return { value: null as number | null, error: null as string | null };
     try {
@@ -174,8 +172,6 @@ function Calculator() {
 
 function fmtNum(n: number): string {
   if (!Number.isFinite(n)) return n > 0 ? "∞" : "-∞";
-  // Interi entro il range sicuro: senza decimali. Altrimenti fino a 12 cifre
-  // significative, ripulite dagli zeri finali.
   if (Number.isInteger(n) && Math.abs(n) < 1e15) return n.toString();
   return parseFloat(n.toPrecision(12)).toString();
 }
@@ -192,7 +188,6 @@ function BaseConverter() {
     }
     const value = parseInBase(text, base);
     if (value == null) {
-      // Mantieni ciò che l'utente digita nel campo attivo, segnala l'errore.
       setFields((f) => ({ ...f, [base]: text }));
       setError(`"${text}" non è un numero valido in ${base.toUpperCase()}`);
       return;

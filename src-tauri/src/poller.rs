@@ -20,8 +20,6 @@ struct Poller {
     collect: CollectFn,
 }
 
-/// Registro dei collector: ogni topic ha un loop di polling che gira
-/// solo quando c'è almeno un client WS sottoscritto.
 pub struct PollerRegistry {
     bus: EventBus,
     pollers: Mutex<HashMap<String, Poller>>,
@@ -109,7 +107,6 @@ fn spawn_loop(
         loop {
             let interval = interval_ms.load(Ordering::Relaxed);
 
-            // Gap anomalo (sleep/wake): il primo campione dopo il resume è inaffidabile.
             let skip_publish = matches!(
                 last_tick,
                 Some(t) if t.elapsed().as_millis() as u64 > interval.saturating_mul(3)

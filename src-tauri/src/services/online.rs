@@ -10,7 +10,6 @@ pub struct ServiceDef {
     pub id: String,
     pub label: String,
     pub kind: ServiceKind,
-    /// URL per http, "host:porta" per tcp.
     pub target: String,
     #[serde(default)]
     pub expect_status: Option<Vec<u16>>,
@@ -54,9 +53,7 @@ pub struct ServiceStatus {
     pub http_status: Option<u16>,
     pub error: Option<String>,
     pub checked_at: u64,
-    /// Ultimi esiti (max 20), il più recente in coda.
     pub history: Vec<ServiceState>,
-    /// Scadenza del certificato TLS (solo target https), ms epoch.
     pub cert_expires_at: Option<u64>,
     pub cert_days_left: Option<i64>,
 }
@@ -65,7 +62,6 @@ const DEGRADED_LATENCY_MS: u64 = 2500;
 const HISTORY_LEN: usize = 20;
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 RickyDEVTool/0.1";
 
-/// Preset pubblici (Q8: i servizi personali si aggiungono da Impostazioni).
 pub fn builtin_presets() -> Vec<ServiceDef> {
     let http = |id: &str, label: &str, target: &str, expect: Option<Vec<u16>>| ServiceDef {
         id: id.into(),
@@ -104,7 +100,6 @@ fn history_store() -> &'static Mutex<HashMap<String, Vec<ServiceState>>> {
     STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Esegue tutti i check abilitati in parallelo.
 pub async fn check_all(defs: &[ServiceDef]) -> Vec<ServiceStatus> {
     let mut join_set = tokio::task::JoinSet::new();
     for def in defs.iter().filter(|d| d.enabled).cloned() {
@@ -118,7 +113,6 @@ pub async fn check_all(defs: &[ServiceDef]) -> Vec<ServiceStatus> {
     }
     results.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
 
-    // Aggiorna e allega la history.
     let mut store = history_store().lock().expect("history lock");
     for status in &mut results {
         let entry = store.entry(status.id.clone()).or_default();
@@ -145,7 +139,6 @@ async fn check_one(def: ServiceDef) -> ServiceStatus {
         s => s,
     };
 
-    // Scadenza certificato per i target https (probe cachato 1h in tlscert).
     let cert_expires_at = match (&def.kind, https_host(&def.target)) {
         (ServiceKind::Http, Some((host, port))) if state != ServiceState::Down => {
             super::tlscert::cert_expiry_ms(&host, port).await
@@ -153,7 +146,6 @@ async fn check_one(def: ServiceDef) -> ServiceStatus {
         _ => None,
     };
     let cert_days_left = cert_expires_at.map(super::tlscert::days_left);
-    // Un certificato scaduto è un problema anche se il check risponde.
     let state = match cert_days_left {
         Some(days) if days < 0 && state == ServiceState::Up => ServiceState::Degraded,
         _ => state,
@@ -173,7 +165,6 @@ async fn check_one(def: ServiceDef) -> ServiceStatus {
     }
 }
 
-/// (host, porta) se il target è un URL https, altrimenti None.
 fn https_host(target: &str) -> Option<(String, u16)> {
     let url = reqwest::Url::parse(target).ok()?;
     if url.scheme() != "https" {
@@ -196,7 +187,6 @@ async fn check_http(
             if ok {
                 (ServiceState::Up, Some(code), None)
             } else {
-                // Risposta arrivata ma status inatteso: il servizio c'è ma zoppica.
                 (ServiceState::Degraded, Some(code), Some(format!("HTTP {code}")))
             }
         }
@@ -244,7 +234,6 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_check_su_porta_chiusa() {
-        // Porta quasi certamente chiusa.
         let def = ServiceDef {
             id: "chiusa".into(),
             label: "Chiusa".into(),

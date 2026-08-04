@@ -3,9 +3,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessibilityStatus {
-    /// true solo dove il permesso è un concetto reale (macOS).
     pub supported: bool,
-    /// true se il processo può sintetizzare input (muovere il mouse).
     pub trusted: bool,
 }
 
@@ -20,8 +18,6 @@ pub fn open_settings() -> Result<(), String> {
     imp::open_settings()
 }
 
-/// Apre il Colorimetro digitale (solo macOS): usato dal color picker come
-/// alternativa all'EyeDropper, che WKWebView non espone.
 pub fn open_color_meter() -> Result<(), String> {
     imp::open_color_meter()
 }
@@ -58,7 +54,6 @@ mod imp {
     }
 }
 
-// Windows: SendInput non richiede permessi speciali. Linux: jiggler non attivo.
 #[cfg(not(target_os = "macos"))]
 mod imp {
     pub fn supported() -> bool {

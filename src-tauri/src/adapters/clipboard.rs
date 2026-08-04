@@ -1,18 +1,3 @@
-//! Accesso alla clipboard di sistema via CLI del SO (niente FFI: coerente con
-//! gli altri adapter).
-//!
-//! - **Testo**: `pbpaste`/`pbcopy` (macOS), PowerShell (Windows).
-//! - **File e immagini**: un unico script per giro di polling —
-//!   `osascript -l JavaScript` (bridge ObjC verso `NSPasteboard`) su macOS,
-//!   PowerShell (`System.Windows.Forms.Clipboard`) su Windows. Lo script è
-//!   *gated* sul contatore di modifica della clipboard (`changeCount` /
-//!   `GetClipboardSequenceNumber`): se nulla è cambiato ritorna subito, così il
-//!   polling resta leggero.
-//!
-//! I percorsi dinamici (path, contatore) passano come **argv** (macOS) o
-//! **variabili d'ambiente** (Windows), mai interpolati nel testo dello script:
-//! niente rischio di injection.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -21,12 +6,9 @@ use serde_json::Value;
 
 use crate::exec;
 
-/// Contenuto letto dalla clipboard in un giro di polling.
 pub enum ClipRead {
     Text(String),
     Files(Vec<PathBuf>),
-    /// PNG già materializzato su un file temporaneo (`png_path`): chi lo riceve
-    /// lo adotta (sposta) altrove.
     Image {
         png_path: PathBuf,
         mime: String,
@@ -35,10 +17,8 @@ pub enum ClipRead {
     },
 }
 
-// ----------------------------- lettura testo -----------------------------
-
-/// Legge il testo attualmente negli appunti. `None` se vuoto, non testo, o SO
-/// non supportato.
+// 20260704 RG i path dinamici passano da argv (macOS) o env (Windows), mai interpolati
+// nel testo dello script: sarebbe injection nella shell dell'interprete.
 pub fn read_text() -> Option<String> {
     let mut cmd = read_command()?;
     let output = cmd.stderr(Stdio::null()).output().ok()?;
@@ -53,7 +33,6 @@ pub fn read_text() -> Option<String> {
     }
 }
 
-/// Scrive `text` negli appunti di sistema.
 pub fn write_text(text: &str) -> Result<(), String> {
     let mut cmd = write_command().ok_or("clipboard non supportata su questo sistema")?;
     let mut child = cmd
@@ -67,7 +46,6 @@ pub fn write_text(text: &str) -> Result<(), String> {
         stdin
             .write_all(text.as_bytes())
             .map_err(|e| format!("scrittura clipboard fallita: {e}"))?;
-        // stdin viene chiuso qui (fine scope): il comando può completare.
     }
     let status = child.wait().map_err(|e| e.to_string())?;
     if status.success() {
@@ -80,8 +58,6 @@ pub fn write_text(text: &str) -> Result<(), String> {
 pub fn supported() -> bool {
     read_command().is_some()
 }
-
-// --------------------- lettura ricca (file/immagini) ---------------------
 
 pub fn read(last: i64) -> (i64, Option<ClipRead>) {
     #[cfg(target_os = "macos")]
@@ -99,7 +75,6 @@ pub fn read(last: i64) -> (i64, Option<ClipRead>) {
     }
 }
 
-/// Scrive un'immagine PNG (dal file `png_path`) negli appunti.
 pub fn write_image(png_path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -172,8 +147,6 @@ fn run_ok(cmd: &mut Command, what: &str) -> Result<(), String> {
     }
 }
 
-// --------------------- parsing comune dell'output --------------------------
-
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn temp_png_path() -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -238,8 +211,6 @@ fn parse_read(stdout: &[u8], fallback_png: &Path, last: i64) -> (i64, Option<Cli
     }
 }
 
-// ------------------------------- macOS -------------------------------------
-
 #[cfg(target_os = "macos")]
 fn read_macos(last: i64) -> (i64, Option<ClipRead>) {
 
@@ -262,8 +233,6 @@ fn read_macos(last: i64) -> (i64, Option<ClipRead>) {
     parse_read(&output.stdout, &out_png, last)
 }
 
-/// JXA: legge il contatore di modifica; se cambiato, restituisce file / immagine
-/// / testo. Per l'immagine scrive un PNG normalizzato in `argv[1]`.
 #[cfg(target_os = "macos")]
 const MAC_READ_JS: &str = r#"function run(a){ObjC.import("Foundation");ObjC.import("AppKit");var pb=$.NSPasteboard.generalPasteboard;var change=parseInt(pb.changeCount);var last=parseInt(a[0],10);if(change===last){return JSON.stringify({change:change,unchanged:true});}var outPng=a[1];var items=pb.pasteboardItems;var paths=[];if(!items.isNil()){for(var i=0;i<items.count;i++){var it=items.objectAtIndex(i);var s=it.stringForType("public.file-url");if(!s.isNil()){var u=$.NSURL.URLWithString(s);if(!u.isNil()&&u.isFileURL){paths.push(ObjC.unwrap(u.path));}}}}if(paths.length>0){return JSON.stringify({change:change,kind:"files",paths:paths});}var data=pb.dataForType("public.png");if(data.isNil()){data=pb.dataForType("public.tiff");}if(!data.isNil()){var rep=$.NSBitmapImageRep.imageRepWithData(data);if(!rep.isNil()){var png=rep.representationUsingTypeProperties(4,$());if(!png.isNil()){png.writeToFileAtomically($(outPng),true);return JSON.stringify({change:change,kind:"image",png:outPng,mime:"image/png",width:parseInt(rep.pixelsWide),height:parseInt(rep.pixelsHigh)});}}}var t=pb.stringForType("public.utf8-plain-text");if(!t.isNil()){return JSON.stringify({change:change,kind:"text",text:ObjC.unwrap(t)});}return JSON.stringify({change:change,kind:"empty"});}"#;
 
@@ -282,8 +251,6 @@ fn read_command() -> Option<Command> {
 fn write_command() -> Option<Command> {
     Some(exec::sync_cmd("pbcopy"))
 }
-
-// ------------------------------ Windows ------------------------------------
 
 #[cfg(target_os = "windows")]
 fn read_windows(last: i64) -> (i64, Option<ClipRead>) {
@@ -340,7 +307,6 @@ try {
 #[cfg(target_os = "windows")]
 fn read_command() -> Option<Command> {
     let mut c = exec::sync_cmd("powershell");
-    // -Raw preserva il testo esatto (niente split/rejoin delle righe).
     c.args(["-NoProfile", "-Command", "Get-Clipboard -Raw"]);
     Some(c)
 }
@@ -351,8 +317,6 @@ fn write_command() -> Option<Command> {
     c.args(["-NoProfile", "-Command", "$input | Set-Clipboard"]);
     Some(c)
 }
-
-// ------------------------------ altri SO -----------------------------------
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn read_command() -> Option<Command> {

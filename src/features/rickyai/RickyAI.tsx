@@ -23,7 +23,6 @@ const STATE_LABEL: Record<AiState, string> = {
   disabled: "disattivato",
 };
 
-// Spunti nella chat vuota: fanno capire in tre secondi cosa può fare la pagina.
 const SUGGESTIONS = [
   "Spiegami questo errore di build",
   "Scrivimi uno script bash che…",
@@ -36,7 +35,6 @@ function modelLabel(id: string): string {
   return id;
 }
 
-/** Riga di stato del motore: se non è pronto, dice perché e cosa fare. */
 function StatusBar({
   status,
   onRestart,
@@ -59,11 +57,14 @@ function StatusBar({
         {ready && (
           <span className="dim" title={`endpoint OpenAI-compatibile su ${status.baseUrl}/v1`}>
             {status.mode === "remote"
-              ? `servizio in rete · ${status.baseUrl}`
+              ? `${status.ofFree ? "of-free in rete" : "endpoint OpenAI"} · ${status.baseUrl}`
               : `${status.managed ? "of-free" : "of-free (istanza esterna)"} · porta ${
                   status.port
                 } · strategia ${status.strategy}`}
           </span>
+        )}
+        {ready && !status.ofFree && (
+          <span className="dim">nessun routing fra provider</span>
         )}
         {ready && status.next && (
           <span className="dim">
@@ -184,11 +185,10 @@ export function RickyAI() {
 
   /// Invia `conversation` e appende la risposta al thread. Usata sia dal primo
   /// invio sia dal "Riprova": il messaggio dell'utente è già nel thread in
-  /// entrambi i casi, quindi non va riscritto.
   const ask = async (threadId: string, conversation: { role: string; content: string }[]) => {
     setSending(true);
     setError(null);
-    const r = await post<AiReply>("/api/ai/chat", { messages: conversation, model });
+    const r = await post<AiReply>("/api/ai/chat", { messages: conversation, model: selectedModel });
     setSending(false);
     if (!r.ok) {
       setError(r.error);
@@ -226,9 +226,8 @@ export function RickyAI() {
     await ask(thread.id, [...conversationFor(thread), { role: "user", content: text }]);
   };
 
-  /// Ritenta l'ultimo turno. Il messaggio dell'utente è rimasto nel thread
-  /// apposta: dopo un 429 la cosa giusta da fare è riprovare quello, non
-  /// farglielo riscrivere.
+  // 20260804 ++ RG #RickyAI il messaggio dell'utente resta nel thread apposta: dopo un 429 si
+  // riprova quello, non lo si fa riscrivere.
   const retry = () => {
     if (sending) return;
     const conversation = conversationFor(active);
@@ -244,7 +243,6 @@ export function RickyAI() {
   };
 
   const startNewThread = () => {
-    // Una chat vuota già aperta è già una chat nuova: non se ne accumulano.
     if (active.messages.length === 0) return;
     const thread = newThread();
     setThreads((prev) => [thread, ...prev]);
@@ -255,7 +253,6 @@ export function RickyAI() {
 
   const deleteThread = (id: string) => {
     const left = threads.filter((t) => t.id !== id);
-    // Rimane sempre almeno una chat: una lista vuota non avrebbe dove scrivere.
     const next = left.length > 0 ? left : [newThread()];
     setThreads(next);
     if (id === activeId) setActiveId(next[0].id);
@@ -263,8 +260,10 @@ export function RickyAI() {
 
   const models = useMemo(() => {
     const listed = (status?.models ?? []).filter((m) => m !== "auto");
-    return ["auto", "private", ...listed];
-  }, [status?.models]);
+    return status?.ofFree === false ? listed : ["auto", "private", ...listed];
+  }, [status?.models, status?.ofFree]);
+
+  const selectedModel = models.includes(model) ? model : models[0] ?? "auto";
 
   const blocked = status != null && status.state !== "ready";
 
@@ -275,9 +274,9 @@ export function RickyAI() {
         <div className="ai-head-actions">
           <select
             className="ai-model"
-            value={model}
+            value={selectedModel}
             onChange={(e) => setModel(e.target.value)}
-            title="Quale modello usare: automatico, solo locale, o uno preciso"
+            title="Quale modello usare"
           >
             {models.map((m) => (
               <option key={m} value={m}>
@@ -344,8 +343,8 @@ export function RickyAI() {
             {sending && (
               <div className="ai-msg ai-msg-bot">
                 <div className="ai-typing">
-                  {/* of-free non supporta ancora lo streaming: la risposta
-                      arriva intera, quindi qui serve un'attesa esplicita. */}
+                  {
+}
                   <span />
                   <span />
                   <span />
@@ -387,8 +386,6 @@ export function RickyAI() {
               rows={2}
               disabled={blocked}
               onKeyDown={(e) => {
-                // Invio manda, Shift+Invio va a capo: è la convenzione di
-                // qualunque chat, e una textarea da sola fa il contrario.
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   send();

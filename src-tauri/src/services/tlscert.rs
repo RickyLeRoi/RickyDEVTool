@@ -4,13 +4,6 @@ use std::time::{Duration, Instant};
 
 use tokio_rustls::rustls::{self, pki_types::ServerName};
 
-/// Scadenza del certificato TLS di un host. Handshake con verifier
-/// permissivo: la chain viene catturata anche se il certificato è già
-/// scaduto o self-signed (è proprio il caso che vogliamo diagnosticare).
-/// La validità vera resta compito del check HTTP (reqwest verifica normale).
-
-/// Cache per host: il certificato non cambia di minuto in minuto,
-/// mentre il check dei servizi gira ogni 15s.
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 
 #[derive(Debug)]
@@ -70,8 +63,6 @@ fn cache() -> &'static Mutex<HashMap<String, (Instant, Option<u64>)>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Scadenza (ms epoch) del certificato di `host:port`, con cache di 1h.
-/// None se l'host non parla TLS o l'handshake fallisce.
 pub async fn cert_expiry_ms(host: &str, port: u16) -> Option<u64> {
     let key = format!("{host}:{port}");
     if let Some((at, value)) = cache().lock().expect("cert cache").get(&key) {
@@ -119,12 +110,9 @@ mod tests {
     fn days_left_calcolo() {
         let now = crate::events::now_ms();
         assert_eq!(days_left(now + 5 * 86_400_000 + 3600_000), 5);
-        // Scaduto ieri: negativo.
         assert!(days_left(now - 86_400_000 * 2) < 0);
     }
 
-    // Test di rete (richiede internet): verifica il probe reale su un host noto.
-    // `cargo test -- --ignored` per eseguirlo.
     #[tokio::test]
     #[ignore]
     async fn probe_su_host_reale() {

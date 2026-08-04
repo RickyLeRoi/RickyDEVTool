@@ -1,8 +1,3 @@
-//! GPU monitor best-effort. Con `nvidia-smi` (Windows/Linux, GPU NVIDIA) si
-//! ottengono utilizzo, memoria e temperatura live; su macOS si legge almeno il
-//! modello e la VRAM da `system_profiler` (l'utilizzo live non è esposto senza
-//! permessi elevati). Quando non c'è nulla, torna una lista vuota.
-
 use serde::Serialize;
 
 use crate::exec;
@@ -15,7 +10,6 @@ pub struct GpuInfo {
     pub mem_used_mb: Option<u64>,
     pub mem_total_mb: Option<u64>,
     pub temp_c: Option<f32>,
-    /// Da dove viene il dato: utile alla UI per spiegare i campi mancanti.
     pub source: String,
 }
 
@@ -45,7 +39,6 @@ async fn nvidia() -> Option<Vec<GpuInfo>> {
     }
 }
 
-/// Riga CSV di `nvidia-smi --query-gpu=...`. Testato su fixture.
 pub fn parse_nvidia_line(line: &str) -> Option<GpuInfo> {
     let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
     if cols.len() < 5 || cols[0].is_empty() {
@@ -62,14 +55,9 @@ pub fn parse_nvidia_line(line: &str) -> Option<GpuInfo> {
     })
 }
 
-/// Su macOS l'unico dato disponibile (modello, VRAM) è statico: `system_profiler`
-/// è lento, quindi lo si interroga una sola volta e si riusa il risultato.
 #[cfg(target_os = "macos")]
 async fn macos() -> Vec<GpuInfo> {
     let mut gpus = macos_static_cached().await;
-    // Utilizzo live: ioreg espone "Device Utilization %" su molte GPU (Intel/AMD
-    // e alcune Apple). Quando manca — tipico su Apple Silicon — resta None e la
-    // UI lo dichiara. Abbinamento per ordine di comparsa (ok nel caso 1 GPU).
     let utils = macos_utilization().await;
     for (i, g) in gpus.iter_mut().enumerate() {
         if let Some(u) = utils.get(i).copied() {
@@ -79,7 +67,6 @@ async fn macos() -> Vec<GpuInfo> {
     gpus
 }
 
-/// Parte statica (modello, VRAM): lenta da `system_profiler`, quindi in cache.
 #[cfg(target_os = "macos")]
 async fn macos_static_cached() -> Vec<GpuInfo> {
     use tokio::sync::OnceCell;
@@ -88,8 +75,6 @@ async fn macos_static_cached() -> Vec<GpuInfo> {
         return v.clone();
     }
     let v = macos_probe().await;
-    // Solo un risultato valido va in cache: un errore transitorio non deve
-    // "congelare" una lista vuota per sempre.
     if !v.is_empty() {
         let _ = CACHE.set(v.clone());
     }
@@ -105,7 +90,6 @@ async fn macos_utilization() -> Vec<f32> {
     parse_ioreg_utilization(&text)
 }
 
-/// Estrae i valori `"Device Utilization %"` dall'output di ioreg, in ordine.
 #[cfg(target_os = "macos")]
 fn parse_ioreg_utilization(text: &str) -> Vec<f32> {
     let key = "\"Device Utilization %\"=";
@@ -160,7 +144,6 @@ async fn macos_probe() -> Vec<GpuInfo> {
         .collect()
 }
 
-/// "8 GB" / "1536 MB" → MB.
 #[cfg(target_os = "macos")]
 fn parse_vram_mb(s: &str) -> Option<u64> {
     let s = s.trim();

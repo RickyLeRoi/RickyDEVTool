@@ -11,7 +11,6 @@ import type {
 } from "../../lib/types";
 
 const REFRESH_MS = 5000;
-// Intervalli offerti per gli stats live (docker stats è più pesante della lista).
 const STAT_INTERVALS = [2000, 3000, 5000, 10000];
 
 function ImagesPanel() {
@@ -104,22 +103,16 @@ function stateClass(state: string): string {
   return "docker-state stopped";
 }
 
-// Esito della connessione al daemon, dedotto dallo stato: serve alla HostBar
-// per dire se l'host configurato risponde davvero o no.
 type HostHealth = "loading" | "ok" | "down" | "missing";
 
 function healthOf(state: DockerState | null, loadError: string | null): HostHealth {
   if (loadError) return "down";
   if (!state) return "loading";
-  if (!state.available) return "missing"; // la CLI docker non c'è proprio
+  if (!state.available) return "missing";
   if (state.daemonDown || state.error) return "down";
   return "ok";
 }
 
-// Configurazione dell'host Docker: vuoto = daemon locale; altrimenti si punta a
-// un Docker remoto (es. una VM sul server di casa) via ssh:// o tcp://.
-// Il salvataggio prova la connessione lato backend: un host che non risponde
-// viene rifiutato con l'errore vero, non salvato in silenzio.
 function HostBar({
   host,
   health,
@@ -146,8 +139,6 @@ function HostBar({
       onSaved();
     } else {
       setError(r.error.message);
-      // L'host NON è stato salvato: riporta il campo a quello attivo, così non
-      // resta a schermo un valore che sembra applicato e invece non lo è.
       setValue(host ?? "");
     }
   };
@@ -225,8 +216,8 @@ function ContainerRow({
 
   return (
     <>
-      {/* Riga compatta: nome + azioni sempre visibili (anche da remoto su schermi
-          stretti); il resto — immagine, stato, porte — nel dettaglio al click. */}
+      {
+}
       <tr className="docker-row" onClick={() => setExpanded(!expanded)}>
         <td className="docker-name-cell">
           <span className={stateClass(container.state)} title={container.state} />
@@ -245,7 +236,7 @@ function ContainerRow({
           )}
         </td>
         <td className="docker-actions-cell">
-          {/* I click sulle azioni non devono aprire/chiudere il dettaglio. */}
+          {}
           <div className="docker-actions" onClick={(e) => e.stopPropagation()}>
             {running ? (
               <>
@@ -340,9 +331,8 @@ export function Docker() {
   const inFlight = useRef(false);
 
   const load = useCallback(async () => {
-    // Con un host remoto lento la risposta può metterci più dell'intervallo di
-    // refresh: senza questa guardia le richieste si accavallerebbero, ognuna
-    // con il suo `docker ps` dietro.
+    // 20260704 RG con un host remoto lento la risposta supera l'intervallo di refresh:
+    // senza guardia le richieste si accavallano, ognuna con il suo `docker ps`.
     if (inFlight.current) return;
     inFlight.current = true;
     const r = await api<DockerState>("/api/docker");
@@ -351,8 +341,6 @@ export function Docker() {
       setState(r.data);
       setLoadError(null);
     } else {
-      // Anche il fallimento della chiamata va detto: prima restava a schermo
-      // l'ultimo stato buono, come se fosse tutto a posto.
       setLoadError(r.error.message);
     }
   }, []);
@@ -363,8 +351,6 @@ export function Docker() {
     return () => clearInterval(id);
   }, [load]);
 
-  // Stats live per container: il poller backend si accende solo mentre questa
-  // sezione è aperta (subscribe) e si spegne all'uscita (unsubscribe).
   useEffect(() => {
     return ws.subscribe("docker:stats", (event) => {
       const payload = event.payload as { stats?: ContainerStat[] };
@@ -379,13 +365,9 @@ export function Docker() {
 
   const changeStatInterval = (ms: number) => {
     setStatInterval(ms);
-    // Il topic contiene ":" — path valido, nessun encoding necessario.
     post("/api/pollers/docker:stats/interval", { intervalMs: ms });
   };
 
-  // `docker logs -f` non termina da solo: va fermato non solo alla chiusura
-  // esplicita ma anche quando si passa a un altro container o si lascia la
-  // sezione (unmount), altrimenti il processo di follow resta appeso.
   const openLogTaskId = logsFor?.task.id;
   useEffect(() => {
     if (!openLogTaskId) return;
@@ -431,10 +413,8 @@ export function Docker() {
         </div>
       )}
 
-      {/* Il comando docker è fallito: se c'è un errore lo mostriamo per intero
-          (soprattutto per gli host remoti ssh://, dove il motivo — host key,
-          chiave, risoluzione nome — è nell'stderr). Senza questo sembrava
-          "0 container". */}
+      {
+}
       {state && state.available && (state.daemonDown || state.error) && (
         <div className="banner banner-error">
           <div>
@@ -487,7 +467,7 @@ export function Docker() {
           <div className="section-header">
             <h3>Log · {logsFor.name}</h3>
             <button className="small" onClick={() => setLogsFor(null)}>
-              {/* Lo stop del follow è gestito dall'effect di cleanup su logsFor. */}
+              {}
               Chiudi
             </button>
           </div>

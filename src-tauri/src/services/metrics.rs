@@ -1,12 +1,3 @@
-//! Storico metriche 24h su SQLite.
-//!
-//! A differenza del collector `stats` (che pubblica sul bus solo quando la
-//! dashboard è aperta), qui il campionamento è **sempre attivo** finché l'app
-//! gira, così lo storico è continuo anche se non hai mai aperto la UI. Gira su
-//! un thread OS dedicato (sysinfo e rusqlite sono entrambi sincroni e la
-//! frequenza è bassa); le query dagli handler async passano da
-//! `spawn_blocking` sullo stesso `Mutex<Connection>`.
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,9 +7,7 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 use crate::events::now_ms;
 
-/// Un campione ogni 30s → 2880 punti/24h: leggero per SQLite e per il grafico.
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
-/// Si tiene un po' più di 24h per avere sempre una finestra piena.
 const RETENTION_MS: u64 = 25 * 3_600_000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,7 +43,6 @@ impl MetricsService {
         service
     }
 
-    /// Campioni delle ultime `hours` ore, dal più vecchio al più recente.
     pub fn history(&self, hours: u32) -> Vec<MetricSample> {
         let Some(conn) = &self.conn else { return Vec::new() };
         let since = now_ms().saturating_sub(hours.clamp(1, 48) as u64 * 3_600_000);
@@ -86,7 +74,6 @@ impl MetricsService {
 fn open_db() -> rusqlite::Result<Connection> {
     let path = crate::config::data_dir().join("metrics.db");
     let conn = Connection::open(path)?;
-    // WAL: letture concorrenti con la scrittura del sampler senza bloccarsi.
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS samples (
@@ -106,8 +93,6 @@ fn sampler_loop(conn: Arc<Mutex<Connection>>) {
         .with_memory(MemoryRefreshKind::everything());
     let mut sys = System::new_with_specifics(refresh);
 
-    // Prima lettura CPU inaffidabile (serve un intervallo tra due refresh):
-    // si scalda prima di entrare nel loop.
     sys.refresh_cpu_usage();
     std::thread::sleep(Duration::from_millis(300));
 

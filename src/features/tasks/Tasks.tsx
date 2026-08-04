@@ -30,7 +30,6 @@ export function Tasks() {
 
   useEffect(() => {
     load();
-    // Il topic "tasks" pubblica la lista aggiornata a ogni cambio di stato.
     return ws.subscribe("tasks", (event) => {
       if (event.topic === "tasks") setTasks((event.payload as { tasks: TaskInfo[] }).tasks);
     });

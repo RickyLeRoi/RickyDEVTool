@@ -1,10 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// La pagina RickyAI contro il backend fake: lo stato "pronto" e la chat a eco
-// arrivano da e2e/mock-server.mjs. Le varianti (quota esaurita, of-free non
-// installato) si ottengono sovrascrivendo la singola rotta con page.route, così
-// il mock resta uno solo e sempre nello stato buono.
-
 const READY_STATUS = {
   state: "ready",
   port: 4141,
@@ -16,8 +11,10 @@ const READY_STATUS = {
   restarts: 0,
   log: [],
   enabled: true,
+  ofFree: true,
   mode: "local",
   remoteUrl: null,
+  remoteKeySet: false,
   configuredPort: 4141,
   strategy: "balanced",
   systemPrompt: "",
@@ -50,7 +47,6 @@ async function mockWs(page: Page, onSubscribe?: (topic: string, send: (e: unknow
   });
 }
 
-/** Sostituisce /api/ai/status con lo stato passato. */
 async function withStatus(page: Page, status: Record<string, unknown>) {
   await page.route("**/api/ai/status", (route) =>
     route.fulfill({
@@ -84,16 +80,13 @@ test("con of-free spento la sezione non esiste", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  // Niente voce nella rail: una sezione che non può funzionare non si mostra.
   await expect(page.locator(".rail-btn", { hasText: "RickyAI" })).toHaveCount(0);
 
-  // E nemmeno nella command palette, che è l'altra strada per arrivarci.
   await page.keyboard.press("Control+k");
   await page.locator(".cmdk-input").fill("ricky");
   await expect(page.locator(".cmdk-item")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  // Il deep-link diretto non deve lasciare una pagina vuota: si torna indietro.
   await page.goto("/#/rickyai");
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
   await expect(page.locator(".rickyai")).toHaveCount(0);
@@ -121,8 +114,6 @@ test("accendendo of-free la sezione compare senza ricaricare", async ({ page }) 
   await page.goto("/");
   await expect(page.locator(".rail-btn", { hasText: "RickyAI" })).toHaveCount(0);
 
-  // L'interruttore nelle impostazioni fa ripartire il supervisore, che
-  // pubblica il nuovo stato: la rail si aggiorna da sola.
   acceso = true;
   await expect.poll(() => pushAi != null).toBe(true);
   pushAi!({ topic: "ai", ts: Date.now(), payload: { state: "starting" } });
@@ -135,8 +126,6 @@ test("accendendo of-free la sezione compare senza ricaricare", async ({ page }) 
 test("mostra lo stato del motore e le quote dei provider", async ({ page }) => {
   await open(page);
   await expect(page.locator(".ai-status .badge")).toHaveText("pronto");
-  // La provenienza della prossima richiesta è l'informazione che rende
-  // comprensibile un router di quote: senza, l'utente non sa chi risponderà.
   await expect(page.locator(".ai-status")).toContainText("Groq");
   await expect(page.locator(".ai-status")).toContainText("llama-3.3-70b-versatile");
   await expect(composer(page)).toBeEnabled();
@@ -148,10 +137,8 @@ test("invia un messaggio e mostra la risposta con la provenienza", async ({ page
   await page.getByRole("button", { name: "Invia" }).click();
 
   await expect(page.locator(".ai-msg-user")).toHaveText("ciao RickyAI");
-  // L'eco prova che il messaggio è arrivato davvero al backend.
   await expect(page.locator(".ai-msg-bot")).toContainText("RickyAI dice: ciao RickyAI");
   await expect(page.locator(".ai-msg-meta")).toContainText("groq");
-  // Il titolo del thread viene dal primo messaggio.
   await expect(page.locator(".ai-thread.active")).toContainText("ciao RickyAI");
   await expect(composer(page)).toHaveValue("");
 });
@@ -161,7 +148,6 @@ test("Invio manda, Shift+Invio va a capo", async ({ page }) => {
   await composer(page).fill("prima riga");
   await composer(page).press("Shift+Enter");
   await composer(page).pressSequentially("seconda riga");
-  // Shift+Invio non deve inviare: nessuna bolla, e il testo è ancora nel campo.
   await expect(page.locator(".ai-msg-user")).toHaveCount(0);
   await expect(composer(page)).toHaveValue("prima riga\nseconda riga");
 
@@ -205,8 +191,6 @@ test("il turno successivo rispedisce la conversazione come contesto", async ({ p
   await composer(page).press("Enter");
   await expect(page.locator(".ai-msg-bot").nth(1)).toContainText("risposta 2");
 
-  // Senza lo storico il modello risponderebbe al secondo turno come se fosse
-  // il primo: è la differenza fra una chat e una serie di domande scollegate.
   expect(bodies[0]).toEqual([{ role: "user", content: "primo" }]);
   expect(bodies[1]).toEqual([
     { role: "user", content: "primo" },
@@ -229,7 +213,6 @@ test("più chat: nuova, cambio, eliminazione", async ({ page }) => {
   await composer(page).press("Enter");
   await expect(page.locator(".ai-msg-user")).toHaveText("chat due");
 
-  // Tornando sulla prima si rivedono i suoi messaggi, non quelli della seconda.
   await page.locator(".ai-thread", { hasText: "chat uno" }).click();
   await expect(page.locator(".ai-msg-user")).toHaveText("chat uno");
 
@@ -293,11 +276,7 @@ test("quota esaurita: messaggio, attesa e ritenta", async ({ page }) => {
   await composer(page).press("Enter");
 
   await expect(page.locator(".ai-error")).toContainText("Quota esaurita");
-  // Il tempo d'attesa arriva dall'header Retry-After di of-free: è la
-  // differenza fra "riprova fra poco" e "riprova a caso".
   await expect(page.locator(".ai-error")).toContainText("~37s");
-  // Il messaggio dell'utente resta a schermo: si ritenta quello, non si
-  // costringe a riscriverlo.
   await expect(page.locator(".ai-msg-user")).toHaveText("domanda cara");
 
   await page.getByRole("button", { name: "Riprova" }).click();
@@ -317,7 +296,6 @@ test("of-free non installato: composer bloccato e istruzioni", async ({ page }) 
 
   await expect(page.locator(".ai-status .badge")).toHaveText("of-free non installato");
   await expect(page.locator(".ai-status")).toContainText("pip install -e .");
-  // Senza motore il campo è disabilitato: meglio di un invio che fallisce.
   await expect(composer(page)).toBeDisabled();
   await expect(composer(page)).toHaveAttribute("placeholder", "RickyAI non è disponibile");
 });
@@ -335,7 +313,6 @@ test("avvio fallito: mostra il perché e le ultime righe di of-free", async ({ p
 
   await expect(page.locator(".ai-status .badge")).toHaveText("non disponibile");
   await expect(page.locator(".ai-status")).toContainText("of-free è uscito (codice 1)");
-  // Le righe del processo sono l'unico posto in cui il motivo vero è scritto.
   await expect(page.locator(".ai-log")).toContainText("Address already in use");
 });
 
@@ -383,15 +360,12 @@ test("impostazioni: la strategia si salva con un click", async ({ page }) => {
 
   await page.goto("/#/settings");
   const panel = page.locator(".ai-settings");
-  // La funzione è dichiarata beta accanto al suo interruttore.
   await expect(panel.locator(".badge-beta")).toHaveText("beta");
   const strategia = panel.locator(".form-row", { hasText: "Strategia di routing" });
   await expect(strategia.locator("button.active")).toHaveText("Bilanciata");
 
   await strategia.locator("button", { hasText: "Locale" }).click();
   expect(salvati).toEqual([{ strategy: "local" }]);
-  // Lo stato mostrato viene dalla risposta del server, non dal click: se il
-  // salvataggio fallisse, il pulsante non resterebbe acceso a mentire.
   await expect(strategia.locator("button.active")).toHaveText("Locale");
 });
 
@@ -409,7 +383,6 @@ test("impostazioni: binario e prompt si salvano insieme", async ({ page }) => {
   await page.goto("/#/settings");
   const panel = page.locator(".ai-settings");
   const salva = panel.getByRole("button", { name: "Salva e riavvia" });
-  // Niente da salvare finché non si tocca niente.
   await expect(salva).toBeDisabled();
 
   await panel.locator("input[placeholder='vuoto = cercato nel PATH']").fill("/opt/of-free");
@@ -449,7 +422,6 @@ test("impostazioni: le chiavi si incollano una alla volta e non tornano più ind
   const groq = page.locator(".ai-key-row", { hasText: "Groq" });
   const gemini = page.locator(".ai-key-row", { hasText: "Google AI Studio" });
 
-  // Una già impostata si vede solo come stato, mai come valore.
   await expect(groq.locator(".badge-ok")).toHaveText("impostata");
   await expect(groq.locator("input")).toHaveValue("");
   await expect(groq.locator("input")).toHaveAttribute("type", "password");
@@ -458,10 +430,8 @@ test("impostazioni: le chiavi si incollano una alla volta e non tornano più ind
   await gemini.locator("input").fill("AIzaSyTOPSECRET");
   await gemini.getByRole("button", { name: "Salva" }).click();
 
-  // Si manda solo quella toccata: la UI non conosce (e non rimanda) le altre.
   expect(salvati).toEqual([{ keys: { GEMINI_API_KEY: "AIzaSyTOPSECRET" } }]);
   await expect(gemini.locator(".badge-ok")).toHaveText("impostata");
-  // Il campo si svuota: la chiave non resta a schermo dopo il salvataggio.
   await expect(gemini.locator("input")).toHaveValue("");
 
   await groq.getByRole("button", { name: "Rimuovi" }).click();
@@ -496,14 +466,126 @@ test("impostazioni: modalità servizio in rete", async ({ page }) => {
 
   const indirizzo = panel.locator("input[placeholder='es. 192.168.1.50:4141']");
   await expect(indirizzo).toBeVisible();
-  // In modalità remota le chiavi stanno sull'altra macchina: chiederle qui
-  // sarebbe un campo che non ha effetto su niente.
-  await expect(panel.locator(".ai-key-row")).toHaveCount(0);
+  await expect(panel.locator(".ai-key-row", { hasText: "Groq" })).toHaveCount(0);
+  await expect(panel.locator(".ai-key-row")).toHaveCount(1);
+  await expect(panel.locator(".ai-key-row", { hasText: "Chiave API" })).toBeVisible();
   await expect(panel.locator("input[placeholder='vuoto = cercato nel PATH']")).toHaveCount(0);
 
   await indirizzo.fill("192.168.1.50:4141");
   await panel.getByRole("button", { name: "Salva e riavvia" }).click();
   expect(salvati.at(-1)).toMatchObject({ remoteUrl: "192.168.1.50:4141" });
+});
+
+test("endpoint OpenAI generico: niente auto/private, niente quote", async ({ page }) => {
+  await withStatus(page, {
+    mode: "remote",
+    remoteUrl: "http://192.168.1.50:11434",
+    baseUrl: "http://192.168.1.50:11434",
+    managed: false,
+    ofFree: false,
+    models: ["qwen2.5:7b", "llama3.2:3b"],
+    providers: null,
+    next: null,
+    message: "endpoint OpenAI-compatibile (non of-free): niente routing fra provider né quote",
+  });
+  await open(page);
+
+  const select = page.locator(".ai-model");
+  await expect(select.locator("option")).toHaveText(["qwen2.5:7b", "llama3.2:3b"]);
+  await expect(select).toHaveValue("qwen2.5:7b");
+  await expect(page.locator(".ai-status")).toContainText("endpoint OpenAI");
+  await expect(page.locator(".ai-status")).toContainText("nessun routing fra provider");
+  await expect(page.locator(".ai-provider")).toHaveCount(0);
+});
+
+test("endpoint generico: il modello inviato è uno di quelli che esistono", async ({ page }) => {
+  await withStatus(page, {
+    ofFree: false,
+    mode: "remote",
+    baseUrl: "http://192.168.1.50:11434",
+    models: ["qwen2.5:7b"],
+    providers: null,
+    next: null,
+  });
+  let inviato: { model?: string } = {};
+  await page.route("**/api/ai/chat", async (route) => {
+    inviato = route.request().postDataJSON() as { model?: string };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          content: "ok",
+          provider: null,
+          model: "qwen2.5:7b",
+          failovers: null,
+          repinned: null,
+          finishReason: "stop",
+          usage: null,
+          elapsedMs: 5,
+        },
+      }),
+    });
+  });
+
+  await open(page);
+  await composer(page).fill("ciao");
+  await composer(page).press("Enter");
+  await expect(page.locator(".ai-msg-bot")).toContainText("ok");
+  expect(inviato.model).toBe("qwen2.5:7b");
+});
+
+test("impostazioni: la chiave del servizio remoto si imposta e si toglie", async ({ page }) => {
+  const salvati: Record<string, unknown>[] = [];
+  let conChiave = false;
+  await page.route("**/api/ai/status", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          ...READY_STATUS,
+          mode: "remote",
+          remoteUrl: "https://openrouter.ai/api",
+          remoteKeySet: conChiave,
+        },
+      }),
+    }),
+  );
+  await page.route("**/api/ai/config", async (route) => {
+    const body = route.request().postDataJSON() as { remoteKey?: string };
+    salvati.push(body);
+    conChiave = !!body.remoteKey;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          ...READY_STATUS,
+          mode: "remote",
+          remoteUrl: "https://openrouter.ai/api",
+          remoteKeySet: conChiave,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/#/settings");
+  const chiave = page.locator(".ai-key-row", { hasText: "Chiave API" });
+  await expect(chiave.locator("input")).toHaveAttribute("type", "password");
+  await expect(chiave.locator(".badge-ok")).toHaveCount(0);
+
+  await chiave.locator("input").fill("sk-or-v1-segretissima");
+  await chiave.getByRole("button", { name: "Salva" }).click();
+  expect(salvati).toEqual([{ remoteKey: "sk-or-v1-segretissima" }]);
+  await expect(chiave.locator(".badge-ok")).toHaveText("impostata");
+  await expect(chiave.locator("input")).toHaveValue("");
+
+  await chiave.getByRole("button", { name: "Rimuovi" }).click();
+  expect(salvati[1]).toEqual({ remoteKey: "" });
 });
 
 test("modalità remota: la chat dice che il motore è in rete", async ({ page }) => {
@@ -516,7 +598,7 @@ test("modalità remota: la chat dice che il motore è in rete", async ({ page })
   await open(page);
 
   await expect(page.locator(".ai-status .badge")).toHaveText("pronto");
-  await expect(page.locator(".ai-status")).toContainText("servizio in rete");
+  await expect(page.locator(".ai-status")).toContainText("of-free in rete");
   await expect(page.locator(".ai-status")).toContainText("192.168.1.50:4141");
   await expect(composer(page)).toBeEnabled();
 });
@@ -535,7 +617,6 @@ test("modalità remota: servizio irraggiungibile, con il motivo", async ({ page 
   await open(page);
 
   await expect(page.locator(".ai-status")).toContainText("192.168.1.50:4141");
-  // L'errore più frequente con un container è proprio il bind su 127.0.0.1.
   await expect(page.locator(".ai-status")).toContainText("tutte le interfacce");
   await expect(composer(page)).toBeDisabled();
 });
@@ -561,8 +642,6 @@ test("impostazioni: un percorso sbagliato viene rifiutato e detto", async ({ pag
   await panel.locator("input[placeholder='vuoto = cercato nel PATH']").fill("/bin/inesistente");
   await panel.getByRole("button", { name: "Salva e riavvia" }).click();
 
-  // Il backend verifica che il file esista davvero: senza, il supervisore
-  // riproverebbe a vuoto e la pagina direbbe solo "non installato".
   await expect(panel.locator(".banner-error")).toContainText("non trovato");
 });
 
@@ -579,8 +658,6 @@ test("il selettore modello propone automatico, privato e i modelli disponibili",
     "ollama/qwen2.5:7b",
   ]);
 
-  // La scelta è per dispositivo e sopravvive al reload: chi vuole restare in
-  // locale non deve riselezionarlo ogni volta.
   await select.selectOption("private");
   await page.reload();
   await expect(page.locator(".ai-model")).toHaveValue("private");

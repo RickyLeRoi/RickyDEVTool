@@ -47,7 +47,6 @@ async fn run_git(repo: &str, args: &[&str], timeout: Duration) -> Result<String,
     cmd.arg("-C")
         .arg(repo)
         .args(args)
-        // Mai bloccarsi su un prompt credenziali: meglio fallire con errore chiaro.
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes");
     let output = tokio::time::timeout(timeout, cmd.output())
@@ -108,7 +107,6 @@ pub async fn repo_info(path: &str) -> Result<GitRepoInfo, GitError> {
         } else if line.starts_with("# branch.upstream ") {
             has_upstream = true;
         } else if let Some(rest) = line.strip_prefix("# branch.ab ") {
-            // formato: "+A -B"
             let mut parts = rest.split_whitespace();
             ahead = parts.next().and_then(|s| s.trim_start_matches('+').parse().ok());
             behind = parts.next().and_then(|s| s.trim_start_matches('-').parse().ok());
@@ -166,8 +164,6 @@ pub struct GitBranch {
     pub name: String,
     pub is_current: bool,
     pub is_remote_only: bool,
-    /// Per un branch locale: il ref remoto corrispondente (es. "origin/main")
-    /// se esiste. Serve per offrire l'eliminazione anche dal remoto.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_ref: Option<String>,
     pub last_commit: LastCommit,
@@ -179,11 +175,10 @@ pub struct GitBranch {
 pub struct LastCommit {
     pub short_hash: String,
     pub author_name: String,
-    pub date: u64, // epoch ms
+    pub date: u64,
     pub subject: String,
 }
 
-/// Branch locali + remote-only, ordinati per data commit decrescente.
 pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
     let current = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"], INFO_TIMEOUT)
         .await
@@ -234,9 +229,6 @@ pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
         });
     }
 
-    // Per ogni branch remoto (origin/x): nome pieno + data commit, indicizzati
-    // per nome corto. Servono a: 1) collegare il ref remoto al locale;
-    // 2) valutarne la vetustà sulla data *remota*, non su quella locale.
     let remote_by_short: std::collections::HashMap<String, (String, u64)> = raws
         .iter()
         .filter(|r| r.is_remote)
@@ -257,7 +249,6 @@ pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
             subject: r.subject.clone(),
         };
         if r.is_remote {
-            // Un remoto con locale corrispondente non è "remote-only": si scarta.
             let short = r.name.trim_start_matches("origin/");
             if local_names.contains(short) {
                 continue;
@@ -272,7 +263,6 @@ pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
             });
         } else {
             let remote = remote_by_short.get(&r.name);
-            // Vetustà dalla data del ref remoto se esiste, altrimenti locale.
             let stale_date = remote.map(|(_, d)| *d).unwrap_or(r.date_s);
             result.push(GitBranch {
                 is_current: r.name == current,
@@ -295,16 +285,13 @@ pub struct GitCommit {
     pub short_hash: String,
     pub author_name: String,
     pub author_email: String,
-    pub date: u64, // epoch ms
+    pub date: u64,
     pub subject: String,
-    /// Decorazioni (branch/tag che puntano al commit), già ripulite.
     pub refs: Vec<String>,
 }
 
 const MAX_COMMITS: u32 = 200;
 
-/// Un ref sicuro da passare a `git log`: nome branch/tag o hash. Niente flag
-/// (leading '-'), niente range (`..`), solo caratteri leciti nei ref.
 fn valid_ref(r: &str) -> bool {
     !r.is_empty()
         && r.len() <= 200
@@ -313,8 +300,6 @@ fn valid_ref(r: &str) -> bool {
         && r.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
 }
 
-/// Log dei commit di un ref (branch/tag/hash), dal più recente; `None` = HEAD.
-/// `skip` per la paginazione ("carica altri").
 pub async fn commits(
     path: &str,
     git_ref: Option<&str>,
@@ -328,8 +313,6 @@ pub async fn commits(
     }
     let limit = limit.clamp(1, MAX_COMMITS).to_string();
     let skip = skip.to_string();
-    // Campi separati da \x1f; ogni commit sta su una riga (nessun campo del
-    // formato contiene newline).
     let mut args = vec![
         "log",
         "--max-count",
@@ -338,8 +321,6 @@ pub async fn commits(
         &skip,
         "--format=%H\x1f%h\x1f%an\x1f%ae\x1f%ct\x1f%s\x1f%D",
     ];
-    // Il ref va come argomento posizionale (senza `--`, che lo farebbe
-    // interpretare come path).
     if let Some(r) = git_ref {
         args.push(r);
     }
@@ -366,7 +347,6 @@ pub async fn commits(
     Ok(commits)
 }
 
-/// "HEAD -> main, origin/main, tag: v1.0" → ["main", "origin/main", "tag: v1.0"]
 fn parse_decorations(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(|d| d.trim().trim_start_matches("HEAD -> ").trim().to_string())
@@ -378,7 +358,6 @@ fn valid_hash(hash: &str) -> bool {
     !hash.is_empty() && hash.len() <= 40 && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Checkout di un commit specifico: porta in detached HEAD. Rifiutato se dirty.
 pub async fn checkout_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitError> {
     if !valid_hash(hash) {
         return Err(GitError::Failed("hash commit non valido".to_string()));
@@ -389,16 +368,10 @@ pub async fn checkout_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitE
             "working tree non pulito: committa o stasha prima del checkout".to_string(),
         ));
     }
-    // Un hash grezzo mette git in detached HEAD (nessun branch creato).
     run_git(path, &["checkout", hash], INFO_TIMEOUT).await?;
     repo_info(path).await
 }
 
-/// Elimina un branch locale. `force` usa `-D` (elimina anche se non mergiato).
-/// Con `remote` = Some(nome_remote) elimina *anche* il branch sul remoto
-/// (`git push <remote> --delete <branch>`) — operazione di rete irreversibile.
-/// Rifiuta il branch corrente e i nomi che sembrano flag. Ritorna la lista
-/// branch aggiornata.
 pub async fn delete_branch(
     path: &str,
     branch: &str,
@@ -418,10 +391,8 @@ pub async fn delete_branch(
         ));
     }
     let flag = if force { "-D" } else { "-d" };
-    // `--` separa le opzioni dal nome del ref, per sicurezza.
     run_git(path, &["branch", flag, "--", branch], INFO_TIMEOUT).await?;
 
-    // Il remoto si tocca solo dopo che il locale è stato eliminato con successo.
     if let Some(rem) = remote {
         let rem = rem.trim();
         if rem.is_empty()
@@ -435,8 +406,6 @@ pub async fn delete_branch(
     branches(path).await
 }
 
-/// `git revert --no-edit <hash>`: crea un nuovo commit che annulla `hash`.
-/// Rifiutato se dirty; su conflitto il revert viene annullato (`--abort`).
 pub async fn revert_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitError> {
     if !valid_hash(hash) {
         return Err(GitError::Failed("hash commit non valido".to_string()));
@@ -450,16 +419,12 @@ pub async fn revert_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitErr
     match run_git(path, &["revert", "--no-edit", hash], INFO_TIMEOUT).await {
         Ok(_) => repo_info(path).await,
         Err(e) => {
-            // Annulla lo stato di revert lasciato a metà (conflitto): ignora
-            // l'esito dell'abort, conta l'errore originale.
             let _ = run_git(path, &["revert", "--abort"], INFO_TIMEOUT).await;
             Err(conflict_hint(e, "revert"))
         }
     }
 }
 
-/// `git cherry-pick <hash>`: applica il commit su HEAD. Rifiutato se dirty; su
-/// conflitto il cherry-pick viene annullato (`--abort`).
 pub async fn cherry_pick_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitError> {
     if !valid_hash(hash) {
         return Err(GitError::Failed("hash commit non valido".to_string()));
@@ -479,7 +444,6 @@ pub async fn cherry_pick_commit(path: &str, hash: &str) -> Result<GitRepoInfo, G
     }
 }
 
-/// Arricchisce l'errore quando l'operazione è stata annullata per un conflitto.
 fn conflict_hint(e: GitError, op: &str) -> GitError {
     match e {
         GitError::Failed(msg) if msg.to_lowercase().contains("conflict") => {
@@ -489,8 +453,6 @@ fn conflict_hint(e: GitError, op: &str) -> GitError {
     }
 }
 
-/// Checkout di un branch. Rifiutato se il working tree è dirty.
-/// Per i branch remote-only usa il nome corto: git crea il tracking locale.
 pub async fn checkout(path: &str, branch: &str) -> Result<GitRepoInfo, GitError> {
     let info = repo_info(path).await?;
     if info.dirty {
@@ -503,13 +465,11 @@ pub async fn checkout(path: &str, branch: &str) -> Result<GitRepoInfo, GitError>
     repo_info(path).await
 }
 
-/// `git fetch --prune`; ritorna lo stato aggiornato.
 pub async fn fetch(path: &str) -> Result<GitRepoInfo, GitError> {
     run_git(path, &["fetch", "--prune", "--quiet"], NETWORK_TIMEOUT).await?;
     repo_info(path).await
 }
 
-/// `git pull --ff-only`: mai merge automatici; se diverged fallisce con messaggio chiaro.
 pub async fn pull(path: &str) -> Result<(GitRepoInfo, String), GitError> {
     let output = run_git(path, &["pull", "--ff-only"], NETWORK_TIMEOUT).await?;
     let info = repo_info(path).await?;
@@ -547,7 +507,7 @@ mod tests {
         let info = repo_info(dir.path().to_str().unwrap()).await.expect("info");
         assert_eq!(info.current_branch.as_deref(), Some("main"));
         assert!(!info.dirty);
-        assert_eq!(info.ahead, None); // nessun upstream
+        assert_eq!(info.ahead, None);
         assert!(info.warnings.iter().any(|w| matches!(w, GitWarning::NoUpstream)));
     }
 
@@ -600,7 +560,6 @@ mod tests {
         assert_eq!(commits[0].subject, "secondo commit");
         assert!(commits[0].refs.iter().any(|r| r == "main"));
 
-        // Checkout del commit iniziale → detached HEAD.
         let initial = &commits[1].hash;
         let info = checkout_commit(path, initial).await.expect("checkout");
         assert!(info.current_branch.is_none());
@@ -624,10 +583,8 @@ mod tests {
         let branches = delete_branch(path, "feature", false, None).await.expect("delete");
         assert!(!branches.iter().any(|b| b.name == "feature"));
 
-        // il branch corrente non è eliminabile
         let err = delete_branch(path, "main", false, None).await;
         assert!(matches!(err, Err(GitError::Failed(_))));
-        // nome che sembra un flag → rifiutato
         assert!(delete_branch(path, "-rf", false, None).await.is_err());
     }
 
@@ -643,7 +600,6 @@ mod tests {
         let head = commits(path, None, 1, 0).await.unwrap()[0].hash.clone();
         let info = revert_commit(path, &head).await.expect("revert");
         assert!(!info.dirty);
-        // il revert ha rimosso il file e aggiunto un commit (3 in totale)
         assert!(!dir.path().join("f.txt").exists());
         assert_eq!(commits(path, None, 10, 0).await.unwrap().len(), 3);
     }
@@ -652,14 +608,12 @@ mod tests {
     async fn cherry_pick_applica_commit_da_altro_branch() {
         let dir = init_repo().await;
         let path = dir.path().to_str().unwrap();
-        // su un branch a parte creo un commit
         git_in(dir.path(), &["checkout", "-b", "feature"]).await;
         std::fs::write(dir.path().join("nuovo.txt"), "x").unwrap();
         git_in(dir.path(), &["add", "."]).await;
         git_in(dir.path(), &["commit", "-m", "feature commit"]).await;
         let feat_hash = commits(path, None, 1, 0).await.unwrap()[0].hash.clone();
 
-        // torno su main dove il file non esiste
         git_in(dir.path(), &["checkout", "main"]).await;
         assert!(!dir.path().join("nuovo.txt").exists());
 
@@ -673,27 +627,23 @@ mod tests {
     async fn commits_di_un_ref_specifico_non_di_head() {
         let dir = init_repo().await;
         let path = dir.path().to_str().unwrap();
-        // branch "altro" con un commit esclusivo
         git_in(dir.path(), &["checkout", "-b", "altro"]).await;
         std::fs::write(dir.path().join("solo-altro.txt"), "x").unwrap();
         git_in(dir.path(), &["add", "."]).await;
         git_in(dir.path(), &["commit", "-m", "solo su altro"]).await;
-        // torno su main (HEAD ora è "init")
         git_in(dir.path(), &["checkout", "main"]).await;
 
         let head = commits(path, None, 10, 0).await.unwrap();
-        assert_eq!(head.len(), 1); // solo "init" su main
+        assert_eq!(head.len(), 1);
         let altro = commits(path, Some("altro"), 10, 0).await.unwrap();
         assert_eq!(altro.len(), 2);
         assert_eq!(altro[0].subject, "solo su altro");
 
-        // ref non valido → errore, niente esecuzione
         assert!(commits(path, Some("--all"), 10, 0).await.is_err());
     }
 
     #[tokio::test]
     async fn remote_ref_popolato_e_delete_remoto() {
-        // Remote "bare" locale usato come origin.
         let remote = tempfile::tempdir().unwrap();
         let remote_path = remote.path().to_str().unwrap();
         git_in(remote.path(), &["init", "--bare", "-b", "main"]).await;
@@ -706,12 +656,10 @@ mod tests {
         git_in(dir.path(), &["push", "-u", "origin", "feature"]).await;
         git_in(dir.path(), &["checkout", "main"]).await;
 
-        // Il branch locale "feature" espone il suo ref remoto.
         let list = branches(path).await.expect("branches");
         let feature = list.iter().find(|b| b.name == "feature").unwrap();
         assert_eq!(feature.remote_ref.as_deref(), Some("origin/feature"));
 
-        // Eliminazione locale + remota: sparisce da entrambi.
         delete_branch(path, "feature", false, Some("origin")).await.expect("delete");
         let after = branches(path).await.expect("branches");
         assert!(!after.iter().any(|b| b.name == "feature"));
@@ -727,7 +675,6 @@ mod tests {
         git_in(dir.path(), &["remote", "add", "origin", remote.path().to_str().unwrap()]).await;
         git_in(dir.path(), &["checkout", "-b", "topic"]).await;
 
-        // Commit vecchio (2020) e push: il tip *remoto* di topic è vecchio.
         let old = "2020-01-01T00:00:00";
         let out = std::process::Command::new("git")
             .arg("-C")
@@ -739,14 +686,11 @@ mod tests {
             .unwrap();
         assert!(out.status.success());
         git_in(dir.path(), &["push", "-u", "origin", "topic"]).await;
-        // Nuovo commit locale fresco, NON pushato: il tip locale è di oggi.
         git_in(dir.path(), &["commit", "--allow-empty", "-m", "fresco (locale)"]).await;
 
         let list = branches(path).await.unwrap();
         let topic = list.iter().find(|b| b.name == "topic").unwrap();
-        // La vetustà guarda il remoto vecchio (>100 settimane), non il tip locale.
         assert!(topic.stale_weeks > 100, "stale_weeks={}", topic.stale_weeks);
-        // Il commit mostrato resta comunque il tip locale.
         assert_eq!(topic.last_commit.subject, "fresco (locale)");
     }
 }

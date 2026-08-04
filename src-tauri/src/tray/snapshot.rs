@@ -1,13 +1,3 @@
-//! Cache aggiornata in background per il menu del tray.
-//!
-//! Il click sull'icona nel tray deve aprire il menu istantaneamente: uno scan
-//! porte o un check servizi sincrono a quel punto (i servizi da soli possono
-//! costare fino a qualche secondo di timeout) lo renderebbe percepibilmente
-//! lento. Invece si tiene una foto sempre pronta, rinfrescata da un loop
-//! indipendente dal `PollerRegistry` (quello si avvia/ferma in base ai
-//! subscriber WS della UI; il tray è sempre presente, quindi ha bisogno di un
-//! proprio ciclo, sempre attivo mentre l'app gira).
-
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -16,10 +6,7 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use crate::config::ConfigHandle;
 
 const TICK: Duration = Duration::from_secs(3);
-/// Servizi online: check più costoso (fino a qualche secondo con timeout),
-/// rinfrescato meno spesso. ~21s.
 const SERVICES_EVERY_TICKS: u32 = 7;
-/// Strumenti rilevati: cambia raramente (installazioni), refresh ogni ~60s.
 const TOOLS_EVERY_TICKS: u32 = 20;
 
 #[derive(Default, Clone)]
@@ -34,14 +21,6 @@ pub struct TraySnapshot {
 
 pub type SharedSnapshot = Arc<RwLock<TraySnapshot>>;
 
-/// Avvia il refresh periodico e ritorna l'handle condiviso: sempre letto,
-/// mai popolato sincronamente al click sul tray.
-///
-/// Chiamata da `tray::setup`, che gira nella closure `.setup()` di Tauri:
-/// quel contesto NON è dentro un runtime Tokio (a differenza di
-/// `server::start`, invocato via `block_on`), quindi serve
-/// `tauri::async_runtime::spawn` — un `tokio::spawn` qui andrebbe in panico
-/// ("no reactor running").
 pub fn start(config: ConfigHandle) -> SharedSnapshot {
     let snapshot: SharedSnapshot = Arc::new(RwLock::new(TraySnapshot::default()));
     let shared = snapshot.clone();

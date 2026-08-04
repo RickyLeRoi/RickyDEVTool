@@ -3,7 +3,6 @@ import { api, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
 import type { EnvContent, EnvFile } from "../../lib/types";
 
-/** I valori .env sono segreti: mascherati di default, rivelabili su richiesta. */
 function EnvValues({ path, file }: { path: string; file: string }) {
   const [content, setContent] = useState<EnvContent | null>(null);
   const [reveal, setReveal] = useState(false);

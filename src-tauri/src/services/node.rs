@@ -36,9 +36,8 @@ pub struct NodeProject {
     pub path: String,
     pub package_name: Option<String>,
     pub package_manager: PackageManager,
-    pub pm_source: &'static str, // lockfile | packageManagerField | userOverride | default
+    pub pm_source: &'static str,
     pub scripts: BTreeMap<String, String>,
-    /// Script suggerito per il bottone Start: "start" oppure "dev".
     pub primary_start: Option<String>,
     pub node_modules_present: bool,
 }
@@ -79,7 +78,6 @@ pub fn inspect(path: &str, user_override: Option<&str>) -> Result<NodeProject, S
     })
 }
 
-/// Priorità: override utente > lockfile > campo packageManager > npm.
 fn detect_pm(
     dir: &Path,
     package_json: &serde_json::Value,
@@ -98,7 +96,6 @@ fn detect_pm(
         return (PackageManager::Npm, "lockfile");
     }
     if let Some(field) = package_json.get("packageManager").and_then(|v| v.as_str()) {
-        // formato: "pnpm@9.1.0"
         if let Some(pm) = PackageManager::from_str(field.split('@').next().unwrap_or("")) {
             return (pm, "packageManagerField");
         }
@@ -106,7 +103,6 @@ fn detect_pm(
     (PackageManager::Npm, "default")
 }
 
-/// Argomenti per il task runner: install oppure run <script>.
 pub fn command_for(pm: PackageManager, script: Option<&str>) -> (String, Vec<String>) {
     let cmd = pm.command().to_string();
     match script {
@@ -131,7 +127,7 @@ mod tests {
         std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
         std::fs::write(dir.path().join("package-lock.json"), "").unwrap();
         let p = inspect(dir.path().to_str().unwrap(), None).unwrap();
-        assert_eq!(p.package_manager, PackageManager::Pnpm); // lockfile pnpm vince
+        assert_eq!(p.package_manager, PackageManager::Pnpm);
         assert_eq!(p.pm_source, "lockfile");
     }
 

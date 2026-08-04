@@ -13,7 +13,7 @@ pub struct DiscoveredTool {
     pub found: bool,
     pub path: Option<String>,
     pub version: Option<String>,
-    pub source: &'static str, // wellKnownPath | registry | PATH | userConfig | none
+    pub source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform_note: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -31,7 +31,6 @@ pub const TOOL_IDS: &[&str] = &[
     "vscode", "visualstudio", "git", "node", "npm", "yarn", "pnpm", "dotnet", "docker", "terminal",
 ];
 
-/// Discovery completa. `overrides` (da config) vince su tutto.
 pub async fn discover_all(overrides: &HashMap<String, String>) -> Vec<DiscoveredTool> {
     let mut tools = Vec::with_capacity(TOOL_IDS.len());
     for id in TOOL_IDS {
@@ -85,8 +84,6 @@ fn found_at(id: &'static str, path: String, source: &'static str) -> DiscoveredT
     }
 }
 
-// ---------- tool CLI generici (git, node, npm, yarn, pnpm, dotnet, docker) ----------
-
 async fn discover_cli(id: &'static str) -> DiscoveredTool {
     let Some(path) = which(id).await else {
         return not_found(id, None);
@@ -118,8 +115,6 @@ async fn version_of(id: &str, path: &str) -> Option<String> {
     (!first.is_empty()).then_some(first)
 }
 
-// ---------- VS Code ----------
-
 #[cfg(target_os = "macos")]
 async fn discover_vscode() -> DiscoveredTool {
     let bundles = vec![
@@ -129,7 +124,6 @@ async fn discover_vscode() -> DiscoveredTool {
     for bundle in &bundles {
         if Path::new(bundle).exists() {
             let mut tool = found_at("vscode", bundle.to_string(), "wellKnownPath");
-            // La CLI `code` dentro il bundle dà la versione senza dipendere dal PATH.
             let cli = format!("{bundle}/Contents/Resources/app/bin/code");
             tool.version = version_of("vscode", &cli).await;
             return tool;
@@ -170,8 +164,6 @@ async fn discover_vscode() -> DiscoveredTool {
     }
 }
 
-// ---------- Visual Studio ----------
-
 #[cfg(target_os = "windows")]
 async fn discover_visual_studio() -> DiscoveredTool {
     let vswhere = format!(
@@ -181,8 +173,6 @@ async fn discover_visual_studio() -> DiscoveredTool {
     if !Path::new(&vswhere).exists() {
         return not_found("visualstudio", Some("vswhere non trovato: nessun VS ≥2017 installato".into()));
     }
-    // -prerelease: senza questo flag vswhere esclude le edizioni Preview/Insiders
-    // (es. VS 2026 finché resta in preview), facendole risultare "non trovate".
     let cmd = &mut exec::cmd(&vswhere);
     cmd.args(["-all", "-prerelease", "-products", "*", "-format", "json"]);
     let Some(output) = exec::text(cmd).await else {
@@ -224,8 +214,6 @@ async fn discover_visual_studio() -> DiscoveredTool {
     )
 }
 
-// ---------- Terminale ----------
-
 #[cfg(target_os = "macos")]
 async fn discover_terminal() -> DiscoveredTool {
     if Path::new("/Applications/iTerm.app").exists() {
@@ -252,9 +240,6 @@ async fn discover_terminal() -> DiscoveredTool {
     not_found("terminal", None)
 }
 
-// ---------- lancio ----------
-
-/// Avvia un tool, opzionalmente su una cartella/soluzione.
 pub async fn launch(tool: &DiscoveredTool, target: Option<&str>) -> Result<(), String> {
     let path = tool.path.as_deref().ok_or("tool non trovato")?;
     if let Some(t) = target {
@@ -321,8 +306,6 @@ fn launch_terminal(path: &str, target: Option<&str>) -> Result<(), String> {
         c.args(["-d", dir]);
         spawn(c)
     } else {
-        // Qui la console è il prodotto, non un effetto collaterale: `start`
-        // apre il terminale che l'utente ha chiesto.
         let mut c = exec::sync_cmd_with_console("cmd");
         c.args(["/c", "start", "cmd", "/K", "cd", "/d", dir]);
         spawn(c)
@@ -360,17 +343,14 @@ mod tests {
     async fn discovery_trova_git_e_node() {
         let tools = discover_all(&HashMap::new()).await;
         let get = |id: &str| tools.iter().find(|t| t.id == id).unwrap();
-        // git e node esistono sulla macchina di sviluppo e in CI.
         assert!(get("git").found, "git non trovato");
         assert!(get("node").found, "node non trovato");
-        // Visual Studio su non-Windows deve essere assente con nota.
         #[cfg(not(target_os = "windows"))]
         {
             let vs = get("visualstudio");
             assert!(!vs.found);
             assert!(vs.platform_note.is_some());
         }
-        // Il terminale si trova sempre su mac/win.
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         assert!(get("terminal").found);
     }

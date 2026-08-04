@@ -1,7 +1,5 @@
 import type { ApiResult } from "./types";
 
-// Se la pagina è servita dal backend (6969-6978, anche via IP LAN) l'API è same-origin.
-// Altrimenti (Vite in dev sulla 1420, o webview dev) si punta al default locale.
 const port = Number(window.location.port);
 export const API_BASE =
   port >= 6969 && port < 6979 ? "" : "http://127.0.0.1:6969";

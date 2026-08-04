@@ -16,7 +16,6 @@ pub struct ProcessInfo {
     pub name: String,
     pub exe_path: Option<String>,
     pub user: Option<String>,
-    /// Normalizzata sul totale dei core (0..100) su entrambi gli OS.
     pub cpu_pct: f32,
     pub mem_bytes: u64,
     pub mem_pct: f32,
@@ -25,24 +24,16 @@ pub struct ProcessInfo {
     pub known_app: Option<&'static str>,
 }
 
-/// Processi raggruppati per nome eseguibile. Serve perché app come VS Code,
-/// Chrome o Docker Desktop si spezzano in decine di processi (renderer, GPU,
-/// extension host, helper…) ciascuno leggero: sommati possono pesare giga di
-/// RAM anche se nessun singolo PID supera la soglia. Il Task Manager/Activity
-/// Monitor li aggrega già in questo modo nella vista principale; senza questa
-/// aggregazione il tool sembrava "vedere" molta meno RAM del sistema.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessGroup {
     pub name: String,
     pub known_app: Option<&'static str>,
     pub is_system: bool,
-    /// Somma sul gruppo (normalizzata sui core, come per il singolo processo).
     pub cpu_pct: f32,
     pub mem_bytes: u64,
     pub mem_pct: f32,
     pub count: usize,
-    /// Ordinati per CPU decrescente; espansi in UI per il dettaglio/kill.
     pub members: Vec<ProcessInfo>,
 }
 
@@ -70,9 +61,6 @@ fn users() -> &'static Users {
     USERS.get_or_init(Users::new_with_refreshed_list)
 }
 
-/// Gruppi (per nome eseguibile) sopra soglia CPU **oppure** RAM sul totale del
-/// gruppo, ordinati per CPU decrescente. Doppio campionamento: la CPU per
-/// processo è un delta, il primo giro da solo darebbe 0.
 pub async fn heavy_processes(cpu_min_pct: f32, mem_min_pct: f32) -> HeavyProcessesResult {
     let refresh = ProcessRefreshKind::nothing()
         .with_cpu()
@@ -88,8 +76,6 @@ pub async fn heavy_processes(cpu_min_pct: f32, mem_min_pct: f32) -> HeavyProcess
     let cores = num_cores(&mut sys);
     let total_mem = total_memory();
 
-    // Nessun filtro qui: la soglia si applica al gruppo, non al singolo PID
-    // (vedi doc di ProcessGroup).
     let all: Vec<ProcessInfo> = sys
         .processes()
         .values()
@@ -181,7 +167,6 @@ fn total_memory() -> u64 {
     })
 }
 
-/// Regole per associare icone/etichette alle app note (riusata dalla sezione porte in M2).
 pub fn classify_known_app(name: &str, exe_path: Option<&str>) -> Option<&'static str> {
     let lower = name.to_lowercase();
     let path = exe_path.unwrap_or("").to_lowercase();
@@ -207,7 +192,6 @@ pub fn classify_known_app(name: &str, exe_path: Option<&str>) -> Option<&'static
             return Some(id);
         }
     }
-    // Casi che richiedono anche il path per non fare falsi positivi.
     if (lower.starts_with("code") || lower.contains("code helper"))
         && (path.contains("visual studio code") || path.contains("vs code"))
     {
@@ -219,7 +203,6 @@ pub fn classify_known_app(name: &str, exe_path: Option<&str>) -> Option<&'static
     None
 }
 
-/// Euristica sistema/non-sistema: imperfetta per design.
 #[cfg(target_os = "macos")]
 pub(crate) fn is_system_process(
     name: &str,
@@ -308,14 +291,9 @@ mod tests {
 
     #[tokio::test]
     async fn gruppo_supera_soglia_anche_se_nessun_membro_da_solo() {
-        // Con soglia 0 tutti i processi rientrano: verifica che processi con lo
-        // stesso nome (es. più helper dello stesso browser) vengano sommati in
-        // un solo gruppo invece di restare voci separate.
         let result = heavy_processes(0.0, 0.0).await;
         let total_from_groups: usize = result.groups.iter().map(|g| g.count).sum();
-        // Nessun processo perso nell'aggregazione.
         assert!(total_from_groups > 0);
-        // Ogni nome compare in un solo gruppo (niente duplicati per nome).
         let mut names: Vec<&str> = result.groups.iter().map(|g| g.name.as_str()).collect();
         let before = names.len();
         names.sort_unstable();

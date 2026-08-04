@@ -3,12 +3,6 @@ import { api, post } from "../lib/api";
 
 type GateState = "checking" | "ok" | "needs-pairing";
 
-/**
- * Gestisce l'abbinamento dei device LAN:
- * - se l'URL contiene #pair=<token> (arrivo da QR) esegue il pairing e pulisce l'hash;
- * - se l'API risponde 401 mostra la schermata di inserimento token.
- * Da localhost/desktop passa sempre.
- */
 export function PairGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>("checking");
   const [token, setToken] = useState("");

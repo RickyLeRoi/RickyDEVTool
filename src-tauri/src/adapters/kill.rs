@@ -10,12 +10,10 @@ use crate::exec;
 #[serde(rename_all = "camelCase")]
 pub struct KillRequest {
     pub pid: u32,
-    /// Il kill viene rifiutato se il PID ora appartiene a un altro processo.
     pub expected_name: String,
     pub expected_started_at: Option<u64>,
     #[serde(default)]
     pub force: bool,
-    /// Per i processi protetti: deve essere uguale al nome del processo.
     pub confirm_name: Option<String>,
 }
 
@@ -35,8 +33,6 @@ pub enum KillError {
 }
 
 const GRACE_SECS: u64 = 5;
-/// Tolleranza sul confronto di start time (secondi): gli orologi dei due
-/// campionamenti possono differire di poco.
 const START_TIME_TOLERANCE_S: i64 = 2;
 
 pub async fn kill_process(req: KillRequest) -> Result<KillOutcome, KillError> {
@@ -55,7 +51,6 @@ pub async fn kill_process(req: KillRequest) -> Result<KillOutcome, KillError> {
     };
     let name = p.name().to_string_lossy().to_string();
 
-    // Verifica identità: PID riusato da un altro processo = mai killare.
     if !name.eq_ignore_ascii_case(&req.expected_name) {
         return Err(KillError::ProcessGone);
     }
@@ -88,7 +83,6 @@ pub async fn kill_process(req: KillRequest) -> Result<KillOutcome, KillError> {
     }
 
     kill_now(req.pid, false)?;
-    // Escalation: se dopo il periodo di grazia lo STESSO processo è ancora vivo, SIGKILL.
     tokio::spawn(escalate_if_alive(req.pid, name, start_time));
     Ok(KillOutcome { killed: true, forced: false })
 }
@@ -134,8 +128,6 @@ fn kill_now(pid: u32, force: bool) -> Result<(), KillError> {
 
 #[cfg(windows)]
 fn kill_now(pid: u32, force: bool) -> Result<(), KillError> {
-    // taskkill senza /F invia WM_CLOSE (chiusura gentile, solo app con finestra);
-    // /T termina anche l'albero dei figli.
     let mut cmd = exec::sync_cmd("taskkill");
     if force {
         cmd.args(["/F", "/T"]);
@@ -169,7 +161,6 @@ mod tests {
             .spawn()
             .expect("spawn sleep");
         let pid = child.id().expect("pid");
-        // Lascia che il processo compaia nella tabella.
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         (pid, child)
     }
@@ -189,7 +180,7 @@ mod tests {
         .expect("kill ok");
         assert!(outcome.killed);
         let status = child.wait().await.expect("wait");
-        assert!(!status.success()); // terminato da segnale
+        assert!(!status.success());
     }
 
     #[tokio::test]
@@ -221,9 +212,6 @@ mod tests {
         assert!(matches!(result, Err(KillError::ProcessGone)));
     }
 
-    /// Avvia un processo di lunga durata cross-platform e ne restituisce il PID,
-    /// l'handle e il nome **come lo vede sysinfo** (es. "ping.exe" su Windows):
-    /// passare il nome reale rende il test robusto alla verifica d'identità.
     #[allow(dead_code)]
     async fn spawn_long_child() -> (u32, tokio::process::Child, String) {
         #[cfg(unix)]
@@ -234,8 +222,6 @@ mod tests {
         };
         #[cfg(windows)]
         let mut cmd = {
-            // ping attende ~29s senza bisogno di una console (a differenza di
-            // `timeout`, che fallisce senza stdin/console).
             let mut c = tokio::process::Command::new("ping");
             c.args(["-n", "30", "127.0.0.1"]);
             c
@@ -263,8 +249,6 @@ mod tests {
     #[ignore = "contract test per-OS: spawna e termina un processo reale (--ignored)"]
     async fn contract_force_kill_child_reale() {
         let (pid, mut child, name) = spawn_long_child().await;
-        // force=true per un esito deterministico su entrambi gli OS: su Windows
-        // un kill "gentile" (WM_CLOSE) non chiuderebbe un processo console.
         let outcome = kill_process(KillRequest {
             pid,
             expected_name: name,
@@ -286,8 +270,6 @@ mod tests {
     #[ignore = "contract test per-OS: rifiuto su identità PID non coerente (--ignored)"]
     async fn contract_kill_rifiuta_nome_diverso_reale() {
         let (pid, mut child, _name) = spawn_long_child().await;
-        // Nome atteso sbagliato → il PID è "un altro processo" → rifiuto, il
-        // figlio resta vivo.
         let result = kill_process(KillRequest {
             pid,
             expected_name: "processo-che-non-esiste".into(),

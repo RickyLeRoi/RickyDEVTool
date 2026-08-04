@@ -85,7 +85,7 @@ export function NodePanel({ path }: { path: string }) {
               Start ({project.primaryStart})
             </button>
           )}
-          {/* Tutti gli script di package.json come bottoni, non solo i fissi. */}
+          {}
           {otherScripts.map((s) => (
             <button
               key={s}

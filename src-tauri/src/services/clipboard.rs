@@ -1,10 +1,3 @@
-//! Storico degli appunti (stile Windows+V): un thread campiona la clipboard di
-//! sistema e ne conserva la cronologia. Il **testo vive solo in memoria** — mai
-//! su disco: contiene spesso password e token. I **file e le immagini** copiati
-//! finiscono invece in una cache su disco temporanea ([`clipboard_cache`])
-//! cancellata a ogni riavvio, così si può ri-copiarli o salvarli anche dopo.
-//! La cattura è mettibile in pausa e la cronologia svuotabile.
-
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -16,15 +9,9 @@ use serde::Serialize;
 use crate::adapters::clipboard::ClipRead;
 use crate::services::clipboard_cache::{BlobCache, BlobId};
 
-/// Ogni quanto leggere la clipboard.
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
-/// Voci non fissate conservate al massimo (le fissate non contano).
 const MAX_ENTRIES: usize = 100;
-/// Testo più lungo di così non viene catturato (probabile copia di un file
-/// intero): evita di gonfiare la memoria.
 const MAX_TEXT_BYTES: usize = 256 * 1024;
-/// File più grandi di così: si tiene solo il nome/dimensione, non una copia del
-/// contenuto (scelta con l'utente per non riempire il disco).
 const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -40,10 +27,7 @@ pub enum ClipKind {
 pub struct ClipFile {
     pub name: String,
     pub size: u64,
-    /// `true` se una copia del contenuto è disponibile in cache (scaricabile /
-    /// ri-copiabile). `false` per cartelle o file oltre il limite.
     pub has_blob: bool,
-    /// Id del blob in cache (non serializzato: uso interno).
     #[serde(skip)]
     pub blob: Option<BlobId>,
 }
@@ -63,8 +47,6 @@ pub struct ClipImage {
 pub struct ClipEntry {
     pub id: u64,
     pub kind: ClipKind,
-    /// Etichetta/anteprima mostrata in lista (per i file: il nome o "N file";
-    /// per l'immagine: le dimensioni).
     pub text: String,
     pub bytes: u64,
     pub copied_at: u64,
@@ -73,20 +55,15 @@ pub struct ClipEntry {
     pub files: Option<Vec<ClipFile>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ClipImage>,
-    /// Firma di deduplica (non serializzata): identifica il contenuto per
-    /// evitare doppioni e riportare in cima una copia ripetuta.
     #[serde(skip)]
     pub sig: String,
 }
 
 struct State {
     entries: VecDeque<ClipEntry>,
-    /// Ultima firma vista dal sampler: evita di ri-registrare lo stesso
-    /// contenuto a ogni giro di polling.
     last_seen: Option<String>,
 }
 
-/// Cosa serve al server per servire un blob (immagine inline o file in download).
 pub struct BlobServe {
     pub path: PathBuf,
     pub name: String,
@@ -98,7 +75,6 @@ pub struct ClipboardHistory {
     state: Mutex<State>,
     enabled: AtomicBool,
     next_id: AtomicU64,
-    /// Ultimo contatore di modifica clipboard visto: gating del polling.
     last_change: AtomicI64,
     cache: BlobCache,
 }
@@ -117,9 +93,7 @@ impl ClipboardHistory {
         }
     }
 
-    /// Avvia il sampler sempre attivo su un thread OS dedicato.
     pub fn start() -> Arc<Self> {
-        // Pulisci i blob di sessioni precedenti prima di creare la nuova cache.
         crate::services::clipboard_cache::purge_root();
         let history = Arc::new(Self::new());
         if crate::adapters::clipboard::supported() {
@@ -149,10 +123,6 @@ impl ClipboardHistory {
         history
     }
 
-    // --------------------------- registrazione ---------------------------
-
-    /// Registra un testo appena visto in clipboard. Idempotente sullo stesso
-    /// contenuto; scarta vuoti e testi enormi.
     pub fn record(&self, text: String) {
         if text.trim().is_empty() || text.len() > MAX_TEXT_BYTES {
             return;
@@ -164,8 +134,6 @@ impl ClipboardHistory {
         self.push(entry);
     }
 
-    /// Registra una copia di uno o più file: nome + dimensione, e — se sotto al
-    /// limite — una copia del contenuto in cache.
     pub fn record_files(&self, paths: Vec<PathBuf>) {
         if paths.is_empty() {
             return;
@@ -202,13 +170,11 @@ impl ClipboardHistory {
         self.push(entry);
     }
 
-    /// Registra un'immagine copiata (PNG già scritto su `png_path`, che viene
-    /// adottato dalla cache).
     pub fn record_image(&self, png_path: PathBuf, mime: String, width: u32, height: u32) {
         let size = std::fs::metadata(&png_path).map(|m| m.len()).unwrap_or(0);
         let sig = image_sig(width, height, size);
         if self.is_duplicate_or_promote(&sig) {
-            let _ = std::fs::remove_file(&png_path); // già in storico: scarta il temp
+            let _ = std::fs::remove_file(&png_path);
             return;
         }
         let blob = match self.cache.store_move(&png_path, "immagine.png") {
@@ -246,8 +212,6 @@ impl ClipboardHistory {
         }
     }
 
-    /// `true` se il contenuto (per firma) è un doppione consecutivo o esisteva
-    /// già (in tal caso lo riporta in cima riusandone id/blob/pinned).
     fn is_duplicate_or_promote(&self, sig: &str) -> bool {
         let mut st = self.state.lock().unwrap();
         if st.last_seen.as_deref() == Some(sig) {
@@ -275,8 +239,6 @@ impl ClipboardHistory {
         }
     }
 
-    /// Rimuove le voci non fissate più vecchie oltre il limite; restituisce le
-    /// voci sfrattate perché chi chiama ne liberi i blob (fuori dal lock).
     fn evict(st: &mut State) -> Vec<ClipEntry> {
         let mut evicted = Vec::new();
         while st.entries.iter().filter(|e| !e.pinned).count() > MAX_ENTRIES {
@@ -302,10 +264,7 @@ impl ClipboardHistory {
         }
     }
 
-    // ------------------------------ lettura ------------------------------
-
     pub fn list(&self) -> Vec<ClipEntry> {
-        // Fissate prima (in ordine di copia), poi le altre per recency.
         let st = self.state.lock().unwrap();
         let mut pinned: Vec<ClipEntry> = st.entries.iter().filter(|e| e.pinned).cloned().collect();
         let mut rest: Vec<ClipEntry> = st.entries.iter().filter(|e| !e.pinned).cloned().collect();
@@ -356,12 +315,6 @@ impl ClipboardHistory {
         }
     }
 
-    /// Svuota la cronologia. Con `keep_pinned` conserva le voci fissate.
-    ///
-    /// Non serve toccare la clipboard di sistema: svuotare lo storico non la
-    /// modifica, quindi il gating sul contatore impedisce già che l'ultimo
-    /// elemento riappaia al prossimo giro (ma `last_seen` va azzerato perché una
-    /// *nuova* copia dello stesso contenuto torni a registrarsi).
     pub fn clear(&self, keep_pinned: bool) {
         let removed: Vec<ClipEntry> = {
             let mut st = self.state.lock().unwrap();
@@ -388,14 +341,11 @@ impl ClipboardHistory {
         }
     }
 
-    /// Etichetta testuale di una voce (per la re-copia testo lato server e per
-    /// l'invio via rete). Per file/immagini è il nome/anteprima.
     pub fn text_of(&self, id: u64) -> Option<String> {
         let st = self.state.lock().unwrap();
         st.entries.iter().find(|e| e.id == id).map(|e| e.text.clone())
     }
 
-    /// Riporta in clipboard il contenuto di una voce (testo, immagine o file).
     pub fn copy_to_clipboard(&self, id: u64) -> Result<(), String> {
         let entry = {
             let st = self.state.lock().unwrap();
@@ -423,13 +373,10 @@ impl ClipboardHistory {
                 crate::adapters::clipboard::write_files(&paths)?;
             }
         }
-        // Evita che il sampler tratti la nostra scrittura come una nuova copia.
         self.mark_written(&entry.sig);
         Ok(())
     }
 
-    /// Percorso/metadati del blob da servire: `index` seleziona il file in una
-    /// voce multi-file (ignorato per le immagini).
     pub fn blob_for(&self, id: u64, index: usize) -> Option<BlobServe> {
         let (blob, name, mime, inline) = {
             let st = self.state.lock().unwrap();
@@ -445,8 +392,6 @@ impl ClipboardHistory {
         Some(BlobServe { path, name, mime, inline })
     }
 
-    /// Da chiamare dopo aver scritto in clipboard: la firma è marcata come
-    /// "appena vista", così il prossimo giro del sampler non la ri-cattura.
     pub fn mark_written(&self, sig: &str) {
         let mut st = self.state.lock().unwrap();
         st.last_seen = Some(sig.to_string());
@@ -481,8 +426,8 @@ mod tests {
     fn dedup_consecutivo_e_skip_vuoti() {
         let h = ClipboardHistory::new();
         h.record("ciao".into());
-        h.record("ciao".into()); // consecutivo identico → ignorato
-        h.record("   ".into()); // vuoto (solo spazi) → ignorato
+        h.record("ciao".into());
+        h.record("   ".into());
         assert_eq!(h.list().len(), 1);
         assert_eq!(h.list()[0].text, "ciao");
     }
@@ -492,10 +437,10 @@ mod tests {
         let h = ClipboardHistory::new();
         h.record("uno".into());
         h.record("due".into());
-        h.record("uno".into()); // di nuovo "uno" (non consecutivo)
+        h.record("uno".into());
         let list = h.list();
         assert_eq!(list.len(), 2);
-        assert_eq!(list[0].text, "uno"); // in cima
+        assert_eq!(list[0].text, "uno");
     }
 
     #[test]
@@ -504,16 +449,13 @@ mod tests {
         h.record("importante".into());
         let id = h.list()[0].id;
         assert!(h.set_pinned(id, true));
-        // riempi oltre il limite con voci non fissate
         for i in 0..(MAX_ENTRIES + 10) {
             h.record(format!("v{i}"));
         }
         let list = h.list();
-        // la voce fissata sopravvive e sta in testa
         assert_eq!(list[0].text, "importante");
         assert!(list[0].pinned);
         assert!(list.iter().any(|e| e.id == id));
-        // le non fissate sono limitate
         assert_eq!(list.iter().filter(|e| !e.pinned).count(), MAX_ENTRIES);
     }
 
@@ -546,14 +488,12 @@ mod tests {
     fn mark_written_evita_ricattura() {
         let h = ClipboardHistory::new();
         h.mark_written("dal-server");
-        h.record("dal-server".into()); // il sampler lo rilegge → deve ignorarlo
+        h.record("dal-server".into());
         assert!(h.list().is_empty());
     }
 
     #[test]
     fn json_contratto_ui_camelcase() {
-        // Blinda i nomi dei campi verso il frontend (types.ts): un rename
-        // silenzioso romperebbe la UI senza che i test lo notino.
         let files_entry = ClipEntry {
             id: 7,
             kind: ClipKind::Files,
@@ -611,8 +551,7 @@ mod tests {
         assert_eq!(list[0].text, "nota.txt");
         let files = list[0].files.as_ref().unwrap();
         assert_eq!(files.len(), 1);
-        assert!(files[0].has_blob); // sotto al limite → copia disponibile
-        // il blob è servibile
+        assert!(files[0].has_blob);
         let serve = h.blob_for(list[0].id, 0).unwrap();
         assert_eq!(serve.name, "nota.txt");
         assert_eq!(std::fs::read(&serve.path).unwrap(), b"contenuto");

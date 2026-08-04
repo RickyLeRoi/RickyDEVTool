@@ -5,10 +5,6 @@ use serde::Serialize;
 
 use crate::exec;
 
-/// Toolbox di rete: ping, lookup DNS, port check, scan della LAN.
-/// Tutte operazioni read-only. Il ping usa il binario di sistema (niente
-/// raw socket → niente privilegi), parsato in modo tollerante alle lingue.
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PingResult {
@@ -48,8 +44,6 @@ pub struct LanHost {
 
 const DEFAULT_PING_COUNT: u32 = 4;
 
-/// Consente hostname/IP "ragionevoli" ed esclude qualsiasi cosa che possa
-/// essere interpretata come flag o shell injection nel comando ping.
 pub(crate) fn valid_host(host: &str) -> bool {
     !host.is_empty()
         && host.len() < 254
@@ -59,9 +53,6 @@ pub(crate) fn valid_host(host: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_'))
 }
 
-/// `count`: la UI chiama con `count=1` più volte in sequenza per mostrare i
-/// tentativi in tempo reale invece di aspettare il pacchetto di N; `None`
-/// usa il default storico (chiamata singola, usata anche dai test).
 pub async fn ping(host: &str, count: Option<u32>) -> PingResult {
     let count = count.unwrap_or(DEFAULT_PING_COUNT).clamp(1, 20);
     if !valid_host(host) {
@@ -124,8 +115,6 @@ async fn run_ping(host: &str, count: u32, per_packet_timeout_ms: u64) -> Result<
     Ok(stdout)
 }
 
-/// Estrae i tempi dalle righe di risposta. Cerca `time=`, `time<`, `tempo=`,
-/// `tempo<` e varianti: regge l'output localizzato di Windows.
 pub fn parse_ping_times(output: &str) -> Vec<f64> {
     let mut times = Vec::new();
     for line in output.lines() {
@@ -156,7 +145,6 @@ pub async fn dns_lookup(name: &str) -> Result<Vec<DnsRecordSet>, String> {
     if !valid_host(name) {
         return Err("nome non valido".to_string());
     }
-    // Resolver di sistema quando possibile, altrimenti Cloudflare.
     let resolver = TokioAsyncResolver::tokio_from_system_conf()
         .unwrap_or_else(|_| {
             TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), ResolverOpts::default())
@@ -184,8 +172,6 @@ pub async fn dns_lookup(name: &str) -> Result<Vec<DnsRecordSet>, String> {
         let values: Vec<String> = match result {
             Ok(Ok(lookup)) => lookup
                 .iter()
-                // Solo i record del tipo richiesto: il resolver può restituire
-                // anche la catena CNAME dentro le risposte A/AAAA.
                 .filter(|r| r.record_type() == rtype)
                 .map(|r| r.to_string())
                 .collect(),
@@ -204,12 +190,7 @@ pub async fn dns_lookup(name: &str) -> Result<Vec<DnsRecordSet>, String> {
     Ok(sets)
 }
 
-/// Limite per chiamata: la UI spezza scansioni grandi (tutte le porte, porte
-/// note) in batch di questa dimensione, così può mostrare un progresso reale
-/// invece di aspettare un'unica risposta enorme.
 pub const MAX_PORTS_PER_CALL: usize = 1000;
-/// Connessioni TCP in volo contemporaneamente per batch: evita un burst di
-/// migliaia di connect() simultanee quando la UI chiede "tutte le porte".
 const MAX_CONCURRENT_PORT_CHECKS: usize = 200;
 
 pub async fn check_ports(host: &str, ports: &[u16]) -> Result<Vec<PortCheckResult>, String> {
@@ -264,12 +245,6 @@ pub async fn check_ports(host: &str, ports: &[u16]) -> Result<Vec<PortCheckResul
     Ok(results)
 }
 
-/// Comando/argomenti per il traceroute di sistema (mac/linux `traceroute`,
-/// Windows `tracert`). Il reverse DNS per hop è disattivo di default (`-n` /
-/// `-d`): risolvere ogni hop può rallentare parecchio la traccia, quindi la
-/// UI lo lascia disattivo a meno che l'utente non lo riattivi esplicitamente.
-/// L'output va in streaming come gli altri task (vedi `tasks.rs`): niente
-/// parser custom, la UI mostra le righe grezze via `TaskLog`.
 pub fn traceroute_command(host: &str, resolve_hostnames: bool) -> (&'static str, Vec<String>) {
     if cfg!(windows) {
         let mut args = if resolve_hostnames { vec![] } else { vec!["-d".to_string()] };
@@ -282,8 +257,6 @@ pub fn traceroute_command(host: &str, resolve_hostnames: bool) -> (&'static str,
     }
 }
 
-/// Scan del /24 dell'IP LAN primario: ping sweep (1 pacchetto, 500ms)
-/// con concorrenza limitata, poi hostname (reverse DNS) e MAC (tabella ARP).
 pub async fn scan_lan() -> Result<Vec<LanHost>, String> {
     let my_ip = crate::netinfo::lan_ips()
         .into_iter()
@@ -348,7 +321,6 @@ async fn reverse_dns(ip: &str) -> Option<String> {
         .map(|name| name.to_string().trim_end_matches('.').to_string())
 }
 
-/// MAC address dalla tabella ARP di sistema (popolata dal ping sweep appena fatto).
 async fn arp_table() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     let Ok(output) = exec::cmd("arp").arg("-a").output().await else {
@@ -363,8 +335,6 @@ async fn arp_table() -> std::collections::HashMap<String, String> {
     map
 }
 
-/// mac/linux: `? (192.168.1.5) at aa:bb:cc:dd:ee:ff on en0 ...`
-/// windows:   `  192.168.1.5        aa-bb-cc-dd-ee-ff     dinamico`
 pub fn parse_arp_line(line: &str) -> Option<(String, String)> {
     let ip = if let (Some(open), Some(close)) = (line.find('('), line.find(')')) {
         line.get(open + 1..close)?.to_string()

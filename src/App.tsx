@@ -43,8 +43,6 @@ const SECTIONS: { id: Page; icon: string; label: string; position: "top" | "bott
   { id: "settings", icon: "⚙️", label: "Impostazioni", position: "bottom" },
 ];
 
-// Azioni rapide extra offerte dalla palette, oltre alla navigazione: aprono
-// direttamente un tab specifico (id storico risolto dallo store di navigazione).
 const QUICK_NAV: { id: string; title: string; icon: string }[] = [
   { id: "ports", title: "Porte in ascolto", icon: "🔌" },
   { id: "docker", title: "Docker", icon: "🐳" },
@@ -56,7 +54,6 @@ const QUICK_NAV: { id: string; title: string; icon: string }[] = [
   { id: "services", title: "Servizi (ping)", icon: "📡" },
 ];
 
-// Deep-link/hash: #/<id>. Ignora `#pair=…` (gestito da PairGate).
 function idFromHash(): string | null {
   const m = window.location.hash.match(/^#\/([a-z]+)/);
   return m ? m[1] : null;
@@ -74,17 +71,14 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
 
-  // Presenza drop attiva sempre: sei visibile e ricevi da qualsiasi sezione.
   usePresence();
 
-  // All'avvio: se l'URL ha un deep-link, ha la precedenza sull'ultima pagina.
   useEffect(() => {
     const id = idFromHash();
     if (id) go(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Conteggio task sempre monitorato: decide se mostrare la voce Task nella rail.
   useEffect(() => {
     api<{ tasks: TaskInfo[] }>("/api/tasks").then((r) => {
       if (r.ok) setTasks(r.data.tasks ?? []);
@@ -94,7 +88,6 @@ export default function App() {
     });
   }, [setTasks]);
 
-  // Stato di RickyAI: fa comparire la voce senza ricaricare la pagina.
   useEffect(() => {
     const load = () => {
       api<AiStatus>("/api/ai/status").then((r) => {
@@ -105,13 +98,10 @@ export default function App() {
     return ws.subscribe("ai", load);
   }, []);
 
-  // Se la sezione sparisce mentre ci si è dentro (o era l'ultima pagina
-  // ricordata), si torna alla dashboard invece di restare su un vuoto.
   useEffect(() => {
     if (aiEnabled === false && page === "rickyai") go("dashboard");
   }, [aiEnabled, page, go]);
 
-  // ⌘K / Ctrl+K apre/chiude la command palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
@@ -123,7 +113,6 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Click su una voce del menu del tray: naviga sulla sezione giusta.
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let unlisten: (() => void) | undefined;
@@ -132,7 +121,6 @@ export default function App() {
       listen<{ section: string; extra?: string | null }>("tray-navigate", (event) => {
         const { section, extra } = event.payload;
         go(section, extra ?? null);
-        // Alcune sezioni consumano l'"extra" via trayIntent (es. QR in Impostazioni).
         useTrayIntentStore.getState().apply(section, extra ?? null);
       }),
     ).then((fn) => {
@@ -145,7 +133,6 @@ export default function App() {
     };
   }, [go]);
 
-  // Deep-link: tiene l'hash allineato alla pagina e reagisce ai cambi manuali.
   useEffect(() => {
     if (idFromHash() !== page) {
       history.replaceState(null, "", `#/${page}`);
@@ -158,7 +145,6 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [page, go]);
 
-  // Il pannello vital signs è sempre visibile: il topic "stats" resta sottoscritto.
   useEffect(() => {
     return ws.subscribe("stats", (event) => {
       if (event.topic === "stats") push(event.payload as MachineStats);
@@ -167,7 +153,6 @@ export default function App() {
     });
   }, [push, setError]);
 
-  // I dischi si aggiornano solo mentre la dashboard è aperta.
   useEffect(() => {
     if (page !== "dashboard") return;
     return ws.subscribe("disks", (event) => {
@@ -182,7 +167,6 @@ export default function App() {
     return true;
   };
 
-  // Comandi della palette: navigazione + azioni rapide + tema.
   const commands = useMemo<Command[]>(() => {
     const nav: Command[] = SECTIONS.filter(isVisible).map((s) => ({
       id: `nav:${s.id}`,

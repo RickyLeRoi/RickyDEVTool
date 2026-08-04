@@ -1,7 +1,3 @@
-// Calcolo della prossima esecuzione di un'espressione cron a 5 campi
-// (min hour dom month dow), più i keyword @daily/@hourly/… — tutto lato client,
-// senza dipendenze. Usato per dire "quando" un cron job scatterà.
-
 const SPECIAL: Record<string, string> = {
   "@yearly": "0 0 1 1 *",
   "@annually": "0 0 1 1 *",
@@ -12,7 +8,6 @@ const SPECIAL: Record<string, string> = {
   "@hourly": "0 * * * *",
 };
 
-// Espande un campo cron ("*", "*/5", "1-3", "1,15") nell'insieme dei valori.
 function parseField(field: string, min: number, max: number): Set<number> | null {
   const out = new Set<number>();
   for (const part of field.split(",")) {
@@ -22,7 +17,6 @@ function parseField(field: string, min: number, max: number): Set<number> | null
     let lo = min;
     let hi = max;
     if (rangePart === "*" || rangePart === "") {
-      // intervallo pieno
     } else if (rangePart.includes("-")) {
       const [a, b] = rangePart.split("-").map((n) => parseInt(n, 10));
       lo = a;
@@ -36,12 +30,11 @@ function parseField(field: string, min: number, max: number): Set<number> | null
   return out;
 }
 
-/** Prossima esecuzione a partire da `from` (default: adesso), o null se non parsabile. */
 export function cronNextRun(expr: string, from = new Date()): Date | null {
   let e = expr.trim();
   if (e.startsWith("@")) {
     const mapped = SPECIAL[e.split(/\s+/)[0]];
-    if (!mapped) return null; // @reboot & co. non hanno un "prossimo orario"
+    if (!mapped) return null;
     e = mapped;
   }
   const f = e.split(/\s+/);
@@ -53,7 +46,7 @@ export function cronNextRun(expr: string, from = new Date()): Date | null {
   const mon = parseField(f[3], 1, 12);
   const dow = parseField(f[4], 0, 7);
   if (!min || !hour || !dom || !mon || !dow) return null;
-  if (dow.has(7)) dow.add(0); // domenica = 0 e 7
+  if (dow.has(7)) dow.add(0);
 
   const domRestricted = f[2] !== "*";
   const dowRestricted = f[4] !== "*";
@@ -62,12 +55,10 @@ export function cronNextRun(expr: string, from = new Date()): Date | null {
   d.setSeconds(0, 0);
   d.setMinutes(d.getMinutes() + 1);
 
-  // Cap: cerca fino a ~366 giorni avanti (copre ogni cadenza annuale).
   for (let i = 0; i < 366 * 24 * 60; i++) {
     if (mon.has(d.getMonth() + 1) && hour.has(d.getHours()) && min.has(d.getMinutes())) {
       const domOk = dom.has(d.getDate());
       const dowOk = dow.has(d.getDay());
-      // Regola cron: se sia dom sia dow sono ristretti vale l'OR, altrimenti l'AND.
       const dayOk = domRestricted && dowRestricted ? domOk || dowOk : domOk && dowOk;
       if (dayOk) return new Date(d.getTime());
     }

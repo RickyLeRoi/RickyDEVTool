@@ -3,7 +3,6 @@ import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
 import type { ApiError, DotnetProject, TaskInfo } from "../../lib/types";
 
-// L'OS del backend, per disabilitare le azioni Windows-only.
 let cachedOs: string | null = null;
 async function backendOs(): Promise<string> {
   if (!cachedOs) {

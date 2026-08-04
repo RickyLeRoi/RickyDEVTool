@@ -8,15 +8,10 @@ use serde::Serialize;
 
 use crate::events::{now_ms, EventBus};
 
-/// Tail -f di file di log arbitrari, in streaming sul topic WS `tail:{id}`
-/// con lo stesso formato riga-per-riga dei task. Implementato a polling
-/// (500ms) per semplicità cross-platform; gestisce truncate/rotazione.
 const POLL_MS: u64 = 500;
 const INITIAL_TAIL_BYTES: u64 = 64 * 1024;
 const MAX_TAILS: usize = 5;
-/// Una sessione di tail dimenticata si spegne da sola dopo 2 ore.
 const MAX_AGE_MS: u64 = 2 * 3600 * 1000;
-/// Righe oltre questa lunghezza vengono troncate (log binari/minificati).
 const MAX_LINE_LEN: usize = 4000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +58,6 @@ impl TailRegistry {
         }
 
         let mut tails = self.tails.lock().expect("tail lock");
-        // Cull dei tail scaduti prima di verificare il limite.
         let now = now_ms();
         tails.retain(|_, h| {
             let keep = now.saturating_sub(h.info.started_at) < MAX_AGE_MS;
@@ -101,7 +95,6 @@ impl TailRegistry {
 
 async fn tail_loop(bus: EventBus, id: String, path: PathBuf) {
     let topic = format!("tail:{id}");
-    // Blocco iniziale: ultime ~64KB, dal primo a capo in poi.
     let mut pos: u64 = 0;
     match read_initial(&path, &mut pos) {
         Ok(lines) => {
@@ -120,11 +113,10 @@ async fn tail_loop(bus: EventBus, id: String, path: PathBuf) {
         tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
         let meta = match std::fs::metadata(&path) {
             Ok(m) => m,
-            Err(_) => continue, // il file può sparire durante una rotazione
+            Err(_) => continue,
         };
         let len = meta.len();
         if len < pos {
-            // Truncate o rotazione: si riparte dall'inizio del nuovo file.
             pos = 0;
             carry.clear();
             bus.publish(&topic, serde_json::json!({ "event": "rotated" }));
@@ -138,7 +130,6 @@ async fn tail_loop(bus: EventBus, id: String, path: PathBuf) {
         };
         pos = len;
         carry.push_str(&String::from_utf8_lossy(&chunk));
-        // L'ultima riga può essere incompleta: resta nel carry per il giro dopo.
         while let Some(newline) = carry.find('\n') {
             let line: String = carry.drain(..=newline).collect();
             publish_line(&bus, &topic, line.trim_end_matches(['\n', '\r']));
@@ -175,7 +166,6 @@ fn read_initial(path: &PathBuf, pos: &mut u64) -> Result<Vec<String>, String> {
     *pos = len;
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-    // Se si è partiti a metà file la prima riga è quasi certamente spezzata.
     if start > 0 && !lines.is_empty() {
         lines.remove(0);
     }
@@ -214,7 +204,6 @@ mod tests {
 
         let info = registry.start(&path.to_string_lossy()).expect("start");
 
-        // Le righe iniziali arrivano subito.
         let mut got = Vec::new();
         for _ in 0..2 {
             let ev = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv())
@@ -226,7 +215,6 @@ mod tests {
         }
         assert_eq!(got, vec!["vecchia1", "vecchia2"]);
 
-        // Una riga scritta dopo viene streammata al giro di polling successivo.
         {
             let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
             writeln!(f, "nuova").unwrap();

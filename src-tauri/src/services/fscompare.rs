@@ -1,43 +1,26 @@
-//! Confronto di due alberature di cartelle: cosa c'è solo a sinistra, cosa solo
-//! a destra e — a parità di percorso — quali file hanno dimensioni diverse.
-//! Sulle differenze si può agire: copiare da un lato all'altro o eliminare.
-//!
-//! Le azioni scrivono su disco, quindi ogni percorso relativo che arriva dalla
-//! UI viene ri-validato contro la sua radice: niente "..", niente percorsi
-//! assoluti, niente uscite dalla cartella scelta dall'utente.
-
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Tetto alle differenze raccolte: due alberi molto diversi (o una radice
-/// sbagliata) genererebbero centinaia di migliaia di righe inutilizzabili.
 pub const MAX_ENTRIES: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DiffStatus {
-    /// Presente solo nel ramo di sinistra.
     OnlyLeft,
-    /// Presente solo nel ramo di destra.
     OnlyRight,
-    /// Stesso percorso su entrambi i lati ma contenuto diverso (dimensione, o
-    /// file da una parte e cartella dall'altra).
     Different,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffEntry {
-    /// Percorso relativo alle due radici, sempre con "/" come separatore.
     pub rel_path: String,
     pub status: DiffStatus,
-    /// Vero se la voce è una cartella (su almeno uno dei due lati).
     pub is_dir: bool,
     pub left_size: Option<u64>,
     pub right_size: Option<u64>,
-    /// Ultima modifica in ms epoch, quando leggibile.
     pub left_mtime: Option<u64>,
     pub right_mtime: Option<u64>,
 }
@@ -48,10 +31,8 @@ pub struct CompareResult {
     pub left: String,
     pub right: String,
     pub entries: Vec<DiffEntry>,
-    /// Voci confrontate (le identiche non finiscono nell'elenco).
     pub compared: usize,
     pub identical: usize,
-    /// Confronto interrotto a MAX_ENTRIES differenze.
     pub truncated: bool,
 }
 
@@ -76,8 +57,6 @@ fn mtime_ms(meta: &std::fs::Metadata) -> Option<u64> {
         .map(|d| d.as_millis() as u64)
 }
 
-/// Contenuto di una cartella indicizzato per nome. I symlink vengono ignorati:
-/// seguirli significherebbe rischiare cicli e copie fuori dalla radice.
 fn read_children(dir: &Path, excludes: &[String]) -> BTreeMap<String, Meta> {
     let mut out = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -122,9 +101,6 @@ impl Walk<'_> {
         self.entries.push(entry);
     }
 
-    /// Confronta ricorsivamente due cartelle già note come esistenti.
-    /// Una cartella presente da un lato solo NON viene esplorata: resta una
-    /// singola voce, così l'utente la sposta o la elimina con un clic solo.
     fn dirs(&mut self, left: &Path, right: &Path, rel: &str) {
         if self.truncated {
             return;
@@ -148,8 +124,6 @@ impl Walk<'_> {
                     if l.is_dir && r.is_dir {
                         self.dirs(&left.join(name), &right.join(name), &child_rel);
                     } else if l.is_dir != r.is_dir || l.size != r.size {
-                        // Tipo diverso, oppure stesso file con dimensioni diverse:
-                        // in entrambi i casi è una differenza da mostrare.
                         self.push(DiffEntry {
                             rel_path: child_rel,
                             status: DiffStatus::Different,
@@ -190,9 +164,6 @@ impl Walk<'_> {
     }
 }
 
-/// Su Windows `canonicalize()` restituisce la forma "verbatim" (`\\?\C:\…`):
-/// corretta ma illeggibile e scomoda da rimettere in un campo di testo, quindi
-/// per la UI si torna alla forma normale.
 fn display_path(path: &Path) -> String {
     let text = path.to_string_lossy().to_string();
     #[cfg(windows)]
@@ -207,14 +178,13 @@ fn display_path(path: &Path) -> String {
     text
 }
 
-/// Radice valida: esistente, cartella, in forma canonica (così i controlli di
-/// contenimento delle azioni lavorano su percorsi reali).
 fn root(path: &str, label: &str) -> Result<PathBuf, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err(format!("percorso {label} mancante"));
     }
     let resolved = PathBuf::from(trimmed)
+        // 20260704 RG su Windows canonicalize() dà la forma verbatim (\\?\C:\…), da normalizzare.
         .canonicalize()
         .map_err(|e| format!("percorso {label} non valido: {e}"))?;
     if !resolved.is_dir() {
@@ -265,10 +235,6 @@ pub async fn compare(
     .map_err(|e| e.to_string())
 }
 
-/// Contenuto (un livello) di una cartella che nel confronto è una voce sola:
-/// serve alla UI per aprirla e lasciare agire sui singoli file invece che sul
-/// blocco intero. È lo stesso confronto ristretto a quel sottoalbero, quindi
-/// se la cartella esiste da un lato solo i figli risultano tutti da quel lato.
 pub async fn children(
     left: String,
     right: String,
@@ -283,8 +249,6 @@ pub async fn children(
     if !left_dir.is_dir() && !right_dir.is_dir() {
         return Err("la voce non è una cartella".to_string());
     }
-    // Prefisso dei percorsi relativi dei figli: la stessa forma ("/") usata da
-    // `compare`, così le azioni funzionano identiche a qualsiasi livello.
     let prefix = rel.trim().replace('\\', "/").trim_end_matches('/').to_string();
 
     tokio::task::spawn_blocking(move || {
@@ -303,9 +267,6 @@ pub async fn children(
     .map_err(|e| e.to_string())
 }
 
-/// Percorso relativo accettabile: niente componenti "..", radice o prefissi
-/// (C:\, \\server\share). È la barriera che impedisce a una richiesta costruita
-/// a mano di copiare o cancellare fuori dalle due cartelle scelte.
 pub fn safe_rel(rel: &str) -> Option<PathBuf> {
     let rel = rel.trim().replace('\\', "/");
     if rel.is_empty() {
@@ -315,7 +276,6 @@ pub fn safe_rel(rel: &str) -> Option<PathBuf> {
     for component in Path::new(&rel).components() {
         match component {
             Component::Normal(part) => out.push(part),
-            // CurDir ("./") è innocuo ma non aggiunge nulla; tutto il resto no.
             Component::CurDir => {}
             _ => return None,
         }
@@ -328,7 +288,6 @@ fn resolve(root_dir: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(root_dir.join(rel))
 }
 
-/// Copia ricorsiva (le cartelle esistenti vengono unite, i file sovrascritti).
 fn copy_recursive(from: &Path, to: &Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(from).map_err(|e| format!("{}: {e}", from.display()))?;
     if meta.file_type().is_symlink() {
@@ -349,7 +308,6 @@ fn copy_recursive(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Copia una voce da una radice all'altra, mantenendo il percorso relativo.
 pub async fn copy_entry(
     from_root: String,
     to_root: String,
@@ -372,7 +330,6 @@ pub async fn copy_entry(
     .map_err(|e| e.to_string())?
 }
 
-/// Elimina una voce da una delle due radici (ricorsivo per le cartelle).
 pub async fn delete_entry(root_path: String, rel: String, label: &'static str) -> Result<(), String> {
     let root_dir = root(&root_path, label)?;
     let target = resolve(&root_dir, &rel)?;
@@ -410,7 +367,7 @@ mod tests {
     #[test]
     fn rel_path_non_esce_dalla_radice() {
         assert!(safe_rel("sub/file.txt").is_some());
-        assert!(safe_rel("sub\\file.txt").is_some()); // separatori windows
+        assert!(safe_rel("sub\\file.txt").is_some());
         assert!(safe_rel("./file.txt").is_some());
         assert!(safe_rel("../fuori.txt").is_none());
         assert!(safe_rel("sub/../../fuori.txt").is_none());
@@ -456,18 +413,14 @@ mod tests {
         assert_eq!(by_path["diverso.txt"].status, DiffStatus::Different);
         assert_eq!(by_path["solo-sx.txt"].status, DiffStatus::OnlyLeft);
         assert_eq!(by_path["solo-dx.txt"].status, DiffStatus::OnlyRight);
-        // Cartella presente da un lato solo: una voce sola, non esplorata.
         assert_eq!(by_path["sub"].status, DiffStatus::OnlyLeft);
         assert!(by_path["sub"].is_dir);
         assert!(!by_path.contains_key("sub/dentro.txt"));
-        // Identici ed esclusi non compaiono.
         assert!(!by_path.contains_key("uguale.txt"));
         assert!(!by_path.contains_key("saltata"));
         assert_eq!(result.identical, 1);
         assert!(!result.truncated);
 
-        // La cartella presente da un lato solo si può aprire: i figli tornano
-        // uno a uno, così le azioni valgono anche sul singolo file.
         let kids = children(
             left.to_string_lossy().to_string(),
             right.to_string_lossy().to_string(),
@@ -493,7 +446,6 @@ mod tests {
         let fuori = base.join("fuori.txt");
         std::fs::write(&fuori, "non toccare").unwrap();
 
-        // Copia della cartella verso destra: ricorsiva.
         copy_entry(
             left.to_string_lossy().to_string(),
             right.to_string_lossy().to_string(),
@@ -505,7 +457,6 @@ mod tests {
         .expect("copia");
         assert_eq!(std::fs::read_to_string(right.join("sub/file.txt")).unwrap(), "contenuto");
 
-        // Traversal rifiutato: il file fuori dalle radici resta intatto.
         let escape = delete_entry(
             right.to_string_lossy().to_string(),
             "../fuori.txt".to_string(),

@@ -27,7 +27,6 @@ async fn handle_socket(mut socket: WebSocket, state: ServerState) {
             event = events.recv() => {
                 match event {
                     Ok(event) => {
-                        // Inoltra il topic sottoscritto e i suoi derivati ("stats" copre "stats:error").
                         let base = event.topic.split(':').next().unwrap_or(&event.topic);
                         if topics.contains(&event.topic) || topics.contains(base) {
                             let Ok(body) = serde_json::to_string(&event) else { continue };
@@ -36,7 +35,6 @@ async fn handle_socket(mut socket: WebSocket, state: ServerState) {
                             }
                         }
                     }
-                    // Client troppo lento: ha perso eventi, si continua dai successivi.
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(lost = n, "client WS in ritardo, eventi persi");
                     }
@@ -48,8 +46,6 @@ async fn handle_socket(mut socket: WebSocket, state: ServerState) {
                 let Message::Text(text) = message else { continue };
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(ClientMessage::Subscribe { topic }) => {
-                        // I topic dei poller attivano il polling; gli altri (es. task:{id})
-                        // ricevono solo gli eventi pubblicati sul bus.
                         if topics.insert(topic.clone()) && state.pollers.known_topic(&topic) {
                             state.pollers.add_subscriber(&topic);
                         }

@@ -8,9 +8,6 @@ function fmtGb(bytes: number) {
   return (bytes / 1024 ** 3).toFixed(bytes < 10 * 1024 ** 3 ? 1 : 0);
 }
 
-// Il poller "disks" gira ogni 10s: dopo un eject/format aspettarlo si sente
-// come "non è successo niente", quindi si rilegge subito e si aggiorna lo
-// store senza aspettare il prossimo giro.
 async function refreshDisksNow() {
   const r = await api<{ disks: DiskInfo[] }>("/api/disks");
   if (r.ok) useDisksStore.getState().setDisks(r.data.disks);

@@ -8,7 +8,6 @@ pub struct DotnetProject {
     pub path: String,
     pub sln_path: Option<String>,
     pub projects: Vec<CsProject>,
-    /// Scelta utente persistita (config), validata contro i progetti eseguibili.
     pub startup_project_path: Option<String>,
     pub selected_profile: Option<String>,
 }
@@ -29,7 +28,6 @@ pub struct LaunchProfile {
     pub name: String,
     pub command_name: String,
     pub application_url: Option<String>,
-    /// false per IISExpress/Executable: non lanciabili con `dotnet run`.
     pub runnable_cross_platform: bool,
 }
 
@@ -59,7 +57,6 @@ pub fn inspect(
         })
         .cloned();
 
-    // Da .sln: lista progetti; altrimenti i .csproj diretti nella cartella.
     let csproj_paths: Vec<PathBuf> = if let Some(sln) = &sln_path {
         let content = std::fs::read_to_string(sln).map_err(|e| e.to_string())?;
         parse_sln(&content)
@@ -100,7 +97,6 @@ pub fn inspect(
     }
     projects.sort_by(|a, b| a.name.cmp(&b.name));
 
-    // Startup: override valido, altrimenti l'unico eseguibile se non ambiguo.
     let executables: Vec<&CsProject> = projects.iter().filter(|p| p.is_executable).collect();
     let startup_project_path = startup_override
         .filter(|o| executables.iter().any(|p| p.csproj_path == *o))
@@ -130,21 +126,16 @@ pub fn inspect(
     })
 }
 
-/// Estrae i path relativi dei .csproj dalle righe `Project("{...}") = "Nome", "rel\path.csproj", "{...}"`.
-/// Il formato .sln è stabile da 15 anni; per .slnx (XML) si cercano gli attributi Path.
 pub fn parse_sln(content: &str) -> Vec<String> {
     let mut result = Vec::new();
     for line in content.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("Project(") {
-            // formato classico .sln
             let parts: Vec<&str> = rest.split('"').collect();
-            // parts: [{guid}") = , Nome, , , rel\path.csproj, ...]
             if let Some(path) = parts.iter().find(|p| p.to_lowercase().ends_with(".csproj")) {
                 result.push(path.to_string());
             }
         } else if line.contains("<Project ") && line.contains("Path=") {
-            // .slnx: <Project Path="src/App/App.csproj" />
             if let Some(start) = line.find("Path=\"") {
                 let rest = &line[start + 6..];
                 if let Some(end) = rest.find('"') {
@@ -159,8 +150,6 @@ pub fn parse_sln(content: &str) -> Vec<String> {
     result
 }
 
-/// Estrazione leggera da .csproj (XML semplice): eseguibilità e TFM.
-/// Non è un parser XML completo: sufficiente per i csproj SDK-style reali.
 pub fn parse_csproj(content: &str) -> (bool, Vec<String>) {
     let is_web_sdk = content.contains("Sdk=\"Microsoft.NET.Sdk.Web\"")
         || content.contains("Sdk=\"Microsoft.NET.Sdk.Worker\"");
@@ -219,7 +208,6 @@ fn read_launch_profiles(project_dir: &Path) -> Vec<LaunchProfile> {
         .collect()
 }
 
-/// Comando per il task runner.
 pub fn command_for(project: &DotnetProject, action: &str) -> Result<(String, Vec<String>), String> {
     let build_target = project
         .sln_path
@@ -324,7 +312,6 @@ EndProject
         let iis = api.launch_profiles.iter().find(|p| p.name == "IIS Express").unwrap();
         assert!(!iis.runnable_cross_platform);
 
-        // Unico eseguibile → startup automatico, profilo "http" (primo Project).
         assert!(project.startup_project_path.as_ref().unwrap().ends_with("Api.csproj"));
         assert_eq!(project.selected_profile.as_deref(), Some("http"));
 

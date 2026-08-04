@@ -2,7 +2,6 @@ import { useState } from "react";
 import { api } from "../../lib/api";
 import type { ApiError, HeavyProcessesResult, ProcessGroup } from "../../lib/types";
 
-// Etichette compatte per le app note (icone SVG dedicate in v1).
 const KNOWN_LABELS: Record<string, string> = {
   node: "node",
   dotnet: ".NET",

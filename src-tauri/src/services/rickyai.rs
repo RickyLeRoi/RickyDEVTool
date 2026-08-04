@@ -1,25 +1,6 @@
-//! RickyAI: la chat del tool, servita da `of-free` (OnFeather Free) — il router
-//! che aggrega i piani gratuiti degli LLM dietro un endpoint OpenAI-compatibile.
-//!
-//! Due responsabilità, tenute separate:
-//!
-//! 1. **Il supervisore.** All'avvio del tool `of-free serve` viene acceso da
-//!    solo, in ascolto **solo su 127.0.0.1**: è un endpoint senza autenticazione
-//!    (`api_key: unused`), esporlo in LAN significherebbe regalare le proprie
-//!    quote a chiunque sia sulla rete. Se qualcuno sta già servendo su quella
-//!    porta l'istanza viene *adottata* invece di avviarne una seconda — chi
-//!    lancia `of-free serve` a mano da terminale non si ritrova due router che
-//!    si contendono lo stesso ledger SQLite.
-//!
-//! 2. **Il proxy.** La SPA non parla mai con la 4141: passa da `/api/ai/chat`.
-//!    Così la chat funziona anche dal telefono (che la 4141 del desktop non la
-//!    vede), resta dentro il modello di permessi del tool, e la porta di of-free
-//!    non ha bisogno di uscire da localhost.
-//!
-//! Streaming: `of-free` non lo supporta ancora e rifiuta `stream: true` con un
-//! 400. [`build_payload`] forza sempre `stream: false` — la risposta arriva
-//! intera, la UI mostra un indicatore di attesa.
-
+// 20260804 ++ RG #RickyAI due parti: il supervisore accende (o adotta) `of-free serve` su 127.0.0.1,
+// il proxy /api/ai/chat lo espone alla SPA. L'endpoint non ha autenticazione:
+// in LAN ci si arriva solo dal proxy, mai aprendo la sua porta.
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -34,22 +15,14 @@ use crate::config::{AppConfig, ConfigHandle};
 use crate::events::{now_ms, EventBus};
 use crate::exec;
 
-/// Porta di default di `of-free serve`.
 pub const DEFAULT_PORT: u16 = 4141;
 
-/// Strategie di routing accettate da `of-free`.
 pub const STRATEGIES: &[&str] = &["balanced", "fast", "local"];
 
-/// Le due provenienze possibili del motore.
 pub const MODES: &[&str] = &["local", "remote"];
 
-/// I provider di `of-free` e la variabile d'ambiente da cui legge la chiave di
-/// ciascuno (da `providers.yaml`). Serve a tre cose: comporre l'environment del
-/// processo figlio, popolare le impostazioni senza indovinare i nomi, e — la
-/// più importante — fare da **lista chiusa**: solo queste variabili vengono
-/// passate a of-free, così una chiave inventata nella config non diventa una
-/// variabile d'ambiente arbitraria in un processo che lanciamo noi.
-/// Ollama non compare: è locale e non ha chiave.
+// 20260804 ++ RG #RickyAI lista chiusa: solo queste variabili finiscono nell'environment di of-free,
+// così una chiave inventata nella config non diventa una variabile arbitraria.
 pub const PROVIDER_KEYS: &[(&str, &str, &str)] = &[
     ("groq", "Groq", "GROQ_API_KEY"),
     ("google", "Google AI Studio", "GEMINI_API_KEY"),
@@ -60,54 +33,34 @@ pub const PROVIDER_KEYS: &[(&str, &str, &str)] = &[
     ("cohere", "Cohere", "COHERE_API_KEY"),
 ];
 
-/// Porta usata quando l'indirizzo remoto non ne indica una: è il default di
-/// `of-free serve`, cioè quello che si trova scrivendo solo l'IP.
 const REMOTE_DEFAULT_PORT: u16 = DEFAULT_PORT;
 
-/// Quante porte provare dopo quella configurata prima di arrendersi.
 const PORT_FALLBACK_RANGE: u16 = 10;
 
-/// Le probe sono su localhost: se non risponde in fretta non risponde affatto.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Quanto attendere che il processo appena avviato risponda. Il primo avvio
-/// interroga Ollama e costruisce il ledger: parecchio più lento dei successivi.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Tetto di una singola risposta: un modello gratuito lento su un prompt lungo
-/// può metterci parecchio, ma non all'infinito.
 const CHAT_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Righe di output di `of-free` conservate per la diagnostica in UI.
 const MAX_LOG_LINES: usize = 60;
 
-/// Tetti sulla conversazione inoltrata: una chat lunga è legittima, un client
-/// che manda dieci megabyte no.
 const MAX_MESSAGES: usize = 400;
 const MAX_CHARS: usize = 400_000;
 
-/// Ogni quanto ricontrollare un'istanza adottata (non è figlia nostra: l'unico
-/// modo di sapere che è morta è chiederglielo).
 const ADOPTED_POLL: Duration = Duration::from_secs(5);
 
-/// Ogni quanto riprovare quando `of-free` non è installato: l'utente può
-/// installarlo a tool acceso e non deve riavviare niente.
-const MISSING_RETRY: Duration = Duration::from_secs(300);
+const REMOTE_POLL: Duration = Duration::from_secs(30);
 
-// ---------- stato osservabile ----------
+const MISSING_RETRY: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AiState {
-    /// Avvio automatico spento dalle impostazioni.
     Disabled,
-    /// Binario `of-free` non trovato sulla macchina.
     NotInstalled,
-    /// Processo avviato, endpoint non ancora in risposta.
     Starting,
-    /// Endpoint raggiungibile.
     Ready,
-    /// Ultimo tentativo fallito (uscita anomala, porta occupata, timeout).
     Failed,
 }
 
@@ -115,18 +68,12 @@ pub enum AiState {
 #[serde(rename_all = "camelCase")]
 pub struct AiStatus {
     pub state: AiState,
-    /// Porta effettiva (può differire da quella configurata: fallback).
     pub port: u16,
-    /// Radice dell'endpoint in uso — locale o remoto. È **questa** la sorgente
-    /// di verità per il proxy: la porta da sola non basta più a dire dove
-    /// andare a bussare.
     pub base_url: String,
-    /// `false` quando l'istanza era già in ascolto ed è stata adottata (o è un
-    /// servizio remoto): in quel caso il tool non la spegne e non la riavvia.
     pub managed: bool,
-    /// Path del binario risolto (o l'override configurato).
     pub command: Option<String>,
-    /// Perché lo stato è quello che è: mostrato in UI così com'è.
+    pub of_free: bool,
+    pub models: Vec<String>,
     pub message: Option<String>,
     pub started_at: Option<u64>,
     pub restarts: u32,
@@ -140,6 +87,8 @@ impl AiStatus {
             base_url: base_url(port),
             managed: false,
             command: None,
+            of_free: false,
+            models: Vec::new(),
             message: None,
             started_at: None,
             restarts: 0,
@@ -147,24 +96,15 @@ impl AiStatus {
     }
 }
 
-/// `http://127.0.0.1:{port}` — la radice; gli endpoint OpenAI stanno sotto `/v1`.
 pub fn base_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// Normalizza l'indirizzo di un of-free remoto in una radice utilizzabile.
-///
-/// Accetta quello che una persona scrive davvero — `192.168.1.50`,
-/// `192.168.1.50:4141`, `http://nas.local:4141/v1` — e restituisce sempre la
-/// sola radice, senza `/v1` finale: il path viene aggiunto da chi chiama, e un
-/// `/v1/v1/chat/completions` fallirebbe con un 404 che non spiega niente.
 pub fn valid_remote_url(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("indirizzo del servizio mancante".to_string());
     }
-    // Senza schema si intende http: nessuno scrive "http://" per una macchina
-    // in salotto, e pretenderlo sarebbe solo un errore in più da leggere.
     let explicit_scheme = trimmed.contains("://");
     let candidate = if explicit_scheme {
         trimmed.to_string()
@@ -177,30 +117,25 @@ pub fn valid_remote_url(raw: &str) -> Result<String, String> {
         return Err("usa http:// o https://".to_string());
     }
     let host = url.host_str().filter(|h| !h.is_empty()).ok_or("manca l'indirizzo del server")?;
-    let path = url.path().trim_end_matches('/');
-    if !(path.is_empty() || path.eq_ignore_ascii_case("/v1")) {
-        return Err("l'indirizzo deve essere host:porta (eventualmente con /v1)".to_string());
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("l'indirizzo non deve contenere ? o #".to_string());
     }
+    let path = url.path().trim_end_matches('/');
+    let path = path.strip_suffix("/v1").unwrap_or(path);
     let port = match url.port() {
         Some(port) => format!(":{port}"),
-        // Solo se l'utente non ha nemmeno scritto lo schema: "192.168.1.50" è
-        // un of-free sulla sua porta di default. Con https:// esplicito vale
-        // la 443, che è quello che ci si aspetta dietro un reverse proxy.
         None if !explicit_scheme => format!(":{REMOTE_DEFAULT_PORT}"),
         None => String::new(),
     };
-    Ok(format!("{}://{}{}", url.scheme(), host, port))
+    Ok(format!("{}://{}{}{}", url.scheme(), host, port, path))
 }
 
-/// Porta di una radice già normalizzata, per la sola visualizzazione.
 fn port_of(base: &str) -> u16 {
     reqwest::Url::parse(base)
         .ok()
         .and_then(|u| u.port_or_known_default())
         .unwrap_or(0)
 }
-
-// ---------- richiesta / risposta di chat ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
@@ -212,7 +147,6 @@ pub struct ChatMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
-    /// `auto` (default), `private` per restare in locale, o `provider/modello`.
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -233,25 +167,19 @@ pub struct Usage {
 #[serde(rename_all = "camelCase")]
 pub struct ChatReply {
     pub content: String,
-    /// Chi ha davvero servito la richiesta (header `X-OnFeather-Provider`).
     pub provider: Option<String>,
     pub model: Option<String>,
-    /// Quanti provider hanno rifiutato prima di questo.
     pub failovers: Option<u32>,
-    /// Il modello a cui la conversazione era agganciata, se è cambiato in corsa.
     pub repinned: Option<String>,
     pub finish_reason: Option<String>,
     pub usage: Option<Usage>,
     pub elapsed_ms: u64,
 }
 
-/// Errore già tradotto nel vocabolario del tool: `code` finisce nel campo
-/// omonimo della risposta REST, `status` è lo status HTTP da restituire.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AiError {
     pub code: &'static str,
     pub message: String,
-    /// Secondi da attendere prima di riprovare (solo su quota esaurita).
     pub retry_after: Option<u64>,
     pub status: u16,
 }
@@ -262,18 +190,12 @@ impl AiError {
     }
 }
 
-// ---------- servizio ----------
-
 struct Inner {
     status: AiStatus,
-    /// Ultime righe di stdout/stderr del processo: quando `of-free` non parte,
-    /// il motivo è lì dentro e senza questo buffer resterebbe invisibile.
     log: Vec<String>,
     child: Option<ChildRef>,
 }
 
-/// Identificatori per terminare il figlio anche da contesto sincrono (uscita
-/// dell'app), dove non si può attendere `Child::kill`.
 struct ChildRef {
     #[cfg(unix)]
     pgid: i32,
@@ -285,17 +207,13 @@ pub struct AiService {
     config: ConfigHandle,
     bus: EventBus,
     inner: Mutex<Inner>,
-    /// Sveglia il supervisore: richiesta di riavvio o cambio di configurazione.
     restart: Notify,
     client: reqwest::Client,
 }
 
-/// Riferimento globale al servizio, per lo spegnimento all'uscita dell'app —
-/// che avviene in `RunEvent::Exit`, dove non c'è nessuno stato a portata di mano.
 static INSTANCE: OnceLock<Arc<AiService>> = OnceLock::new();
 
 impl AiService {
-    /// Costruisce il servizio senza avviare il supervisore (usato dai test).
     fn new(config: ConfigHandle, bus: EventBus) -> Self {
         let port = configured_port(&config.get());
         Self {
@@ -307,16 +225,14 @@ impl AiService {
                 child: None,
             }),
             restart: Notify::new(),
-            // `no_proxy`: un HTTP_PROXY di sistema non deve intercettare le
-            // chiamate a 127.0.0.1 (succede, e l'errore che ne esce non aiuta).
             client: reqwest::Client::builder()
+                // 20260804 ++ RG #RickyAI un HTTP_PROXY di sistema non deve intercettare le chiamate a 127.0.0.1.
                 .no_proxy()
                 .build()
                 .expect("client http"),
         }
     }
 
-    /// Avvia il servizio e il supervisore. Richiede un runtime tokio attivo.
     pub fn start(config: ConfigHandle, bus: EventBus) -> Arc<Self> {
         let service = Arc::new(Self::new(config, bus));
         let _ = INSTANCE.set(service.clone());
@@ -328,66 +244,65 @@ impl AiService {
         self.inner.lock().expect("ai lock").status.clone()
     }
 
-    /// Stato + configurazione + ultime righe di log, nella forma servita dalla
-    /// REST e pubblicata sul topic WS `ai`.
     pub fn snapshot(&self) -> Value {
         let cfg = self.config.get();
         let inner = self.inner.lock().expect("ai lock");
         snapshot_of(&inner.status, &inner.log, &cfg)
     }
 
-    /// Snapshot arricchito con quote e modelli letti da `of-free`. Best effort:
-    /// se l'endpoint non risponde restano i campi locali, senza far fallire la
-    /// pagina che li chiede.
     pub async fn detailed_snapshot(&self) -> Value {
         let mut snapshot = self.snapshot();
         let status = self.status();
         if status.state != AiState::Ready {
             return snapshot;
         }
+        let cfg = self.config.get();
         let base = status.base_url.clone();
-        if let Some(quota) = self.get_json(&format!("{base}/v1/status")).await {
-            if let Some(providers) = quota.get("providers") {
-                snapshot["providers"] = providers.clone();
-            }
-            if let Some(next) = quota.get("next") {
-                snapshot["next"] = next.clone();
+        let key = is_remote(&cfg).then(|| cfg.ai_remote_key.clone()).flatten();
+        if status.of_free {
+            if let Some(quota) = self.get_json(&format!("{base}/v1/status"), key.as_deref()).await {
+                if let Some(providers) = quota.get("providers") {
+                    snapshot["providers"] = providers.clone();
+                }
+                if let Some(next) = quota.get("next") {
+                    snapshot["next"] = next.clone();
+                }
             }
         }
-        if let Some(models) = self.get_json(&format!("{base}/v1/models")).await {
+        if let Some(models) = self.get_json(&format!("{base}/v1/models"), key.as_deref()).await {
             snapshot["models"] = json!(model_ids(&models));
         }
         snapshot
     }
 
-    async fn get_json(&self, url: &str) -> Option<Value> {
-        let response = self.client.get(url).timeout(PROBE_TIMEOUT).send().await.ok()?;
+    async fn get_json(&self, url: &str, key: Option<&str>) -> Option<Value> {
+        let mut request = self.client.get(url).timeout(PROBE_TIMEOUT);
+        if let Some(key) = auth_key(key) {
+            request = request.bearer_auth(key);
+        }
+        let response = request.send().await.ok()?;
         if !response.status().is_success() {
             return None;
         }
         response.json::<Value>().await.ok()
     }
 
-    /// Chiede al supervisore di ripartire (dopo un cambio di configurazione o su
-    /// richiesta esplicita dell'utente).
     pub fn request_restart(&self) {
         self.restart.notify_one();
     }
 
-    /// Inoltra una conversazione a `of-free` e ne restituisce la risposta.
     pub async fn chat(&self, request: ChatRequest) -> Result<ChatReply, AiError> {
         validate(&request).map_err(|m| AiError::new("AI_INVALID", 400, m))?;
         let status = self.status();
         if status.state != AiState::Ready {
             return Err(AiError::new("AI_NOT_READY", 503, not_ready_message(&status)));
         }
-        let payload = build_payload(&request, &self.config.get().ai_system_prompt);
-        // `base_url` e non la porta: in modalità remota l'endpoint è su un'altra
-        // macchina, e 127.0.0.1 punterebbe a un servizio che qui non esiste.
-        complete(&self.client, &status.base_url, &payload).await
+        let cfg = self.config.get();
+        let model = effective_model(request.model.as_deref(), &status);
+        let payload = build_payload(&request, &cfg.ai_system_prompt, &model);
+        let key = is_remote(&cfg).then(|| cfg.ai_remote_key.clone()).flatten();
+        complete(&self.client, &status.base_url, &payload, key.as_deref()).await
     }
-
-    // -- transizioni di stato ------------------------------------------------
 
     fn update(&self, f: impl FnOnce(&mut AiStatus)) {
         let snapshot = {
@@ -396,8 +311,6 @@ impl AiService {
             f(&mut inner.status);
             snapshot_of(&inner.status, &inner.log, &cfg)
         };
-        // Pubblicato fuori dal lock: il bus ha i suoi subscriber, tenerlo dentro
-        // significherebbe tenere il lock per tutta la consegna.
         self.bus.publish("ai", snapshot);
     }
 
@@ -424,7 +337,6 @@ impl AiService {
         self.inner.lock().expect("ai lock").log.clear();
     }
 
-    /// Ultime righe del processo, usate per spiegare un avvio fallito.
     fn log_tail(&self, lines: usize) -> String {
         let inner = self.inner.lock().expect("ai lock");
         let start = inner.log.len().saturating_sub(lines);
@@ -446,15 +358,11 @@ impl AiService {
         self.inner.lock().expect("ai lock").child = None;
     }
 
-    /// Termina il processo figlio, se ce n'è uno nostro. Sincrona di proposito:
-    /// la chiama anche l'uscita dell'applicazione, fuori dal runtime async.
     pub fn shutdown(&self) {
         let child = { self.inner.lock().expect("ai lock").child.take() };
         let Some(child) = child else { return };
         #[cfg(unix)]
         {
-            // Il figlio ha un process group suo (vedi `spawn_serve`): il segnale
-            // va all'albero, non al solo processo python di primo livello.
             unsafe { libc::killpg(child.pgid, libc::SIGTERM) };
         }
         #[cfg(not(unix))]
@@ -467,21 +375,15 @@ impl AiService {
     }
 }
 
-/// Spegne il processo di RickyAI all'uscita dell'app.
 pub fn shutdown_all() {
     if let Some(service) = INSTANCE.get() {
         service.shutdown();
     }
 }
 
-// ---------- supervisore ----------
-
 enum Outcome {
-    /// Riavvio richiesto: si riparte subito, senza backoff.
     Restart,
-    /// Niente da fare finché la configurazione non cambia (o scade l'attesa).
     Idle,
-    /// Il processo è caduto: si riprova con backoff crescente.
     Crashed,
 }
 
@@ -499,8 +401,6 @@ async fn supervise(service: Arc<AiService>) {
         match run_once(&service, &cfg).await {
             Outcome::Restart => backoff = Duration::from_secs(2),
             Outcome::Idle => {
-                // `of-free` assente o nessuna porta libera: riprova ogni tanto,
-                // e subito se l'utente cambia qualcosa nelle impostazioni.
                 tokio::select! {
                     _ = service.restart.notified() => {}
                     _ = tokio::time::sleep(MISSING_RETRY) => {}
@@ -519,18 +419,15 @@ async fn supervise(service: Arc<AiService>) {
     }
 }
 
-/// Un giro completo: adozione o avvio, attesa della salute, sorveglianza.
 async fn run_once(service: &Arc<AiService>, cfg: &AppConfig) -> Outcome {
     if is_remote(cfg) {
         return match valid_remote_url(cfg.ai_remote_url.as_deref().unwrap_or_default()) {
-            Ok(base) => watch_remote(service, &base).await,
+            Ok(base) => watch_remote(service, &base, cfg.ai_remote_key.as_deref()).await,
             Err(message) => {
                 service.set_state(
                     AiState::Failed,
                     Some(format!("indirizzo del servizio non valido: {message}")),
                 );
-                // Non ha senso riprovare da soli: serve che l'utente corregga
-                // l'indirizzo, e quel salvataggio ci sveglia.
                 Outcome::Idle
             }
         };
@@ -538,11 +435,17 @@ async fn run_once(service: &Arc<AiService>, cfg: &AppConfig) -> Outcome {
     match choose_port(service, configured_port(cfg)).await {
         PortChoice::Adopt(port) => {
             tracing::info!(port, "of-free già in ascolto: istanza adottata");
+            let models = probe(&service.client, &base_url(port), None)
+                .await
+                .map(|e| e.models)
+                .unwrap_or_default();
             service.update(|s| {
                 s.state = AiState::Ready;
                 s.port = port;
                 s.base_url = base_url(port);
                 s.managed = false;
+                s.of_free = true;
+                s.models = models.clone();
                 s.command = None;
                 s.message = Some("istanza esterna già in ascolto (non gestita dal tool)".into());
                 s.started_at = Some(now_ms());
@@ -603,11 +506,19 @@ async fn spawn_and_watch(service: &Arc<AiService>, cfg: &AppConfig, port: u16) -
     tracing::info!(port, program = %program, "of-free in avvio");
 
     match wait_healthy(service, &mut child, port).await {
-        Ok(()) => service.update(|s| {
-            s.state = AiState::Ready;
-            s.message = None;
-            s.started_at = Some(now_ms());
-        }),
+        Ok(()) => {
+            let models = probe(&service.client, &base_url(port), None)
+                .await
+                .map(|e| e.models)
+                .unwrap_or_default();
+            service.update(|s| {
+                s.state = AiState::Ready;
+                s.of_free = true;
+                s.models = models.clone();
+                s.message = None;
+                s.started_at = Some(now_ms());
+            });
+        }
         Err(message) => {
             kill(&mut child).await;
             service.forget_child();
@@ -616,8 +527,6 @@ async fn spawn_and_watch(service: &Arc<AiService>, cfg: &AppConfig, port: u16) -
         }
     }
 
-    // In esecuzione: si esce di qui solo se il processo muore o se arriva una
-    // richiesta di riavvio.
     let outcome = tokio::select! {
         status = child.wait() => {
             let detail = service.log_tail(3);
@@ -652,8 +561,6 @@ async fn spawn_and_watch(service: &Arc<AiService>, cfg: &AppConfig, port: u16) -
     outcome
 }
 
-/// Attende che l'endpoint risponda, sorvegliando nel frattempo il processo: un
-/// `of-free` che muore dopo due secondi non deve far aspettare il timeout pieno.
 async fn wait_healthy(
     service: &Arc<AiService>,
     child: &mut tokio::process::Child,
@@ -671,7 +578,7 @@ async fn wait_healthy(
                 (_, true) => "of-free non è partito".to_string(),
             });
         }
-        if identify(&service.client, &base_url(port)).await {
+        if is_of_free(&service.client, &base_url(port)).await {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -686,57 +593,66 @@ async fn wait_healthy(
     }
 }
 
-/// Sorveglia un'istanza non nostra: l'unico modo di accorgersi che è sparita è
-/// interrogarla.
 async fn watch_adopted(service: &Arc<AiService>, port: u16) -> Outcome {
     watch_external(
         service,
         &base_url(port),
+        None,
         "l'istanza esterna di of-free non risponde più",
     )
     .await
 }
 
-/// Modalità `remote`: il motore gira altrove (un container su un altro
-/// computer). Qui non si avvia e non si spegne niente — si verifica che
-/// dall'altra parte ci sia davvero of-free e lo si tiene d'occhio.
-async fn watch_remote(service: &Arc<AiService>, base: &str) -> Outcome {
-    if !identify(&service.client, base).await {
+async fn watch_remote(service: &Arc<AiService>, base: &str, key: Option<&str>) -> Outcome {
+    let Some(endpoint) = probe(&service.client, base, key).await else {
         service.update(|s| {
             s.state = AiState::Failed;
             s.managed = false;
+            s.of_free = false;
             s.command = None;
             s.base_url = base.to_string();
             s.port = port_of(base);
+            s.models = Vec::new();
             s.message = Some(format!(
-                "nessun of-free raggiungibile su {base}: controlla che il servizio sia acceso e \
-                 che sia in ascolto su tutte le interfacce, non solo su 127.0.0.1"
+                "nessun endpoint OpenAI-compatibile su {base}: controlla che il servizio sia \
+                 acceso, che sia in ascolto su tutte le interfacce (non solo su 127.0.0.1), e \
+                 che la chiave API sia quella giusta se la richiede"
             ));
             s.started_at = None;
         });
         return Outcome::Crashed;
-    }
-    tracing::info!(%base, "of-free remoto raggiungibile");
+    };
+    tracing::info!(%base, of_free = endpoint.of_free, modelli = endpoint.models.len(), "servizio remoto raggiungibile");
     service.update(|s| {
         s.state = AiState::Ready;
         s.managed = false;
+        s.of_free = endpoint.of_free;
         s.command = None;
         s.base_url = base.to_string();
         s.port = port_of(base);
-        s.message = None;
+        s.models = endpoint.models.clone();
+        s.message = (!endpoint.of_free).then(|| {
+            "endpoint OpenAI-compatibile (non of-free): niente routing fra provider né quote"
+                .to_string()
+        });
         s.started_at = Some(now_ms());
     });
-    watch_external(service, base, "il servizio remoto non risponde più").await
+    watch_external(service, base, key, "il servizio remoto non risponde più").await
 }
 
-/// Polling di un endpoint che non è un nostro figlio (adottato o remoto).
-async fn watch_external(service: &Arc<AiService>, base: &str, caduto: &str) -> Outcome {
+async fn watch_external(
+    service: &Arc<AiService>,
+    base: &str,
+    key: Option<&str>,
+    caduto: &str,
+) -> Outcome {
+    let every = if base.contains("127.0.0.1") { ADOPTED_POLL } else { REMOTE_POLL };
     loop {
         tokio::select! {
             _ = service.restart.notified() => return Outcome::Restart,
-            _ = tokio::time::sleep(ADOPTED_POLL) => {}
+            _ = tokio::time::sleep(every) => {}
         }
-        if !alive(&service.client, base).await {
+        if !alive(&service.client, base, key).await {
             service.set_state(AiState::Failed, Some(caduto.to_string()));
             return Outcome::Crashed;
         }
@@ -769,19 +685,15 @@ async fn kill(child: &mut tokio::process::Child) {
     let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
 }
 
-// ---------- porta, binario, argomenti ----------
-
 enum PortChoice {
-    /// Un `of-free` risponde già qui: si adotta.
     Adopt(u16),
-    /// Porta libera su cui avviare il nostro.
     Spawn(u16),
     None,
 }
 
 async fn choose_port(service: &Arc<AiService>, base: u16) -> PortChoice {
     for candidate in base..base.saturating_add(PORT_FALLBACK_RANGE) {
-        if identify(&service.client, &base_url(candidate)).await {
+        if is_of_free(&service.client, &base_url(candidate)).await {
             return PortChoice::Adopt(candidate);
         }
         if port_free(candidate).await {
@@ -812,30 +724,43 @@ pub fn mode(cfg: &AppConfig) -> String {
     }
 }
 
-/// C'è **of-free** dall'altra parte? Un 200 su `/health` non basta: qualsiasi
-/// servizio può rispondere così, e adottarne uno sbagliato manderebbe le chat
-/// dentro un tritacarne. `auto` è il modello virtuale che solo of-free espone.
-async fn identify(client: &reqwest::Client, base: &str) -> bool {
-    let url = format!("{base}/v1/models");
-    let Ok(response) = client.get(&url).timeout(PROBE_TIMEOUT).send().await else {
-        return false;
-    };
-    if !response.status().is_success() {
-        return false;
-    }
-    let Ok(body) = response.json::<Value>().await else {
-        return false;
-    };
-    model_ids(&body).iter().any(|id| id == "auto")
+#[derive(Debug, Clone, PartialEq)]
+pub struct Endpoint {
+    pub models: Vec<String>,
+    pub of_free: bool,
 }
 
-/// Liveness di un endpoint già identificato: basta `/health`.
-async fn alive(client: &reqwest::Client, base: &str) -> bool {
-    let url = format!("{base}/health");
-    match client.get(&url).timeout(PROBE_TIMEOUT).send().await {
-        Ok(response) => response.status().is_success(),
-        Err(_) => false,
+async fn probe(client: &reqwest::Client, base: &str, key: Option<&str>) -> Option<Endpoint> {
+    // 20260804 ++ RG #RickyAI /v1/models e non /health: quest'ultimo è solo di of-free, gli altri danno 404.
+    let url = format!("{base}/v1/models");
+    let mut request = client.get(&url).timeout(PROBE_TIMEOUT);
+    if let Some(key) = auth_key(key) {
+        request = request.bearer_auth(key);
     }
+    let response = request.send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body = response.json::<Value>().await.ok()?;
+    let models = model_ids(&body);
+    // 20260804 ++ RG #RickyAI Ollama senza modelli scaricati risponde 200 con `data: []`: non è pronto.
+    if models.is_empty() {
+        return None;
+    }
+    let of_free = models.iter().any(|id| id == "auto");
+    Some(Endpoint { models, of_free })
+}
+
+async fn is_of_free(client: &reqwest::Client, base: &str) -> bool {
+    probe(client, base, None).await.is_some_and(|e| e.of_free)
+}
+
+async fn alive(client: &reqwest::Client, base: &str, key: Option<&str>) -> bool {
+    probe(client, base, key).await.is_some()
+}
+
+fn auth_key(key: Option<&str>) -> Option<&str> {
+    key.map(str::trim).filter(|k| !k.is_empty())
 }
 
 pub fn model_ids(body: &Value) -> Vec<String> {
@@ -854,8 +779,6 @@ async fn port_free(port: u16) -> bool {
     tokio::net::TcpListener::bind(("127.0.0.1", port)).await.is_ok()
 }
 
-/// Path del binario `of-free`: override configurato (se esiste davvero) o
-/// risoluzione nel PATH.
 async fn resolve_command(cfg: &AppConfig) -> Option<String> {
     if let Some(custom) = cfg.ai_command.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return Path::new(custom).is_file().then(|| custom.to_string());
@@ -874,13 +797,11 @@ async fn which(name: &str) -> Option<String> {
     (!path.is_empty()).then_some(path)
 }
 
-/// Riga di comando di `of-free serve`.
 pub fn serve_args(cfg: &AppConfig, port: u16) -> Vec<String> {
     let mut args = Vec::new();
     args.push("serve".to_string());
     args.push("--host".to_string());
-    // Mai 0.0.0.0: l'endpoint non ha autenticazione. In LAN ci si arriva dal
-    // proxy del tool, che ha pairing e permessi.
+    // 20260804 ++ RG #RickyAI mai 0.0.0.0: l'endpoint non ha autenticazione.
     args.push("127.0.0.1".to_string());
     args.push("--port".to_string());
     args.push(port.to_string());
@@ -898,13 +819,6 @@ pub fn strategy(cfg: &AppConfig) -> String {
     }
 }
 
-/// Le chiavi da mettere nell'environment del processo figlio.
-///
-/// Solo le variabili di [`PROVIDER_KEYS`]: la config è un file che si può
-/// modificare a mano, e "tutto ciò che c'è dentro `ai_keys`" significherebbe
-/// poter iniettare qualunque variabile d'ambiente in un processo che avviamo
-/// noi (`PATH`, `LD_PRELOAD`, …). of-free legge comunque anche i suoi `.env`:
-/// queste vincono, perché una variabile esportata batte il file.
 pub fn serve_env(cfg: &AppConfig) -> Vec<(String, String)> {
     PROVIDER_KEYS
         .iter()
@@ -915,8 +829,6 @@ pub fn serve_env(cfg: &AppConfig) -> Vec<(String, String)> {
         .collect()
 }
 
-/// I nomi delle chiavi configurate — mai i valori. È ciò che finisce nella
-/// REST, che è leggibile da qualunque device abbinato.
 pub fn keys_set(cfg: &AppConfig) -> Vec<String> {
     serve_env(cfg).into_iter().map(|(name, _)| name).collect()
 }
@@ -929,26 +841,19 @@ fn spawn_serve(
     let mut command = exec::cmd(program);
     command
         .args(serve_args(cfg, port))
-        // Le chiavi passano dall'environment, non da un file su disco: restano
-        // in un solo posto (la config del tool, leggibile solo dall'utente) e
-        // non se ne semina una copia in giro.
         .envs(serve_env(cfg))
         .current_dir(working_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Process group proprio: permette di terminare l'albero (python + eventuali
-    // figli) con un solo segnale, come fa il task runner.
     #[cfg(unix)]
+    // 20260804 ++ RG #RickyAI process group proprio: un solo segnale termina python e i suoi figli.
     command.process_group(0);
     command.spawn()
 }
 
-/// Cartella di lavoro del processo. **Non** la home: `of-free` cerca le chiavi
-/// nel primo `.env` che trova partendo da `Path.cwd()/.env`, e un `~/.env` di
-/// tutt'altro contenuto interromperebbe la ricerca prima di `~/.onfeather/.env`.
-/// La data dir del tool non contiene `.env`, quindi per chi le chiavi le tiene
-/// già lì la catena di of-free resta quella prevista.
+// 20260804 ++ RG #RickyAI non la home: of-free si ferma al primo `.env` che trova partendo dalla cwd,
+// e un ~/.env di altro contenuto gli nasconderebbe ~/.onfeather/.env.
 fn working_dir() -> std::path::PathBuf {
     crate::config::data_dir()
 }
@@ -978,33 +883,25 @@ fn snapshot_of(status: &AiStatus, log: &[String], cfg: &AppConfig) -> Value {
         "startedAt": status.started_at,
         "restarts": status.restarts,
         "log": log,
+        "ofFree": status.of_free,
+        "models": status.models,
         "enabled": cfg.ai_enabled,
         "mode": mode(cfg),
         "remoteUrl": cfg.ai_remote_url,
+        "remoteKeySet": auth_key(cfg.ai_remote_key.as_deref()).is_some(),
         "configuredPort": configured_port(cfg),
         "strategy": strategy(cfg),
         "systemPrompt": cfg.ai_system_prompt,
-        // Quali chiavi sono impostate, mai il loro valore: questo oggetto lo
-        // legge anche il telefono, e una chiave che esce di qui è una chiave da
-        // revocare. In UI diventano dei pallini.
         "keysSet": keys_set(cfg),
-        // Catalogo dei provider per le impostazioni: nomi delle variabili presi
-        // da qui e non riscritti a mano nel frontend, dove un refuso
-        // significherebbe una chiave salvata che of-free non legge mai.
         "providerKeys": PROVIDER_KEYS
             .iter()
             .map(|(id, label, var)| json!({ "id": id, "label": label, "env": var }))
             .collect::<Vec<_>>(),
         "providers": Value::Null,
         "next": Value::Null,
-        "models": Vec::<String>::new(),
     })
 }
 
-// ---------- client OpenAI-compatibile ----------
-
-/// Controlli sulla conversazione prima di spedirla. Sono tetti, non gusto: una
-/// chat lunga è normale, un client che manda mezzo gigabyte no.
 pub fn validate(request: &ChatRequest) -> Result<(), String> {
     if request.messages.is_empty() {
         return Err("nessun messaggio da inviare".to_string());
@@ -1031,14 +928,30 @@ pub fn validate(request: &ChatRequest) -> Result<(), String> {
     Ok(())
 }
 
-/// Corpo della richiesta OpenAI. `stream` è sempre `false` ed è esplicito: di
-/// default of-free non streamma comunque, ma un `true` che scivolasse dentro
-/// verrebbe rifiutato con un 400 poco leggibile.
-pub fn build_payload(request: &ChatRequest, system_prompt: &str) -> Value {
+pub fn effective_model(requested: Option<&str>, status: &AiStatus) -> String {
+    let requested = requested
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("auto");
+    if status.of_free {
+        return requested.to_string();
+    }
+    // 20260804 ++ RG #RickyAI `auto` e `private` esistono solo dentro of-free: altrove sono modelli
+    // inesistenti, quindi si ripiega sul primo della lista.
+    if matches!(requested, "auto" | "private" | "local") {
+        return status
+            .models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| requested.to_string());
+    }
+    requested.to_string()
+}
+
+pub fn build_payload(request: &ChatRequest, system_prompt: &str, model: &str) -> Value {
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len() + 1);
     let system = system_prompt.trim();
-    // Il prompt di sistema configurato vale solo se la conversazione non ne
-    // porta già uno suo: due system message in testa si contraddicono.
+    // 20260804 ++ RG #RickyAI solo se la conversazione non porta già il suo system: due si contraddicono.
     if !system.is_empty() && request.messages.first().map(|m| m.role.as_str()) != Some("system") {
         messages.push(json!({ "role": "system", "content": system }));
     }
@@ -1046,16 +959,10 @@ pub fn build_payload(request: &ChatRequest, system_prompt: &str) -> Value {
         messages.push(json!({ "role": message.role, "content": message.content }));
     }
 
-    let model = request
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-        .unwrap_or("auto");
-
     let mut payload = json!({
         "model": model,
         "messages": messages,
+        // 20260804 ++ RG #RickyAI of-free rifiuta `stream: true` con un 400: qui non deve poterci finire.
         "stream": false,
     });
     if let Some(temperature) = request.temperature {
@@ -1067,19 +974,21 @@ pub fn build_payload(request: &ChatRequest, system_prompt: &str) -> Value {
     payload
 }
 
-/// POST su `/v1/chat/completions`, con gli errori tradotti nel vocabolario del
-/// tool: un 429 non è un guasto ma una quota da aspettare, e la UI deve poterli
-/// distinguere.
 pub async fn complete(
     client: &reqwest::Client,
     base: &str,
     payload: &Value,
+    key: Option<&str>,
 ) -> Result<ChatReply, AiError> {
     let started = Instant::now();
-    let response = client
+    let mut request = client
         .post(format!("{base}/v1/chat/completions"))
         .json(payload)
-        .timeout(CHAT_TIMEOUT)
+        .timeout(CHAT_TIMEOUT);
+    if let Some(key) = auth_key(key) {
+        request = request.bearer_auth(key);
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| {
@@ -1121,10 +1030,6 @@ pub async fn complete(
         let mut error = if status.as_u16() == 429 {
             AiError::new("AI_QUOTA", 429, format!("Quota esaurita: {detail}"))
         } else if field("type") == "no_route" {
-            // of-free è in piedi ma non ha *niente* su cui instradare: quasi
-            // sempre nessuna chiave configurata. Il suo "no provider available
-            // for this request" è esatto e inutile — chi legge non sa che deve
-            // scrivere un file di chiavi.
             AiError::new(
                 "AI_NO_ROUTE",
                 503,
@@ -1148,8 +1053,6 @@ pub async fn complete(
 
     Ok(ChatReply {
         content,
-        // Gli header sono la verità su chi ha servito; il campo `model` del body
-        // è il ripiego per un client che li perdesse per strada (proxy, cache).
         provider: provider.or_else(|| {
             body.get("model")
                 .and_then(Value::as_str)
@@ -1170,13 +1073,12 @@ pub async fn complete(
     })
 }
 
-/// Testo della risposta. `content` è normalmente una stringa, ma alcuni
-/// provider (e i loro adattatori) restituiscono la forma a blocchi
-/// `[{type:"text", text:"…"}]`: entrambe vanno lette, o la chat resta muta.
 pub fn extract_content(body: &Value) -> Option<String> {
     let content = body.pointer("/choices/0/message/content")?;
     let text = match content {
         Value::String(s) => s.clone(),
+        // 20260804 ++ RG #RickyAI alcuni provider rispondono a blocchi `[{type:"text", …}]` invece che
+        // con una stringa: senza questo ramo la chat resta muta.
         Value::Array(parts) => parts
             .iter()
             .filter_map(|part| part.get("text").and_then(Value::as_str))
@@ -1215,14 +1117,10 @@ mod tests {
         ChatRequest { messages, model: None, temperature: None, max_tokens: None }
     }
 
-    // -- riga di comando ----------------------------------------------------
-
     #[test]
     fn serve_args_tiene_of_free_su_localhost() {
         let args = serve_args(&AppConfig::default(), 4141);
         let host = args.iter().position(|a| a == "--host").expect("--host presente");
-        // L'endpoint non ha autenticazione: se un giorno qualcuno mettesse
-        // 0.0.0.0 qui, le quote dell'utente sarebbero di chiunque sia in LAN.
         assert_eq!(args[host + 1], "127.0.0.1");
         assert!(!args.iter().any(|a| a.contains("0.0.0.0")));
     }
@@ -1237,8 +1135,6 @@ mod tests {
         assert_eq!(args[strategy + 1], "fast");
     }
 
-    // -- chiavi dei provider ------------------------------------------------
-
     #[test]
     fn le_chiavi_finiscono_nellenvironment_del_figlio() {
         let cfg = config_with(|c| {
@@ -1246,19 +1142,12 @@ mod tests {
             c.ai_keys.insert("MISTRAL_API_KEY".into(), "".into());
         });
         let env = serve_env(&cfg);
-        // Spazi tolti (un incolla porta sempre qualcosa dietro) e chiave vuota
-        // ignorata: passarla farebbe credere a of-free di avere quel provider.
         assert_eq!(env, vec![("GROQ_API_KEY".to_string(), "gsk_abc".to_string())]);
-        // Niente riga di comando: una chiave negli argomenti la vedrebbe
-        // chiunque faccia `ps`.
         assert!(!serve_args(&cfg, 4141).iter().any(|a| a.contains("gsk_abc")));
     }
 
     #[test]
     fn solo_le_variabili_note_diventano_environment() {
-        // La config è un file modificabile a mano: "tutto ciò che c'è in
-        // ai_keys" significherebbe poter iniettare PATH o LD_PRELOAD in un
-        // processo che avviamo noi.
         let cfg = config_with(|c| {
             c.ai_keys.insert("PATH".into(), "/tmp/evil".into());
             c.ai_keys.insert("LD_PRELOAD".into(), "/tmp/evil.so".into());
@@ -1279,8 +1168,6 @@ mod tests {
         let snapshot = service.snapshot();
 
         assert_eq!(snapshot["keysSet"], json!(["GROQ_API_KEY", "GEMINI_API_KEY"]));
-        // Lo stato lo legge anche un telefono abbinato: una chiave che esce di
-        // qui è una chiave da revocare.
         let serialized = snapshot.to_string();
         assert!(!serialized.contains("gsk_segretissima"), "chiave esposta: {serialized}");
         assert!(!serialized.contains("AIza_segretissima"), "chiave esposta: {serialized}");
@@ -1288,39 +1175,52 @@ mod tests {
 
     #[test]
     fn il_catalogo_dei_provider_combacia_con_of_free() {
-        // I nomi delle variabili vengono da providers.yaml di of-free: un refuso
-        // qui è una chiave salvata che il router non legge mai, senza errori.
         let vars: Vec<&str> = PROVIDER_KEYS.iter().map(|(_, _, var)| *var).collect();
         assert!(vars.contains(&"GROQ_API_KEY"));
         assert!(vars.contains(&"GEMINI_API_KEY"));
         assert!(vars.contains(&"GITHUB_TOKEN"));
         assert_eq!(vars.len(), 7);
-        // Ollama è locale e non ha chiave: chiederne una sarebbe un campo che
-        // non serve a niente.
         assert!(!PROVIDER_KEYS.iter().any(|(id, _, _)| *id == "ollama"));
     }
 
-    // -- indirizzo del servizio remoto --------------------------------------
-
     #[test]
     fn indirizzo_remoto_accetta_quello_che_si_scrive_davvero() {
-        // Solo l'IP: schema e porta di of-free sottintesi.
         assert_eq!(valid_remote_url("192.168.1.50").unwrap(), "http://192.168.1.50:4141");
         assert_eq!(valid_remote_url(" 192.168.1.50:8080 ").unwrap(), "http://192.168.1.50:8080");
         assert_eq!(valid_remote_url("nas.local:4141").unwrap(), "http://nas.local:4141");
-        // Il /v1 finale viene tolto: lo rimette chi compone la richiesta, e un
-        // /v1/v1/chat/completions darebbe un 404 che non spiega niente.
         assert_eq!(
             valid_remote_url("http://192.168.1.50:4141/v1").unwrap(),
             "http://192.168.1.50:4141"
         );
-        // Con schema esplicito vale la porta di default dello schema.
         assert_eq!(valid_remote_url("https://ai.casa.lan").unwrap(), "https://ai.casa.lan");
     }
 
     #[test]
+    fn indirizzo_remoto_conserva_il_path() {
+        assert_eq!(
+            valid_remote_url("https://openrouter.ai/api/v1").unwrap(),
+            "https://openrouter.ai/api"
+        );
+        assert_eq!(
+            valid_remote_url("https://openrouter.ai/api").unwrap(),
+            "https://openrouter.ai/api"
+        );
+        assert_eq!(
+            valid_remote_url("http://nas.local/llm/v1/").unwrap(),
+            "http://nas.local/llm"
+        );
+    }
+
+    #[test]
     fn indirizzo_remoto_rifiuta_il_resto() {
-        for bad in ["", "   ", "ftp://host", "http://", "192.168.1.50/percorso/strano"] {
+        for bad in [
+            "",
+            "   ",
+            "ftp://host",
+            "http://",
+            "http://host:4141/?token=abc",
+            "http://host:4141/#/ciao",
+        ] {
             assert!(valid_remote_url(bad).is_err(), "doveva rifiutare: {bad:?}");
         }
     }
@@ -1340,12 +1240,8 @@ mod tests {
 
     #[test]
     fn working_dir_non_contiene_un_env_che_dirotti_le_chiavi() {
-        // of-free si ferma al primo `.env` trovato: se la cwd ne avesse uno,
-        // `~/.onfeather/.env` non verrebbe mai letto e le chiavi sparirebbero.
         assert!(!working_dir().join(".env").exists());
     }
-
-    // -- validazione --------------------------------------------------------
 
     #[test]
     fn validate_accetta_una_conversazione_normale() {
@@ -1361,12 +1257,8 @@ mod tests {
     #[test]
     fn validate_rifiuta_i_casi_degeneri() {
         assert!(validate(&request(vec![])).is_err());
-        // Ruolo inventato: non deve arrivare al provider.
         assert!(validate(&request(vec![message("tool", "x"), message("user", "ciao")])).is_err());
-        // L'ultimo messaggio deve essere dell'utente, o si chiede al modello di
-        // rispondere a se stesso.
         assert!(validate(&request(vec![message("user", "ciao"), message("assistant", "ciao")])).is_err());
-        // Messaggio di soli spazi.
         assert!(validate(&request(vec![message("user", "   ")])).is_err());
     }
 
@@ -1381,19 +1273,16 @@ mod tests {
         assert!(validate(&enorme).is_err());
     }
 
-    // -- payload ------------------------------------------------------------
-
     #[test]
     fn build_payload_non_chiede_mai_lo_streaming() {
-        // of-free rifiuta `stream: true` con un 400: qui non deve poterci finire.
-        let payload = build_payload(&request(vec![message("user", "ciao")]), "");
+        let payload = build_payload(&request(vec![message("user", "ciao")]), "", "auto");
         assert_eq!(payload["stream"], json!(false));
         assert_eq!(payload["model"], json!("auto"));
     }
 
     #[test]
     fn build_payload_antepone_il_prompt_di_sistema() {
-        let payload = build_payload(&request(vec![message("user", "ciao")]), "sei RickyAI");
+        let payload = build_payload(&request(vec![message("user", "ciao")]), "sei RickyAI", "auto");
         assert_eq!(payload["messages"][0]["role"], json!("system"));
         assert_eq!(payload["messages"][0]["content"], json!("sei RickyAI"));
         assert_eq!(payload["messages"][1]["role"], json!("user"));
@@ -1401,10 +1290,8 @@ mod tests {
 
     #[test]
     fn build_payload_non_duplica_il_system() {
-        // La conversazione ha già il suo system: aggiungerne un altro davanti
-        // significa dare al modello due istruzioni che si contraddicono.
         let req = request(vec![message("system", "sei un pirata"), message("user", "ciao")]);
-        let payload = build_payload(&req, "sei RickyAI");
+        let payload = build_payload(&req, "sei RickyAI", "auto");
         let messages = payload["messages"].as_array().unwrap();
         assert_eq!(messages.iter().filter(|m| m["role"] == json!("system")).count(), 1);
         assert_eq!(messages[0]["content"], json!("sei un pirata"));
@@ -1418,14 +1305,11 @@ mod tests {
             temperature: Some(9.0),
             max_tokens: Some(0),
         };
-        let payload = build_payload(&req, "");
+        let payload = build_payload(&req, "", "private");
         assert_eq!(payload["model"], json!("private"));
-        // Valori fuori scala vengono riportati nel range invece di essere spediti.
         assert_eq!(payload["temperature"], json!(2.0));
         assert_eq!(payload["max_tokens"], json!(1));
     }
-
-    // -- lettura della risposta ---------------------------------------------
 
     #[test]
     fn extract_content_legge_stringa_e_blocchi() {
@@ -1440,8 +1324,6 @@ mod tests {
         });
         assert_eq!(extract_content(&blocchi).as_deref(), Some("ciao"));
 
-        // `content: null` è la forma che of-free usa per "nessun testo": non
-        // deve diventare una risposta vuota che sembra una risposta.
         let vuoto = json!({ "choices": [{ "message": { "content": null } }] });
         assert!(extract_content(&vuoto).is_none());
         assert!(extract_content(&json!({ "choices": [] })).is_none());
@@ -1457,10 +1339,6 @@ mod tests {
         assert!(model_ids(&json!({})).is_empty());
     }
 
-    // -- proxy contro un of-free finto --------------------------------------
-
-    /// Server minimo che imita of-free: risponde su `/v1/models`, `/health` e
-    /// `/v1/chat/completions` secondo il copione passato.
     async fn fake_of_free(
         chat: axum::routing::MethodRouter<()>,
     ) -> (u16, tokio::task::JoinHandle<()>) {
@@ -1506,12 +1384,10 @@ mod tests {
         }))
         .await;
 
-        let reply = complete(&test_client(), &base_url(port), &json!({}))
+        let reply = complete(&test_client(), &base_url(port), &json!({}), None)
             .await
             .expect("risposta");
         assert_eq!(reply.content, "ciao!");
-        // La provenienza arriva dagli header: è l'unico modo di sapere chi ha
-        // davvero servito, e la UI la mostra sotto la risposta.
         assert_eq!(reply.provider.as_deref(), Some("groq"));
         assert_eq!(reply.model.as_deref(), Some("llama-3.3-70b"));
         assert_eq!(reply.failovers, Some(2));
@@ -1534,7 +1410,7 @@ mod tests {
         }))
         .await;
 
-        let reply = complete(&test_client(), &base_url(port), &json!({})).await.unwrap();
+        let reply = complete(&test_client(), &base_url(port), &json!({}), None).await.unwrap();
         assert_eq!(reply.provider.as_deref(), Some("ollama"));
         assert_eq!(reply.model.as_deref(), Some("ollama/qwen2.5:7b"));
         server.abort();
@@ -1553,11 +1429,9 @@ mod tests {
         }))
         .await;
 
-        let error = complete(&test_client(), &base_url(port), &json!({}))
+        let error = complete(&test_client(), &base_url(port), &json!({}), None)
             .await
             .expect_err("429 è un errore");
-        // 429 non è un guasto: la UI deve poter dire "riprova tra 42 secondi"
-        // invece di mostrare un errore generico.
         assert_eq!(error.code, "AI_QUOTA");
         assert_eq!(error.status, 429);
         assert_eq!(error.retry_after, Some(42));
@@ -1577,7 +1451,7 @@ mod tests {
         }))
         .await;
 
-        let error = complete(&test_client(), &base_url(port), &json!({})).await.unwrap_err();
+        let error = complete(&test_client(), &base_url(port), &json!({}), None).await.unwrap_err();
         assert_eq!(error.code, "AI_UPSTREAM");
         assert_eq!(error.message, "modello sconosciuto");
         assert!(error.retry_after.is_none());
@@ -1592,36 +1466,30 @@ mod tests {
         }))
         .await;
 
-        let error = complete(&test_client(), &base_url(port), &json!({})).await.unwrap_err();
+        let error = complete(&test_client(), &base_url(port), &json!({}), None).await.unwrap_err();
         assert_eq!(error.code, "AI_EMPTY");
         server.abort();
     }
 
     #[tokio::test]
     async fn endpoint_spento_non_e_un_errore_di_protocollo() {
-        // Porta chiusa: deve uscirne "non risponde", non un panic né un timeout
-        // lungo quanto CHAT_TIMEOUT.
-        let error = complete(&test_client(), &base_url(1), &json!({})).await.unwrap_err();
+        let error = complete(&test_client(), &base_url(1), &json!({}), None).await.unwrap_err();
         assert_eq!(error.code, "AI_UNREACHABLE");
         assert_eq!(error.status, 502);
     }
-
-    // -- identificazione dell'endpoint --------------------------------------
 
     #[tokio::test]
     async fn identify_riconosce_of_free() {
         use axum::routing::post;
         let (port, server) = fake_of_free(post(|| async { axum::Json(json!({})) })).await;
-        assert!(identify(&test_client(), &base_url(port)).await);
-        assert!(alive(&test_client(), &base_url(port)).await);
+        assert!(is_of_free(&test_client(), &base_url(port)).await);
+        assert!(alive(&test_client(), &base_url(port), None).await);
         server.abort();
     }
 
     #[tokio::test]
     async fn identify_non_adotta_un_servizio_qualsiasi() {
         use axum::routing::get;
-        // Un server che risponde 200 ovunque ma non è of-free: adottarlo
-        // significherebbe mandargli le chat dell'utente.
         let app = axum::Router::new().fallback(get(|| async { "ok" }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -1629,11 +1497,9 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
 
-        assert!(!identify(&test_client(), &base_url(port)).await);
+        assert!(!is_of_free(&test_client(), &base_url(port)).await);
         server.abort();
     }
-
-    // -- servizio -----------------------------------------------------------
 
     fn test_service() -> Arc<AiService> {
         Arc::new(AiService::new(ConfigHandle::in_memory(), EventBus::new()))
@@ -1660,8 +1526,6 @@ mod tests {
     async fn chat_valida_prima_di_uscire_dalla_macchina() {
         let service = test_service();
         service.set_state(AiState::Ready, None);
-        // Anche a servizio pronto, una richiesta malformata non deve partire:
-        // spenderebbe quota per farsi rifiutare dal provider.
         let error = service.chat(request(vec![])).await.unwrap_err();
         assert_eq!(error.code, "AI_INVALID");
         assert_eq!(error.status, 400);
@@ -1692,7 +1556,6 @@ mod tests {
         let snapshot = service.snapshot();
         let log = snapshot["log"].as_array().unwrap();
         assert_eq!(log.len(), MAX_LOG_LINES);
-        // Restano le ultime: quando l'avvio fallisce, il motivo è in fondo.
         assert_eq!(log.last().unwrap(), &json!(format!("riga {}", MAX_LOG_LINES + 9)));
         assert_eq!(service.log_tail(2), format!("riga {} · riga {}", MAX_LOG_LINES + 8, MAX_LOG_LINES + 9));
     }
@@ -1714,11 +1577,185 @@ mod tests {
         assert_eq!(snapshot["enabled"], json!(true));
     }
 
+    async fn fake_openai(
+        modelli: &[&str],
+        key: Option<&'static str>,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        use axum::extract::Request;
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        use axum::routing::{get, post};
+
+        let listed: Vec<String> = modelli.iter().map(|m| m.to_string()).collect();
+        let autorizza = move |request: &Request| match key {
+            None => true,
+            Some(expected) => {
+                request
+                    .headers()
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    == Some(&format!("Bearer {expected}"))
+            }
+        };
+
+        let models_body = json!({
+            "object": "list",
+            "data": listed.iter().map(|id| json!({ "id": id })).collect::<Vec<_>>(),
+        });
+        let app = axum::Router::new()
+            .route(
+                "/v1/models",
+                get(move |request: Request| {
+                    let body = models_body.clone();
+                    async move {
+                        if !autorizza(&request) {
+                            return (StatusCode::UNAUTHORIZED, axum::Json(json!({}))).into_response();
+                        }
+                        axum::Json(body).into_response()
+                    }
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(move |request: Request| async move {
+                    if !autorizza(&request) {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            axum::Json(json!({ "error": { "message": "No auth credentials found" } })),
+                        )
+                            .into_response();
+                    }
+                    axum::Json(json!({
+                        "model": "qwen2.5:7b",
+                        "choices": [{ "message": { "content": "risposta generica" } }],
+                    }))
+                    .into_response()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn un_endpoint_generico_viene_riconosciuto_ma_non_scambiato_per_of_free() {
+        let (port, server) = fake_openai(&["qwen2.5:7b", "llama3.2:3b"], None).await;
+        let endpoint = probe(&test_client(), &base_url(port), None)
+            .await
+            .expect("endpoint riconosciuto");
+        assert!(!endpoint.of_free, "non espone `auto`: non è of-free");
+        assert_eq!(endpoint.models, vec!["qwen2.5:7b", "llama3.2:3b"]);
+
+        assert!(!is_of_free(&test_client(), &base_url(port)).await);
+        match choose_port(&test_service(), port).await {
+            PortChoice::Adopt(_) => panic!("non doveva adottare un endpoint non-of-free"),
+            _ => {}
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn un_endpoint_senza_modelli_non_e_pronto() {
+        let (port, server) = fake_openai(&[], None).await;
+        assert!(probe(&test_client(), &base_url(port), None).await.is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn su_un_endpoint_generico_auto_diventa_un_modello_vero() {
+        let mut status = AiStatus::new(4141);
+        status.of_free = false;
+        status.models = vec!["qwen2.5:7b".into(), "llama3.2:3b".into()];
+
+        assert_eq!(effective_model(None, &status), "qwen2.5:7b");
+        assert_eq!(effective_model(Some("auto"), &status), "qwen2.5:7b");
+        assert_eq!(effective_model(Some("private"), &status), "qwen2.5:7b");
+        assert_eq!(effective_model(Some("llama3.2:3b"), &status), "llama3.2:3b");
+
+        status.of_free = true;
+        assert_eq!(effective_model(Some("auto"), &status), "auto");
+        assert_eq!(effective_model(None, &status), "auto");
+        assert_eq!(effective_model(Some("private"), &status), "private");
+    }
+
+    #[tokio::test]
+    async fn la_chiave_del_servizio_remoto_viene_mandata() {
+        let (port, server) = fake_openai(&["openai/gpt-4o-mini"], Some("sk-or-test")).await;
+        let base = base_url(port);
+
+        assert!(probe(&test_client(), &base, None).await.is_none(), "senza chiave: 401");
+        let endpoint = probe(&test_client(), &base, Some("sk-or-test")).await;
+        assert!(endpoint.is_some(), "con la chiave giusta deve rispondere");
+
+        let payload = json!({ "model": "openai/gpt-4o-mini", "messages": [] });
+        let senza = complete(&test_client(), &base, &payload, None).await;
+        assert!(senza.is_err(), "senza chiave la chat deve fallire");
+        let con = complete(&test_client(), &base, &payload, Some("  sk-or-test  "))
+            .await
+            .expect("con la chiave passa");
+        assert_eq!(con.content, "risposta generica");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn un_ollama_in_rete_diventa_utilizzabile() {
+        let (port, server) = fake_openai(&["qwen2.5:7b"], None).await;
+        let config = ConfigHandle::in_memory();
+        config.update(|c| {
+            c.ai_enabled = true;
+            c.ai_mode = "remote".into();
+            c.ai_remote_url = Some(format!("127.0.0.1:{port}"));
+        });
+        let service = Arc::new(AiService::new(config.clone(), EventBus::new()));
+
+        let watched = service.clone();
+        let base = valid_remote_url(&format!("127.0.0.1:{port}")).unwrap();
+        let watcher = tokio::spawn(async move {
+            watch_remote(&watched, &base, None).await;
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let status = service.status();
+        assert_eq!(status.state, AiState::Ready);
+        assert!(!status.of_free);
+        assert_eq!(status.models, vec!["qwen2.5:7b"]);
+        assert!(status.message.unwrap_or_default().contains("non of-free"));
+
+        let reply = service.chat(request(vec![message("user", "ciao")])).await.expect("risposta");
+        assert_eq!(reply.content, "risposta generica");
+
+        let snapshot = service.detailed_snapshot().await;
+        assert_eq!(snapshot["providers"], Value::Null);
+        assert_eq!(snapshot["ofFree"], json!(false));
+
+        watcher.abort();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn la_chiave_remota_non_esce_dallo_stato() {
+        let config = ConfigHandle::in_memory();
+        config.update(|c| {
+            c.ai_mode = "remote".into();
+            c.ai_remote_url = Some("http://192.168.1.50:4141".into());
+            c.ai_remote_key = Some("sk-or-segretissima".into());
+        });
+        let service = Arc::new(AiService::new(config, EventBus::new()));
+        let snapshot = service.snapshot();
+
+        assert_eq!(snapshot["remoteKeySet"], json!(true));
+        assert!(
+            !snapshot.to_string().contains("sk-or-segretissima"),
+            "chiave del servizio remoto esposta: {snapshot}"
+        );
+    }
+
     #[tokio::test]
     async fn in_modalita_remota_la_chat_va_sul_servizio_remoto() {
         use axum::routing::post;
-        // Il "remoto" è un of-free finto su una porta a caso: quello che conta
-        // è che la richiesta non finisca sulla 4141 locale.
         let (port, server) = fake_of_free(post(|| async {
             (
                 [("X-OnFeather-Provider", "groq")],
@@ -1734,16 +1771,14 @@ mod tests {
             c.ai_enabled = true;
             c.ai_mode = "remote".into();
             c.ai_remote_url = Some(format!("127.0.0.1:{port}"));
-            // La porta locale resta configurata e deve restare ignorata.
             c.ai_port = 4141;
         });
         let service = Arc::new(AiService::new(config.clone(), EventBus::new()));
 
-        // watch_remote resta in polling: qui interessa solo che diventi pronto.
         let watched = service.clone();
         let base = valid_remote_url(&format!("127.0.0.1:{port}")).unwrap();
         let watcher = tokio::spawn(async move {
-            watch_remote(&watched, &base).await;
+            watch_remote(&watched, &base, None).await;
         });
         tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -1768,7 +1803,6 @@ mod tests {
         config.update(|c| {
             c.ai_enabled = true;
             c.ai_mode = "remote".into();
-            // Porta chiusa: è il caso "ho spento il PC in cameretta".
             c.ai_remote_url = Some("127.0.0.1:1".into());
         });
         let service = Arc::new(AiService::new(config.clone(), EventBus::new()));
@@ -1779,7 +1813,6 @@ mod tests {
         assert_eq!(status.state, AiState::Failed);
         let message = status.message.unwrap_or_default();
         assert!(message.contains("127.0.0.1:1"), "deve dire quale indirizzo: {message}");
-        // Il motivo più frequente è quello, e nessuno ci arriva da solo.
         assert!(message.contains("127.0.0.1"), "{message}");
     }
 
@@ -1794,8 +1827,6 @@ mod tests {
         let service = Arc::new(AiService::new(config.clone(), EventBus::new()));
         let outcome = run_once(&service, &config.get()).await;
 
-        // Senza indirizzo non si ricade sull'avvio locale: sarebbe l'opposto di
-        // ciò che l'utente ha chiesto, e per giunta in silenzio.
         assert!(matches!(outcome, Outcome::Idle));
         assert_eq!(service.status().state, AiState::Failed);
         assert!(service.status().managed == false);
@@ -1815,8 +1846,6 @@ mod tests {
 
     #[tokio::test]
     async fn choose_port_salta_le_porte_occupate() {
-        // Porta occupata da un servizio che non è of-free: niente adozione, si
-        // avvia il proprio processo sulla successiva libera.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let busy = listener.local_addr().unwrap().port();
         let service = test_service();
@@ -1828,16 +1857,9 @@ mod tests {
         drop(listener);
     }
 
-    /// Il giro completo contro `of-free` vero: risoluzione del binario, avvio,
-    /// endpoint che risponde, e — la parte che nessun test con un finto può
-    /// coprire — il processo che muore davvero quando il tool lo spegne.
-    /// Contract test come gli altri: gira solo con `--ignored`, perché richiede
-    /// of-free installato sulla macchina.
     #[tokio::test]
     #[ignore = "contract test: avvia davvero `of-free serve` (richiede of-free nel PATH)"]
     async fn supervisore_avvia_e_spegne_of_free_reale() {
-        // `of-free` è una dipendenza facoltativa e in CI non c'è: senza, questo
-        // test non ha niente da verificare e non deve far fallire la matrice.
         if resolve_command(&AppConfig::default()).await.is_none() {
             eprintln!("of-free non installato: contract test saltato");
             return;
@@ -1870,16 +1892,14 @@ mod tests {
 
         assert!(ready.managed, "doveva essere un processo avviato da noi");
         assert_eq!(ready.port, 4390);
-        assert!(identify(&service.client, &ready.base_url).await, "endpoint non riconosciuto");
+        assert!(is_of_free(&service.client, &ready.base_url).await, "endpoint non riconosciuto");
 
-        // Spegnimento: prima si disattiva, o il supervisore lo rimetterebbe su
-        // (che è esattamente ciò che deve fare quando cade da solo).
         config.update(|c| c.ai_enabled = false);
         service.request_restart();
         service.shutdown();
 
         let spento = tokio::time::timeout(Duration::from_secs(15), async {
-            while alive(&service.client, &ready.base_url).await {
+            while alive(&service.client, &ready.base_url, None).await {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         })
@@ -1890,8 +1910,6 @@ mod tests {
     #[tokio::test]
     async fn resolve_command_ignora_un_override_inesistente() {
         let cfg = config_with(|c| c.ai_command = Some("/percorso/che/non/esiste/of-free".into()));
-        // Meglio ricadere su "non installato" che provare a lanciare un path
-        // sbagliato a ogni giro del supervisore.
         assert!(resolve_command(&cfg).await.is_none());
 
         let file = std::env::current_exe().unwrap();

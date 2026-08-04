@@ -12,7 +12,6 @@ interface Draft {
 
 const EMPTY: Draft = { name: "", host: "", defaultCommand: "uptime" };
 
-// Comandi rapidi proposti come pillole sotto ogni host.
 const PRESETS = ["uptime", "df -h", "free -h", "docker ps", "systemctl --failed"];
 
 function HostForm({

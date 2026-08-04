@@ -6,14 +6,11 @@ use serde::Serialize;
 use crate::config::ConfigHandle;
 use crate::events::{now_ms, EventBus};
 
-/// Regole di alert valutate sugli eventi del bus. Girano solo quando i
-/// relativi poller sono attivi (cioè quando una UI è collegata): per un
-/// tool desktop è il comportamento giusto, non un limite.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Alert {
     pub id: String,
-    pub severity: &'static str, // info | warning | critical
+    pub severity: &'static str,
     pub kind: &'static str,
     pub title: String,
     pub detail: String,
@@ -22,9 +19,7 @@ pub struct Alert {
 }
 
 const CPU_SUSTAINED_SECS: u64 = 60;
-/// Non ripetere lo stesso alert per 10 minuti.
 const COOLDOWN_MS: u64 = 600_000;
-/// Un certificato in scadenza resta tale per giorni: un promemoria al giorno basta.
 const CERT_COOLDOWN_MS: u64 = 86_400_000;
 const CERT_WARN_DAYS: i64 = 14;
 const MAX_ALERTS: usize = 50;
@@ -38,11 +33,8 @@ pub struct AlertService {
 #[derive(Default)]
 struct Inner {
     alerts: Vec<Alert>,
-    /// chiave dedup (kind+target) -> ultimo scatto
     last_fired: HashMap<String, u64>,
-    /// campioni cpu (ts, pct) nell'ultima finestra
     cpu_window: Vec<(u64, f64)>,
-    /// stato precedente dei servizi per rilevare le transizioni a down
     service_states: HashMap<String, String>,
     counter: u64,
 }
@@ -90,8 +82,6 @@ impl AlertService {
             "stats" => self.eval_stats(payload),
             "services" => self.eval_services(payload),
             "tasks" => self.eval_tasks(payload),
-            // "sensors" = poller dashboard; "sensorsbg" = campionatore sempre
-            // attivo (alert termici/batteria anche senza dashboard aperta).
             "sensors" | "sensorsbg" => self.eval_sensors(payload),
             _ => {}
         }
@@ -116,7 +106,6 @@ impl AlertService {
             let window = &inner.cpu_window;
             window.len() >= 5
                 && window.iter().all(|(_, pct)| *pct > thresholds.cpu_pct)
-                // la finestra deve coprire quasi tutto il periodo
                 && ts.saturating_sub(window[0].0) >= CPU_SUSTAINED_SECS * 900
         };
         if fire_cpu {
@@ -139,7 +128,6 @@ impl AlertService {
         }
     }
 
-    /// Alert termici e batteria dal topic "sensors" (attivo con la dashboard).
     fn eval_sensors(&self, payload: &serde_json::Value) {
         let thresholds = self.config.get().alert_thresholds;
         if thresholds.temp_enabled {
@@ -188,7 +176,6 @@ impl AlertService {
                 let mut inner = self.inner.lock().expect("alerts lock");
                 inner.service_states.insert(id.to_string(), state.to_string())
             };
-            // Alert solo sulla transizione verso down (non al primo check).
             if state == "down" && previous.as_deref().is_some_and(|p| p != "down") {
                 self.fire(
                     "service-down",
@@ -202,7 +189,6 @@ impl AlertService {
                         .to_string(),
                 );
             }
-            // Certificato TLS scaduto o in scadenza (solo target https).
             if let Some(days) = status.get("certDaysLeft").and_then(|v| v.as_i64()) {
                 if days < 0 {
                     self.fire_with_cooldown(
@@ -313,10 +299,10 @@ mod tests {
         let payload_up = serde_json::json!({ "statuses": [{ "id": "x", "label": "X", "state": "up" }] });
         let payload_down = serde_json::json!({ "statuses": [{ "id": "x", "label": "X", "state": "down", "error": "timeout" }] });
 
-        service.on_event("services", &payload_down); // primo check già down: nessun alert
+        service.on_event("services", &payload_down);
         assert!(service.list().is_empty());
         service.on_event("services", &payload_up);
-        service.on_event("services", &payload_down); // transizione up -> down
+        service.on_event("services", &payload_down);
         let alerts = service.list();
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].kind, "service-down");
@@ -331,7 +317,7 @@ mod tests {
         let service = AlertService::start(bus, ConfigHandle::in_memory());
         let payload = serde_json::json!({ "tasks": [{ "id": "t1", "label": "npm run x", "state": "failed", "exitCode": 1 }] });
         service.on_event("tasks", &payload);
-        service.on_event("tasks", &payload); // dedup
+        service.on_event("tasks", &payload);
         assert_eq!(service.list().len(), 1);
     }
 }

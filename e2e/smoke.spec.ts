@@ -1,7 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Payload canned spinti sul WebSocket mockato. Rispecchiano le shape reali
-// (MachineStats, PortScan) definite in src/lib/types.ts.
 const stats = {
   ts: Date.now(),
   cpuTotalPct: 42,
@@ -20,7 +18,6 @@ const portScan = {
       port: 3000,
       protocol: "tcp",
       addresses: ["127.0.0.1"],
-      // Dev server orfano → deve mostrare il badge "zombie".
       processes: [
         {
           pid: 4821,
@@ -67,12 +64,10 @@ function cannedFor(topic: string): unknown | null {
     case "disks":
       return { disks: [] };
     default:
-      return null; // topic senza dati canned (alerts, drop-*): nessun push.
+      return null;
   }
 }
 
-// Mocka interamente il WebSocket lato browser: a ogni "subscribe" risponde con
-// l'evento canned del topic, nella busta reale { topic, ts, payload }.
 async function mockWs(page: Page) {
   await page.routeWebSocket(/\/ws$/, (ws) => {
     ws.onMessage((raw) => {
@@ -99,18 +94,13 @@ test.beforeEach(async ({ page }) => {
 test("la shell carica e la dashboard mostra la CPU dal push WS", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  // Il valore 42% arriva dal campione stats mockato → conferma la pipeline
-  // WS → store → gauge.
   await expect(page.locator(".gauge-value").filter({ hasText: "42%" })).toBeVisible();
 });
 
 test("le Porte in ascolto (tab di Rete) mostrano il badge zombie", async ({ page }) => {
-  // Le porte in ascolto vivono ora come primo tab di Rete; il deep-link #/ports
-  // ci arriva mappando la sezione storica sul tab "listen".
   await page.goto("/#/ports");
   await expect(page.getByRole("heading", { name: "Porte in ascolto" })).toBeVisible();
   await expect(page.getByText("3000")).toBeVisible();
-  // Il badge "zombie" è la feature di rilevamento porte orfane.
   await expect(page.getByText("zombie").first()).toBeVisible();
 });
 

@@ -14,7 +14,6 @@ function CronRow({ entry }: { entry: SchedEntry }) {
   const toggle = async () => {
     const willOpen = !open;
     setOpen(willOpen);
-    // launchd/schtasks: i dettagli (pianificazione) vengono dal backend, una volta.
     if (willOpen && !isCron && lines === null) {
       setLoading(true);
       const r = await api<{ lines: string[] }>(
@@ -70,11 +69,6 @@ function CronRow({ entry }: { entry: SchedEntry }) {
   );
 }
 
-/**
- * Cron / scheduler locale in sola lettura: crontab utente, LaunchAgent (macOS) o
- * Task Scheduler (Windows). Cliccando una voce se ne vedono i dettagli — per
- * crontab la prossima esecuzione, per launchd/schtasks la pianificazione reale.
- */
 export function Cron() {
   const [listing, setListing] = useState<SchedListing | null>(null);
   const [loading, setLoading] = useState(false);

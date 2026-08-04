@@ -1,12 +1,8 @@
-// Conversioni colore pure e testabili. Il picker lavora in HSV (quadrato
-// saturazione/valore + slider tinta, lo standard degli eyedropper); i
-// convertitori mostrano RGB/RGBA/HEX/HSL derivati dallo stesso RGBA.
-
 export interface RGBA {
-  r: number; // 0..255 interi
+  r: number;
   g: number;
   b: number;
-  a: number; // 0..1
+  a: number;
 }
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
@@ -117,8 +113,6 @@ function round2(x: number): number {
   return Math.round(x * 100) / 100;
 }
 
-/** Interpreta una stringa colore in RGBA. Accetta #hex (3/4/6/8), rgb()/rgba(),
- *  hsl()/hsla(). `null` se non riconosciuta. */
 export function parseColor(input: string): RGBA | null {
   const s = input.trim().toLowerCase();
   if (!s) return null;

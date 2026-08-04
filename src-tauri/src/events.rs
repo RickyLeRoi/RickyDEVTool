@@ -1,7 +1,6 @@
 use serde::Serialize;
 use tokio::sync::broadcast;
 
-/// Evento push verso i client WS, instradato per topic.
 #[derive(Debug, Clone, Serialize)]
 pub struct Event {
     pub topic: String,
@@ -16,18 +15,17 @@ pub struct EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
-        // Capiente: l'output dei task (npm install, build) può essere rapido.
         let (tx, _) = broadcast::channel(1024);
         Self { tx }
     }
 
     pub fn publish(&self, topic: &str, payload: serde_json::Value) {
+// 20260704 RG errore in send = nessun subscriber collegato: normale, non un guasto.
         let event = Event {
             topic: topic.to_string(),
             ts: now_ms(),
             payload,
         };
-        // Errore = nessun subscriber: normale, non è un problema.
         let _ = self.tx.send(event);
     }
 

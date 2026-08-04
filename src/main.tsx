@@ -7,7 +7,6 @@ import "./styles.css";
 
 initTheme();
 
-// Gli errori JS del frontend finiscono nel log del backend.
 window.addEventListener("error", (e) => {
   post("/api/log", {
     level: "error",

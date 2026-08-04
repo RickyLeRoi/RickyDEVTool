@@ -1,11 +1,6 @@
-//! Profili di avvio composito ("compound launch"): un profilo raggruppa più
-//! step (riga di comando + cartella) che si lanciano insieme con un click,
-//! ciascuno come task del [`crate::tasks::TaskRegistry`]. Persistiti in config.
-
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-/// Uno step: una riga di comando eseguita nella shell dentro `cwd`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchStep {
@@ -25,8 +20,6 @@ pub struct LaunchBundle {
 const MAX_STEPS: usize = 20;
 
 impl LaunchBundle {
-    /// Ripulisce e valida un profilo in arrivo dal client: niente step vuoti,
-    /// nome obbligatorio, cwd non vuoto, tetto al numero di step.
     pub fn sanitized(mut self) -> Result<Self, String> {
         self.name = self.name.trim().to_string();
         if self.name.is_empty() {
@@ -47,7 +40,6 @@ impl LaunchBundle {
                 return Err("ogni step deve avere una cartella di lavoro".to_string());
             }
             if step.label.is_empty() {
-                // Etichetta di ripiego: la prima parola del comando.
                 step.label = step.command.split_whitespace().next().unwrap_or("step").to_string();
             }
         }
@@ -55,9 +47,6 @@ impl LaunchBundle {
     }
 }
 
-/// Genera un id univoco per un nuovo profilo (i profili esistenti tengono il
-/// loro). Il suffisso casuale evita collisioni tra profili creati nello stesso
-/// millisecondo (che l'upsert scambierebbe per una modifica, sovrascrivendo).
 pub fn new_id() -> String {
     let mut buf = [0u8; 4];
     rand::rng().fill_bytes(&mut buf);
@@ -83,8 +72,8 @@ mod tests {
         .sanitized()
         .unwrap();
         assert_eq!(b.name, "Stack");
-        assert_eq!(b.steps.len(), 2); // lo step vuoto è sparito
-        assert_eq!(b.steps[0].label, "npm"); // label di ripiego
+        assert_eq!(b.steps.len(), 2);
+        assert_eq!(b.steps[0].label, "npm");
     }
 
     #[test]

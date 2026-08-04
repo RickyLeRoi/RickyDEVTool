@@ -9,7 +9,6 @@ interface TailEvent {
   message?: string;
 }
 
-/** Segue un file di log (tail -f) con streaming via WS, come i task. */
 export function LogTail({ projectPath }: { projectPath: string }) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState("");
@@ -36,7 +35,6 @@ export function LogTail({ projectPath }: { projectPath: string }) {
 
   const start = async () => {
     setError(null);
-    // Path assoluto o relativo al progetto.
     const path = file.startsWith("/") ? file : `${projectPath}/${file}`;
     const r = await post<TailInfo>("/api/logtail/start", { path });
     if (r.ok) setTail(r.data);

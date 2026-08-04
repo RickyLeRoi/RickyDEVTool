@@ -6,7 +6,6 @@ interface CommitListProps {
   path: string;
   dirty: boolean;
   onCheckout: (info: GitRepoInfo) => void;
-  /** Branch/ref di cui elencare i commit; null = HEAD (branch corrente). */
   refName: string | null;
 }
 
@@ -41,8 +40,6 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
     return [];
   };
 
-  // Selezionare un branch (refName != null) apre la lista sui suoi commit;
-  // tornare a null (dopo un checkout o cambio progetto) la richiude.
   useEffect(() => {
     let cancelled = false;
     setCommits(null);
@@ -63,7 +60,6 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
     return () => {
       cancelled = true;
     };
-    // fetchPage dipende da path/refName, catturati qui.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refName, path]);
 
@@ -104,8 +100,6 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
     } else setError(r.error);
   };
 
-  // Revert e cherry-pick creano un nuovo commit: aggiorno lo stato repo e
-  // ricarico la lista dall'alto (il nuovo commit compare in cima).
   const runAndReload = async (endpoint: string, c: GitCommit, confirmMsg: string) => {
     if (!window.confirm(confirmMsg)) return;
     setBusy(c.hash);

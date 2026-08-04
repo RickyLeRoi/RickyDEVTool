@@ -39,7 +39,6 @@ function PortRow({ entry }: { entry: PortEntry }) {
     const host = hostname === "127.0.0.1" ? "localhost" : hostname;
     const url = `http://${host}:${entry.port}`;
     if ("__TAURI_INTERNALS__" in window) {
-      // Nella webview Tauri window.open è un no-op: apri nel browser di sistema.
       post("/api/system/open-url", { url });
     } else {
       window.open(url, "_blank");
@@ -120,8 +119,6 @@ function PortRow({ entry }: { entry: PortEntry }) {
 export function Ports() {
   const { scan, error, setScan, setError } = usePortsStore();
 
-  // La sottoscrizione parte quando la sezione è aperta e si spegne quando
-  // si esce: il backend ferma il poller senza subscriber.
   useEffect(() => {
     return ws.subscribe("ports", (event) => {
       if (event.topic === "ports") setScan(event.payload as PortScan);

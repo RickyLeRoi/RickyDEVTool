@@ -9,7 +9,6 @@ import { Docker } from "../docker/Docker";
 import { TaskLog } from "../../components/TaskLog";
 import type { DnsRecordSet, LanHost, PingResult, PortCheckResult, TaskInfo } from "../../lib/types";
 
-// "listen" (Porte in ascolto) è il primo tab e apre di default.
 const TOOLS: TabDef[] = [
   { id: "listen", label: "Porte in ascolto" },
   { id: "services", label: "Servizi" },
@@ -148,9 +147,6 @@ function Dns() {
   );
 }
 
-// Porte comuni, per il pulsante "Porte note" e per etichettare le porte
-// aperte trovate da "Tutte le porte" con un nome plausibile (per numero di
-// porta convenzionale, non un vero fingerprint del servizio).
 const PORT_SERVICE_NAMES: Record<number, string> = {
   21: "FTP",
   22: "SSH",
@@ -268,7 +264,6 @@ function savePortHistory(entry: PortScanHistoryEntry): PortScanHistoryEntry[] {
   return next;
 }
 
-/** Elenco libero (virgole/spazi) → porte valide, deduplicate e ordinate. */
 function parsePortsInput(input: string): number[] {
   const set = new Set<number>();
   for (const token of input.split(/[\s,]+/)) {
@@ -297,7 +292,7 @@ function Ports() {
     cancelRef.current = false;
     setBusy(true);
     setError(null);
-    setResults([]); // pulisce SUBITO i risultati precedenti, prima di mostrare i nuovi
+    setResults([]);
     setProgress({ done: 0, total: ports.length });
 
     const collected: PortCheckResult[] = [];
@@ -339,9 +334,6 @@ function Ports() {
     setPortsStr(h.portsStr);
   };
 
-  // Con pochi risultati mostra anche le porte chiuse (utile per confermarle);
-  // con scansioni grandi (tutte le porte / porte note) solo le aperte, altrimenti
-  // migliaia di pillole "chiusa" renderebbero la pagina inutilizzabile.
   const showClosed = (results?.length ?? 0) <= 100;
   const displayResults = showClosed ? results : results?.filter((r) => r.open);
   const openCount = results?.filter((r) => r.open).length ?? 0;
@@ -446,13 +438,6 @@ function Traceroute() {
   );
 }
 
-/**
- * Dominio condiviso da TUTTI gli host che ne hanno uno (es. ".homenet.telecom
- * italia.it" del router): se è lo stesso per tutti non aggiunge informazione e
- * fa solo rumore nella colonna, quindi si mostra una volta sola in intestazione
- * e nelle righe resta il solo nome host. Serve almeno una coppia per parlare di
- * "uguale per tutti"; se anche uno solo differisce, i nomi restano interi.
- */
 export function commonDomain(hostnames: (string | null)[]): string | null {
   const domains = hostnames
     .filter((h): h is string => !!h)
@@ -465,7 +450,6 @@ export function commonDomain(hostnames: (string | null)[]): string | null {
   return domains.every((d) => d!.toLowerCase() === first) ? domains[0] : null;
 }
 
-/** Nome host senza il dominio comune (che viene mostrato a parte). */
 function shortHostname(hostname: string | null, domain: string | null): string {
   if (!hostname) return "—";
   if (!domain) return hostname;
@@ -476,8 +460,6 @@ function shortHostname(hostname: string | null, domain: string | null): string {
 }
 
 function Scan({ autoRunSeq }: { autoRunSeq: number }) {
-  // Store esterno all'albero React: i risultati restano visibili quando si
-  // cambia tool/sezione e tornano finché non si lancia una nuova scansione.
   const hosts = useNetScanStore((s) => s.hosts);
   const setHosts = useNetScanStore((s) => s.setHosts);
   const [error, setError] = useState<string | null>(null);
@@ -491,7 +473,6 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
     else setError(r.error.message);
   };
 
-  // "Scansiona rete locale..." scelto dal menu del tray.
   useEffect(() => {
     if (autoRunSeq === 0) return;
     run();
@@ -545,7 +526,6 @@ export function NetTools() {
     TOOLS.map((t) => t.id),
     "listen",
   );
-  // Auto-run dello scan quando si arriva sul tab "scan" da tray/palette.
   const page = useNavStore((s) => s.page);
   const reqTab = useNavStore((s) => s.tab);
   const seq = useNavStore((s) => s.seq);

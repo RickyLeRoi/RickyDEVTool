@@ -2,7 +2,6 @@ import { API_BASE, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
 import { useDropStore } from "../../stores/dropStore";
 
-/** Notifiche fluttuanti per file/testo in arrivo, visibili da qualsiasi sezione. */
 export function DropToasts() {
   const { incoming, dismiss } = useDropStore();
 

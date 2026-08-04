@@ -4,6 +4,7 @@ import { Modal } from "../../components/Modal";
 import { Toggle } from "../../components/Toggle";
 import { AlertSettings } from "./AlertSettings";
 import { AiSettings } from "./AiSettings";
+import { AntiIdlePanel } from "./AntiIdlePanel";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { LanInfo } from "../../lib/types";
@@ -27,7 +28,6 @@ export function Settings() {
     });
   }, []);
 
-  // "Mostra QR di abbinamento" dal menu del tray.
   const traySeq = useTrayIntentStore((s) => s.seq);
   useEffect(() => {
     const { section, extra } = useTrayIntentStore.getState();
@@ -69,6 +69,8 @@ export function Settings() {
       <AlertSettings />
 
       <AiSettings />
+
+      <AntiIdlePanel />
 
       <section>
         <h3>Accesso da smartphone (LAN)</h3>

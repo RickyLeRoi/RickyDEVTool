@@ -24,7 +24,6 @@ export function GitPanel({ path }: { path: string }) {
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState<"fetch" | "pull" | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
-  // Branch di cui mostrare i commit; null = HEAD (branch corrente).
   const [commitsRef, setCommitsRef] = useState<string | null>(null);
 
   const load = useCallback(async () => {

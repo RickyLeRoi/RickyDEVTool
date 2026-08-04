@@ -9,8 +9,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::events::{now_ms, EventBus};
 use crate::exec;
 
-/// Task long-running avviati dal tool (npm install, dotnet build, ...).
-/// Output in streaming sul topic WS `task:{id}`; eventi di stato su `tasks`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskInfo {
@@ -30,21 +28,17 @@ pub enum TaskState {
     Failed,
 }
 
-/// Una riga di output bufferizzata: permette di riaprire il log di un task
-/// (anche già terminato) senza aver seguito lo stream WS dall'inizio.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogLine {
-    pub stream: &'static str, // "out" | "err"
+    pub stream: &'static str,
     pub line: String,
 }
 
-/// Tetto al buffer per task: oltre, si scartano le righe più vecchie.
 const MAX_LOG_LINES: usize = 5000;
 
 struct TaskHandle {
     info: TaskInfo,
-    /// Output completo bufferizzato (condiviso con i task di streaming).
     log: Arc<Mutex<Vec<LogLine>>>,
     #[cfg(unix)]
     pgid: i32,
@@ -74,11 +68,7 @@ impl TaskRegistry {
         list
     }
 
-    /// Output bufferizzato di un task (per riaprirne il log). None se il task
-    /// non esiste (mai avviato o già ripulito con clear_finished).
     pub fn log(&self, id: &str) -> Option<Vec<LogLine>> {
-        // Clona l'Arc del buffer e rilascia subito il lock della mappa, così
-        // non si tengono due lock insieme.
         let buffer = {
             let tasks = self.tasks.lock().expect("task lock");
             tasks.get(id).map(|h| h.log.clone())
@@ -87,9 +77,6 @@ impl TaskRegistry {
         Some(lines)
     }
 
-    /// Avvia `program args` in `cwd`. Su Windows passa da `cmd /C` per risolvere
-    /// i launcher .cmd (npm, yarn, ...); su unix crea un process group per poter
-    /// killare l'intero albero.
     pub fn spawn(
         self: &Arc<Self>,
         label: &str,
@@ -112,9 +99,6 @@ impl TaskRegistry {
         self.launch(label, cwd, cmd)
     }
 
-    /// Avvia una riga di comando completa tramite la shell di sistema (`sh -c`
-    /// su unix, `cmd /C` su Windows): serve ai profili di avvio composito, dove
-    /// lo step è una stringa con pipe/`&&`/redirezioni scritta dall'utente.
     pub fn spawn_shell(
         self: &Arc<Self>,
         label: &str,
@@ -139,8 +123,6 @@ impl TaskRegistry {
         self.launch(label, cwd, cmd)
     }
 
-    /// Parte comune di [`spawn`]/[`spawn_shell`]: prepara stdio, registra il
-    /// task, avvia lo streaming e il watcher di uscita.
     fn launch(
         self: &Arc<Self>,
         label: &str,
@@ -184,7 +166,6 @@ impl TaskRegistry {
         }
         self.publish_state(&info);
 
-        // Stream di stdout/stderr riga per riga.
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         if let Some(out) = stdout {
@@ -194,7 +175,6 @@ impl TaskRegistry {
             tokio::spawn(stream_lines(self.bus.clone(), log.clone(), id.clone(), err, "err"));
         }
 
-        // Watcher di uscita.
         let registry = Arc::clone(self);
         let task_id = id.clone();
         tokio::spawn(async move {
@@ -232,8 +212,6 @@ impl TaskRegistry {
         }
         #[cfg(unix)]
         {
-            // SIGTERM all'intero process group; l'escalation a SIGKILL
-            // avviene nel watcher se il processo ignora il segnale.
             let pgid = handle.pgid;
             unsafe { libc::killpg(pgid, libc::SIGTERM) };
             tokio::spawn(async move {
@@ -250,13 +228,11 @@ impl TaskRegistry {
         Ok(())
     }
 
-    /// Rimuove dalla lista i task terminati (i log restano nel pannello finché aperto).
     pub fn clear_finished(&self) {
         {
             let mut tasks = self.tasks.lock().expect("task lock");
             tasks.retain(|_, h| h.info.state == TaskState::Running);
         }
-        // Notifica i client (barra laterale / pannello Task) della lista aggiornata.
         self.bus.publish("tasks", serde_json::json!({ "tasks": self.list() }));
     }
 
@@ -280,7 +256,6 @@ async fn stream_lines<R: tokio::io::AsyncRead + Unpin>(
         {
             let mut buf = log.lock().expect("log lock");
             buf.push(LogLine { stream, line: line.clone() });
-            // Ring buffer: scarta le righe più vecchie oltre il tetto.
             if buf.len() > MAX_LOG_LINES {
                 let excess = buf.len() - MAX_LOG_LINES;
                 buf.drain(..excess);
@@ -332,7 +307,6 @@ mod tests {
         assert_eq!(final_state.state, TaskState::Exited);
         assert_eq!(final_state.exit_code, Some(0));
 
-        // Il log resta bufferizzato e riconsultabile dopo la fine del task.
         let log = registry.log(&info.id).expect("log presente");
         let buffered: Vec<&str> = log.iter().map(|l| l.line.as_str()).collect();
         assert_eq!(buffered, vec!["riga1", "riga2"]);
@@ -345,12 +319,9 @@ mod tests {
         let bus = EventBus::new();
         let registry = Arc::new(TaskRegistry::new(bus));
         let dir = tempfile::tempdir().unwrap();
-        // `&&` e la variabile richiedono una shell: se `spawn_shell` non la
-        // usasse, il comando fallirebbe.
         let info = registry
             .spawn_shell("compound", "echo uno && echo $((1+1))", dir.path().to_str().unwrap())
             .expect("spawn_shell");
-        // attende la fine
         for _ in 0..50 {
             if registry.list().iter().find(|t| t.id == info.id).unwrap().state
                 != TaskState::Running
@@ -378,6 +349,6 @@ mod tests {
         registry.stop(&info.id).expect("stop");
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         let state = registry.list().into_iter().find(|t| t.id == info.id).unwrap();
-        assert_eq!(state.state, TaskState::Failed); // terminato da segnale
+        assert_eq!(state.state, TaskState::Failed);
     }
 }

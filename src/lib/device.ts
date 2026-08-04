@@ -1,5 +1,3 @@
-// Identità del dispositivo per il file drop: id stabile + nome modificabile.
-
 const ID_KEY = "rdt-device-id";
 const NAME_KEY = "rdt-device-name";
 
@@ -22,7 +20,6 @@ export function setDeviceName(name: string) {
   localStorage.setItem(NAME_KEY, name.trim().slice(0, 40) || guessName());
 }
 
-/** Nome di default dedotto dallo user agent. */
 function guessName(): string {
   const ua = navigator.userAgent;
   if (/iPhone/.test(ua)) return "iPhone";

@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use super::procs::{classify_known_app, is_system_process};
 use crate::exec;
 
-/// Nomi che richiedono conferma rafforzata prima del kill.
 pub const PROTECTED_NAMES: &[&str] = &[
     "sshd",
     "dockerd",
@@ -25,7 +24,7 @@ pub const PROTECTED_NAMES: &[&str] = &[
 #[serde(rename_all = "camelCase")]
 pub struct PortEntry {
     pub port: u16,
-    pub protocol: &'static str, // solo "tcp" (LISTEN) in M2
+    pub protocol: &'static str,
     pub addresses: Vec<String>,
     pub processes: Vec<PortProcess>,
 }
@@ -40,7 +39,7 @@ pub struct PortProcess {
     pub started_at: Option<u64>,
     pub is_system: bool,
     pub known_app: Option<&'static str>,
-    pub kill_protection: &'static str, // "confirm" | "typed-confirm"
+    pub kill_protection: &'static str,
     pub zombie: bool,
 }
 
@@ -52,7 +51,6 @@ pub struct PortScan {
     pub sampled_at: u64,
 }
 
-/// (pid, indirizzo, porta) grezzi dal sistema, prima dell'arricchimento.
 #[derive(Debug, PartialEq)]
 pub struct RawListener {
     pub pid: u32,
@@ -68,12 +66,8 @@ pub fn kill_protection_for(name: &str) -> &'static str {
     }
 }
 
-/// App note: non sono porte zombie.
 const LEGIT_DAEMONS: &[&str] = &["postgres", "mysql", "redis", "docker", "nginx", "plex", "ssh", "samba"];
 
-/// Runtime/interpreti tipici dei dev server: sono i processi che restano
-/// "appesi" quando chiudi il terminale che li aveva avviati. Solo per questi ha
-/// senso l'euristica zombie (vedi `is_zombie_listener`).
 const DEV_SERVER_APPS: &[&str] = &["node", "python", "dotnet", "java"];
 const DEV_SERVER_NAMES: &[&str] = &[
     "node", "deno", "bun", "python", "python3", "ruby", "php", "dotnet",
@@ -81,7 +75,6 @@ const DEV_SERVER_NAMES: &[&str] = &[
     "uvicorn", "cargo", "esbuild", "http-server", "ng",
 ];
 
-/// Il processo somiglia a un dev server (runtime effimero avviato da terminale)?
 fn looks_like_dev_server(known_app: Option<&str>, name: &str) -> bool {
     if matches!(known_app, Some(app) if DEV_SERVER_APPS.contains(&app)) {
         return true;
@@ -91,15 +84,6 @@ fn looks_like_dev_server(known_app: Option<&str>, name: &str) -> bool {
     DEV_SERVER_NAMES.iter().any(|n| base == *n || base.starts_with(&format!("{n} ")))
 }
 
-/// "porta zombie": un dev server orfano, cioè un runtime effimero (node, vite,
-/// python…) il cui processo che l'ha avviato non è più vivo.
-///
-/// Perché limitarsi ai dev server: su macOS QUALSIASI app GUI e servizio lanciato
-/// da launchd ha `ppid == 1`, così come la stessa RickyDEVTool (porta 6969).
-/// Segnalarli tutti come zombie riempiva la lista di falsi positivi. L'orfano che
-/// interessa davvero è il dev server rimasto appeso: solo per quelli applichiamo
-/// il segnale di orfanità.
-/// - `ppid == 1`: reparentato a init/launchd → il padre originale è morto (mac/Linux).
 pub fn is_zombie_listener(
     is_system: bool,
     known_app: Option<&str>,
@@ -133,7 +117,6 @@ fn proc_table() -> &'static Mutex<System> {
 pub async fn scan_tcp_listen(include_system: bool) -> Result<PortScan, String> {
     let raw = list_listeners().await?;
 
-    // Tabella processi per arricchire i PID (nome, exe, utente, classificazione).
     let mut sys = proc_table().lock().await;
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
@@ -145,9 +128,7 @@ pub async fn scan_tcp_listen(include_system: bool) -> Result<PortScan, String> {
     let users = users();
 
     let mut hidden_system = 0usize;
-    // BTreeMap: porte già ordinate in output.
     let mut by_port: BTreeMap<u16, PortEntry> = BTreeMap::new();
-    // Evita duplicati (stesso pid su più bind della stessa porta).
     let mut seen: HashMap<(u16, u32), ()> = HashMap::new();
 
     for listener in raw {
@@ -211,8 +192,8 @@ fn users() -> &'static sysinfo::Users {
     USERS.get_or_init(sysinfo::Users::new_with_refreshed_list)
 }
 
-// ---------- macOS: lsof in formato macchina (-F) ----------
-
+// 20260704 RG lsof esce 1 anche solo perché non ha trovato nulla: è un errore solo se
+// stdout è vuoto E stderr parla.
 #[cfg(target_os = "macos")]
 async fn list_listeners() -> Result<Vec<RawListener>, String> {
     let output = exec::cmd("lsof")
@@ -220,7 +201,6 @@ async fn list_listeners() -> Result<Vec<RawListener>, String> {
         .output()
         .await
         .map_err(|e| format!("lsof non eseguibile: {e}"))?;
-    // lsof esce 1 anche quando semplicemente non trova nulla: errore solo se stdout è vuoto E stderr parla.
     if output.stdout.is_empty() && !output.status.success() {
         return Err(format!(
             "lsof fallito: {}",
@@ -230,8 +210,6 @@ async fn list_listeners() -> Result<Vec<RawListener>, String> {
     Ok(parse_lsof_f(&String::from_utf8_lossy(&output.stdout)))
 }
 
-/// Parser dell'output `lsof -FpnP`: righe prefissate da un carattere campo
-/// (p=pid, P=protocollo, n=indirizzo). Testato su fixture.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 pub fn parse_lsof_f(output: &str) -> Vec<RawListener> {
     let mut result = Vec::new();
@@ -260,8 +238,6 @@ pub fn parse_lsof_f(output: &str) -> Vec<RawListener> {
     result
 }
 
-// ---------- Windows: netstat -ano ----------
-
 #[cfg(target_os = "windows")]
 async fn list_listeners() -> Result<Vec<RawListener>, String> {
     let text = exec::text(exec::cmd("netstat").args(["-ano", "-p", "TCP"]))
@@ -270,13 +246,11 @@ async fn list_listeners() -> Result<Vec<RawListener>, String> {
     Ok(parse_netstat(&text))
 }
 
-/// Parser dell'output `netstat -ano -p TCP` (righe LISTENING). Testato su fixture.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn parse_netstat(output: &str) -> Vec<RawListener> {
     let mut result = Vec::new();
     for line in output.lines() {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        // TCP <local> <remote> LISTENING <pid>
         if cols.len() != 5 || cols[0] != "TCP" || !cols[3].eq_ignore_ascii_case("LISTENING") {
             continue;
         }
@@ -291,7 +265,6 @@ pub fn parse_netstat(output: &str) -> Vec<RawListener> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 async fn list_listeners() -> Result<Vec<RawListener>, String> {
-    // Linux best-effort: stesso formato -F di lsof.
     let output = exec::cmd("lsof")
         .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-FpnP"])
         .output()
@@ -303,7 +276,6 @@ async fn list_listeners() -> Result<Vec<RawListener>, String> {
     Ok(parse_lsof_f(&String::from_utf8_lossy(&output.stdout)))
 }
 
-/// "\*:3000" | "127.0.0.1:3000" | "[::1]:3000" → (indirizzo, porta)
 fn split_addr_port(value: &str) -> Option<(String, u16)> {
     let (addr, port) = value.rsplit_once(':')?;
     let port: u16 = port.parse().ok()?;
@@ -353,26 +325,16 @@ mod tests {
 
     #[test]
     fn zombie_listener_euristica() {
-        // Dev server reparentato a init/launchd (padre morto): zombie.
         assert!(is_zombie_listener(false, Some("node"), "node", Some(1), true));
-        // Padre ancora vivo: non zombie.
         assert!(!is_zombie_listener(false, Some("node"), "node", Some(4821), true));
-        // Padre assente dalla tabella (padre morto): zombie.
         assert!(is_zombie_listener(false, Some("node"), "node", Some(4821), false));
-        // Processo di sistema: mai zombie.
         assert!(!is_zombie_listener(true, None, "kernel_task", Some(1), false));
-        // Daemon noto avviato al login (orfano per costruzione): non zombie.
         assert!(!is_zombie_listener(false, Some("postgres"), "postgres", Some(1), false));
         assert!(!is_zombie_listener(false, Some("docker"), "docker", Some(1), false));
-        // ppid sconosciuto o kernel (0): non decidibile → non zombie.
         assert!(!is_zombie_listener(false, Some("node"), "node", None, false));
         assert!(!is_zombie_listener(false, Some("node"), "node", Some(0), false));
-        // Dev server riconosciuto solo dal nome (nessun known_app): zombie se orfano.
         assert!(is_zombie_listener(false, None, "vite", Some(1), false));
-        // App GUI generica orfana (NON un dev server): NON zombie. È il caso della
-        // stessa RickyDEVTool sulla 6969, reparentata a launchd (ppid=1).
         assert!(!is_zombie_listener(false, None, "RickyDEVTool", Some(1), false));
-        // App generica sconosciuta orfana: non zombie (troppi falsi positivi).
         assert!(!is_zombie_listener(false, None, "SomeGuiApp", Some(1), false));
     }
 

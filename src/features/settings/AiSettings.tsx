@@ -30,8 +30,6 @@ function draftOf(status: AiStatus): Draft {
   };
 }
 
-/** Una chiave provider: mai riletta dal server, quindi o si vede il pallino
- *  "impostata" o si incolla la nuova. */
 function KeyRow({
   label,
   env,
@@ -52,9 +50,6 @@ function KeyRow({
   const save = () => {
     if (!value.trim()) return;
     onSave(value.trim());
-    // Sparisce dal campo appena salvata: da qui in poi esiste solo nella
-    // config del tool, e riproporla a schermo sarebbe solo un modo di farla
-    // leggere a chi passa.
     setValue("");
   };
 
@@ -88,9 +83,6 @@ function KeyRow({
   );
 }
 
-/** Configurazione di RickyAI: dove gira of-free, con quali chiavi e come
- *  instradare. Solo dal desktop (la rotta è nel gruppo local-only), quindi dal
- *  telefono i salvataggi tornano indietro con il motivo. */
 export function AiSettings() {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -102,8 +94,6 @@ export function AiSettings() {
     const r = await api<AiStatus>("/api/ai/status");
     if (r.ok && typeof r.data.state === "string") {
       setStatus(r.data);
-      // Il draft si allinea solo al primo caricamento: un aggiornamento di
-      // stato non deve cancellare quello che l'utente sta scrivendo.
       setDraft((prev) => prev ?? draftOf(r.data));
     }
   };
@@ -178,8 +168,6 @@ export function AiSettings() {
                   title={m.hint}
                   disabled={busy}
                   onClick={() =>
-                    // Passare a "remote" senza indirizzo verrebbe rifiutato dal
-                    // server: si manda quello nel campo, se c'è.
                     save(
                       m.id === "remote"
                         ? { mode: m.id, remoteUrl: draft.remoteUrl }
@@ -203,11 +191,30 @@ export function AiSettings() {
                   onChange={(e) => setDraft({ ...draft, remoteUrl: e.target.value })}
                 />
               </label>
+              <div className="ai-keys">
+                <KeyRow
+                  label="Chiave API"
+                  env="Authorization: Bearer"
+                  isSet={status.remoteKeySet}
+                  busy={busy}
+                  onSave={(value) => save({ remoteKey: value })}
+                  onClear={() => save({ remoteKey: "" })}
+                />
+                <div className="hint">
+                  Serve solo se il servizio la richiede: of-free, Ollama e gli altri motori in LAN
+                  di solito no, OpenRouter e le API hosted sì. Come le altre chiavi, dopo il
+                  salvataggio non è più rileggibile da qui.
+                </div>
+              </div>
               <div className="hint">
-                Un <code>of-free serve</code> (anche in Docker) su un altro computer della rete.
-                Deve essere in ascolto su <code>0.0.0.0</code>, non solo su <code>127.0.0.1</code>,
-                altrimenti da qui non risponde. Le chiavi dei provider stanno su{" "}
-                <strong>quella</strong> macchina, non qui.
+                Va bene qualunque endpoint <strong>OpenAI-compatibile</strong>: un{" "}
+                <code>of-free serve</code> (anche in Docker) su un altro computer, un Ollama, LM
+                Studio, vLLM, o direttamente OpenRouter. Se è of-free trovi anche quote e routing
+                fra provider; altrove si sceglie il modello dalla lista del servizio.
+                <br />
+                Un servizio in LAN deve essere in ascolto su <code>0.0.0.0</code> e non solo su{" "}
+                <code>127.0.0.1</code>, altrimenti da qui non risponde — è il motivo per cui un
+                container “non si vede”.
               </div>
             </>
           ) : (

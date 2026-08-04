@@ -42,8 +42,8 @@ export function Dashboard() {
 
       {!latest && !error && <div className="empty">In attesa del primo campione…</div>}
 
-      {/* CPU, RAM e Storico sulla stessa riga (tre card su desktop; vanno a capo
-          da soli su schermi stretti via il grid auto-fit). */}
+      {
+}
       <div className="gauges">
         {latest && (
           <div className="gauge-card">

@@ -1,6 +1,5 @@
 use std::net::IpAddr;
 
-/// IPv4 locali candidati per l'accesso da LAN, primario per primo.
 pub fn lan_ips() -> Vec<String> {
     let primary = local_ip_address::local_ip().ok();
     let mut ips: Vec<IpAddr> = Vec::new();
@@ -15,7 +14,6 @@ pub fn lan_ips() -> Vec<String> {
             }
             match ip {
                 IpAddr::V4(v4) => {
-                    // Scarta link-local (169.254.x.x): non raggiungibili dal telefono.
                     if v4.is_link_local() {
                         continue;
                     }

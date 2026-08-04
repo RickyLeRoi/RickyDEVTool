@@ -4,13 +4,10 @@ import { useUpdateStore } from "../../stores/updateStore";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 
-// Info di contatto/owner. Punto unico da aggiornare se cambiano.
 const OWNER = "Riccardo Giordano";
 const GITHUB_USER = "RickyLeRoi";
 const REPO_URL = "https://github.com/RickyLeRoi/RickyDEVTool";
 
-// Apre un link esterno: nella webview Tauri `window.open`/gli anchor sono no-op,
-// quindi si passa dall'opener di sistema; da browser LAN si usa window.open.
 function openExternal(url: string) {
   if (isTauri) post("/api/system/open-url", { url });
   else window.open(url, "_blank");

@@ -1,13 +1,3 @@
-//! Runner generico per gli ecosistemi che non hanno (ancora) un pannello
-//! dedicato: Python, Rust, Tauri, Flutter. A differenza di node/dotnet, che
-//! hanno logiche ricche (package manager, launch profiles, solution), qui il
-//! contratto è semplice: dato `(kind, path)` si producono le azioni disponibili
-//! — ciascuna già risolta in `(program, args)` verificati lato server.
-//!
-//! Il client riceve solo `id`/`label`/`category` (più program+args a scopo di
-//! tooltip) e per eseguire manda indietro l'`id`: il server rigenera la lista e
-//! ritrova l'azione, così non si spawna mai un comando arbitrario del client.
-
 use std::path::Path;
 
 use serde::Serialize;
@@ -38,7 +28,6 @@ pub struct ActionSpec {
 pub struct RunnerInfo {
     pub kind: String,
     pub path: String,
-    /// Tool rilevato (poetry/uv/pip, cargo, flutter/dart, npm/pnpm/yarn…).
     pub tool: String,
     pub notes: Vec<String>,
     pub actions: Vec<ActionSpec>,
@@ -81,7 +70,6 @@ pub fn inspect(kind: &str, path: &str) -> Result<RunnerInfo, String> {
     })
 }
 
-/// Risolve `(program, args)` verificati per un'azione richiesta dal client.
 pub fn resolve(kind: &str, path: &str, action_id: &str) -> Result<ActionSpec, String> {
     let info = inspect(kind, path)?;
     info.actions
@@ -96,9 +84,6 @@ struct Built {
     actions: Vec<ActionSpec>,
 }
 
-// ---------------------------------------------------------------- Python
-
-/// Interprete di sistema: su Windows l'eseguibile è `python`, altrove `python3`.
 fn system_python() -> &'static str {
     if cfg!(windows) {
         "python"
@@ -107,10 +92,6 @@ fn system_python() -> &'static str {
     }
 }
 
-/// Python del venv locale se presente (`.venv/bin/python` su Unix,
-/// `.venv\Scripts\python.exe` su Windows): installare/eseguire tramite questo
-/// isola le dipendenze senza dover "attivare" il venv (impossibile per un
-/// processo spawnato senza shell).
 fn venv_python(dir: &Path) -> Option<String> {
     for rel in [".venv/bin/python", ".venv/Scripts/python.exe"] {
         let p = dir.join(rel);
@@ -149,7 +130,6 @@ fn python_actions(dir: &Path) -> Built {
 
     let mut actions = Vec::new();
 
-    // -- env
     match tool {
         "uv" => actions.push(act("create-env", "Crea venv (uv)", ActionCategory::Env, "uv", &["venv"])),
         _ => {
@@ -158,7 +138,6 @@ fn python_actions(dir: &Path) -> Built {
         }
     }
 
-    // -- install
     match tool {
         "uv" => actions.push(act("install", "Install (uv sync)", ActionCategory::Install, "uv", &["sync"])),
         "poetry" => actions.push(act("install", "Install (poetry)", ActionCategory::Install, "poetry", &["install"])),
@@ -173,7 +152,6 @@ fn python_actions(dir: &Path) -> Built {
         }
     }
 
-    // -- run: scelta dell'entrypoint, eventualmente sotto `<tool> run`.
     let entry: Option<Vec<&str>> = if has("manage.py") {
         Some(vec!["manage.py", "runserver"])
     } else if has("main.py") {
@@ -199,7 +177,6 @@ fn python_actions(dir: &Path) -> Built {
         actions.push(act("run", "Run", ActionCategory::Run, program, &arg_refs));
     }
 
-    // -- build (pacchetto distribuibile)
     match tool {
         "uv" => actions.push(act("build", "Build (uv)", ActionCategory::Build, "uv", &["build"])),
         "poetry" => actions.push(act("build", "Build (poetry)", ActionCategory::Build, "poetry", &["build"])),
@@ -213,8 +190,6 @@ fn python_actions(dir: &Path) -> Built {
 
     Built { tool: tool.to_string(), notes, actions }
 }
-
-// ---------------------------------------------------------------- Rust
 
 fn rust_actions(dir: &Path) -> Built {
     let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap_or_default();
@@ -245,10 +220,6 @@ fn rust_actions(dir: &Path) -> Built {
     Built { tool: "cargo".to_string(), notes, actions }
 }
 
-// ---------------------------------------------------------------- Tauri
-
-/// Package manager del frontend, dedotto dai lockfile (stessa logica di
-/// services::node ma senza package.json obbligatorio).
 fn frontend_pm(dir: &Path) -> &'static str {
     if dir.join("pnpm-lock.yaml").is_file() {
         "pnpm"
@@ -259,8 +230,6 @@ fn frontend_pm(dir: &Path) -> &'static str {
     }
 }
 
-/// Comando per invocare la CLI di Tauri via il package manager del frontend.
-/// Tutte queste forme funzionano se `@tauri-apps/cli` è tra le dipendenze.
 fn tauri_via_pm(pm: &str, sub: &str) -> (String, Vec<String>) {
     match pm {
         "pnpm" => ("pnpm".to_string(), vec!["tauri".to_string(), sub.to_string()]),
@@ -298,12 +267,8 @@ fn tauri_actions(dir: &Path) -> Built {
     Built { tool, notes, actions }
 }
 
-// ---------------------------------------------------------------- Flutter
-
 fn flutter_actions(dir: &Path) -> Built {
     let pubspec = std::fs::read_to_string(dir.join("pubspec.yaml")).unwrap_or_default();
-    // `sdk: flutter` (o la sezione `flutter:`) distingue un progetto Flutter da
-    // un pacchetto Dart puro.
     let is_flutter = pubspec.contains("flutter");
     let tool = if is_flutter { "flutter" } else { "dart" };
 
@@ -359,7 +324,6 @@ mod tests {
         assert!(ids(&info).contains(&"create-env"));
         let install = find(&info, "install");
         assert!(install.args.iter().any(|a| a == "requirements.txt"));
-        // run = manage.py runserver con l'interprete di sistema (nessun venv)
         let run = find(&info, "run");
         assert_eq!(run.args, vec!["manage.py", "runserver"]);
         assert_eq!(run.program, system_python());
@@ -373,7 +337,6 @@ mod tests {
         let info = inspect("python", dir.path().to_str().unwrap()).unwrap();
         assert_eq!(info.tool, "poetry");
         assert_eq!(find(&info, "install").program, "poetry");
-        // run entrypoint sotto `poetry run python main.py`
         let run = find(&info, "run");
         assert_eq!(run.program, "poetry");
         assert_eq!(run.args, vec!["run", "python", "main.py"]);
@@ -384,7 +347,6 @@ mod tests {
     fn python_usa_il_python_del_venv_se_presente() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("requirements.txt"), "").unwrap();
-        // simula un venv unix
         std::fs::create_dir_all(dir.path().join(".venv/bin")).unwrap();
         std::fs::write(dir.path().join(".venv/bin/python"), "").unwrap();
         std::fs::write(dir.path().join("app.py"), "").unwrap();

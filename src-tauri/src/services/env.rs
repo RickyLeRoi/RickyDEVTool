@@ -2,17 +2,12 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-/// Gestione dei file .env* di un progetto: lista, lettura parsata, attivazione
-/// (copia su .env con backup). I valori sono segreti: gli endpoint che usano
-/// questo modulo sono riservati a localhost o al controllo remoto attivo.
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvFile {
     pub name: String,
     pub size_bytes: u64,
     pub modified_at: Option<u64>,
-    /// true per ".env": è il file che i tool leggono davvero.
     pub is_active: bool,
 }
 
@@ -21,7 +16,6 @@ pub struct EnvFile {
 pub struct EnvEntry {
     pub key: String,
     pub value: String,
-    /// Riga di commento o non parsabile, mostrata com'è.
     pub raw: Option<String>,
 }
 
@@ -32,8 +26,6 @@ pub struct EnvContent {
     pub entries: Vec<EnvEntry>,
 }
 
-/// Un nome è accettato solo se è esattamente ".env" o ".env.qualcosa":
-/// niente path, niente traversal, niente altri dotfile.
 pub fn valid_env_name(name: &str) -> bool {
     if name == ".env" {
         return true;
@@ -75,7 +67,6 @@ pub fn list(path: &str) -> Result<Vec<EnvFile>, String> {
             name,
         });
     }
-    // .env per primo, poi alfabetico: l'ordine è stabile nella UI.
     files.sort_by(|a, b| b.is_active.cmp(&a.is_active).then(a.name.cmp(&b.name)));
     Ok(files)
 }
@@ -93,8 +84,6 @@ pub fn read(path: &str, file: &str) -> Result<EnvContent, String> {
     })
 }
 
-/// Attiva `file` copiandolo su `.env`. Il .env corrente, se diverso,
-/// viene salvato in `.env.bak` prima della sovrascrittura.
 pub fn activate(path: &str, file: &str) -> Result<(), String> {
     if !valid_env_name(file) || file == ".env" {
         return Err(format!("file non attivabile: {file}"));
@@ -117,8 +106,6 @@ pub fn activate(path: &str, file: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Parser minimale in stile dotenv: KEY=VALUE, commenti con #, quote esterne
-/// rimosse. Le righe non parsabili restano visibili come `raw`.
 fn parse_env(content: &str) -> Vec<EnvEntry> {
     let mut entries = Vec::new();
     for line in content.lines() {
@@ -188,7 +175,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.path().join(".env")).unwrap(), "A=nuovo");
         assert_eq!(std::fs::read_to_string(dir.path().join(".env.bak")).unwrap(), "A=vecchio");
 
-        // Attivare .env stesso o nomi strani è rifiutato.
         assert!(activate(&root, ".env").is_err());
         assert!(activate(&root, "../.env.staging").is_err());
     }

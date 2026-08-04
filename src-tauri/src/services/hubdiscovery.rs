@@ -1,28 +1,3 @@
-//! Discovery cross-host per Drop via UDP broadcast.
-//!
-//! Il modello di Drop originale prevede un solo "hub" (il server di questo
-//! desktop): telefono e altri browser fanno hello contro DI QUESTO server e si
-//! vedono tra loro. Ma se RickyDEVTool gira come app separata su due computer
-//! diversi (es. Mac + Windows), sono due hub indipendenti con registri peer
-//! isolati in memoria: nessuno dei due sa che l'altro esiste, anche stando
-//! sulla stessa rete. Non è un problema di permessi di rete: è che manca un
-//! meccanismo di scoperta tra hub.
-//!
-//! Questo modulo lo aggiunge: ogni istanza manda un beacon UDP broadcast ogni
-//! 5s con la propria identità (hub_id stabile, nome, porta HTTP) e ascolta i
-//! beacon altrui, popolando un registro di "hub remoti" con TTL. Il server
-//! espone questi hub remoti nella lista peer di Drop; l'invio di file/testo
-//! verso un hub remoto passa da un proxy HTTP verso il suo `/api/drop/send`
-//! o `/api/drop/text`, usando come target il suo stesso hub_id (che ogni
-//! DropService registra sempre come proprio peer "desktop" permanente).
-//!
-//! Nota Windows: la prima volta che il processo apre queste porte (TCP 6969 e
-//! UDP di questo modulo), il Firewall di Windows Defender può chiedere
-//! conferma; su reti "pubbliche" o senza permessi amministrativi il blocco può
-//! restare silenzioso (nessun errore visibile, semplicemente non arrivano
-//! beacon). È una restrizione del sistema operativo, non risolvibile lato
-//! applicazione senza privilegi elevati.
-
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -37,7 +12,6 @@ use crate::events::now_ms;
 
 pub const DISCOVERY_PORT: u16 = 51969;
 const BEACON_INTERVAL_SECS: u64 = 5;
-/// ~4 beacon mancati prima di considerare l'hub sparito.
 const HUB_TTL_MS: u64 = 22_000;
 const MAGIC: &str = "rickydevtool-hub";
 
@@ -64,12 +38,10 @@ pub struct HubRegistry {
 }
 
 impl HubRegistry {
-    /// Vuoto: usato da `start()` e nei test che non hanno bisogno di beacon reali.
     pub fn new() -> Self {
         Self { hubs: Mutex::new(HashMap::new()) }
     }
 
-    /// Hub visti di recente (TTL applicato qui, non nell'inserimento).
     pub fn list(&self) -> Vec<RemoteHub> {
         let now = now_ms();
         let mut hubs = self.hubs.lock().expect("hubs lock");
@@ -88,10 +60,6 @@ impl HubRegistry {
     }
 }
 
-/// Avvia beacon + listener in background e ritorna il registro condiviso.
-/// Non fallisce mai in modo visibile: se la UDP non si apre (firewall, rete
-/// che vieta il broadcast), semplicemente non si scoprirà nessun hub remoto —
-/// il resto dell'app (incluso Drop in-hub) continua a funzionare.
 pub fn start(config: &ConfigHandle, http_port: u16) -> Arc<HubRegistry> {
     let registry = Arc::new(HubRegistry::new());
     let hub_id = config.get().drop_hub_id.clone();
@@ -122,15 +90,13 @@ pub(crate) fn hub_name(config: &ConfigHandle) -> String {
     sysinfo::System::host_name().unwrap_or_else(|| "RickyDEVTool".to_string())
 }
 
-/// Socket UDP con SO_REUSEADDR/SO_REUSEPORT: permette a più processi sulla
-/// stessa macchina di condividere la porta di discovery (serve sia nei test
-/// con due istanze locali, sia quando l'utente tiene aperte più copie).
 fn reusable_udp_socket(port: u16) -> std::io::Result<UdpSocket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
     socket.set_reuse_port(true)?;
     socket.set_nonblocking(true)?;
+    // 20260704 RG alla prima bind il Firewall di Windows Defender chiede conferma all'utente.
     socket.bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port).into())?;
     UdpSocket::from_std(socket.into())
 }
@@ -160,7 +126,7 @@ async fn listen_loop(self_hub_id: String, registry: Arc<HubRegistry>) -> std::io
 fn handle_packet(data: &[u8], from: SocketAddr, self_hub_id: &str, registry: &HubRegistry) {
     let Ok(beacon) = serde_json::from_slice::<Beacon>(data) else { return };
     if beacon.app != MAGIC || beacon.hub_id == self_hub_id {
-        return; // pacchetto non nostro, o è il nostro stesso beacon rimbalzato
+        return;
     }
     registry.upsert(RemoteHub {
         hub_id: beacon.hub_id,
@@ -180,7 +146,6 @@ mod tests {
         let registry = HubRegistry::new();
         let from: SocketAddr = "10.0.0.5:1234".parse().unwrap();
 
-        // JSON valido ma app diversa: ignorato.
         let altro = serde_json::to_vec(&Beacon {
             app: "altra-app".into(),
             hub_id: "hub-x".into(),
@@ -191,7 +156,6 @@ mod tests {
         handle_packet(&altro, from, "hub-self", &registry);
         assert!(registry.list().is_empty());
 
-        // Il nostro stesso hub_id: ignorato (eco del proprio broadcast).
         let proprio = serde_json::to_vec(&Beacon {
             app: MAGIC.into(),
             hub_id: "hub-self".into(),
@@ -202,7 +166,6 @@ mod tests {
         handle_packet(&proprio, from, "hub-self", &registry);
         assert!(registry.list().is_empty());
 
-        // Beacon legittimo di un altro hub: registrato.
         let altrui = serde_json::to_vec(&Beacon {
             app: MAGIC.into(),
             hub_id: "hub-remoto".into(),

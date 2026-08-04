@@ -14,78 +14,42 @@ pub struct AppConfig {
     pub lan_enabled: bool,
     pub pair_token: String,
     pub stats_interval_ms: u64,
-    /// Override manuali dei path dei tool (id -> path eseguibile/bundle).
     pub tool_paths: std::collections::HashMap<String, String>,
-    /// Cartelle progetti pinnate nella sezione Progetti.
     pub pinned_folders: Vec<String>,
-    /// Override del package manager per progetto (path -> npm|yarn|pnpm).
     pub node_pm_overrides: std::collections::HashMap<String, String>,
-    /// Progetto di avvio .NET per cartella (path cartella -> path csproj).
     pub dotnet_startup: std::collections::HashMap<String, String>,
-    /// Profilo launchSettings selezionato per cartella.
     pub dotnet_profile: std::collections::HashMap<String, String>,
-    /// Servizi online monitorati (preset + personalizzati).
     pub services: Vec<crate::services::online::ServiceDef>,
-    /// Se true, i device LAN abbinati possono eseguire azioni (kill, run, git).
     pub remote_control_enabled: bool,
-    /// Se true, dopo 5 min di inattività muove il mouse ogni 3 min (anti-idle).
     pub anti_idle_enabled: bool,
-    /// Notifiche push degli alert via ntfy (app ntfy sul telefono, nessun HTTPS richiesto in LAN).
     pub push_enabled: bool,
-    /// Server ntfy (default pubblico; sostituibile con un'istanza self-hosted).
     pub push_server: String,
-    /// Topic ntfy: generato random al primo avvio, fa da segreto condiviso col telefono.
     pub push_topic: String,
-    /// Severità minima da notificare: info | warning | critical.
     pub push_min_severity: String,
-    /// Identità stabile di questo desktop per la discovery cross-host di Drop
-    /// (generato una volta, sopravvive ai riavvii): funge anche da deviceId
-    /// permanente quando altri hub ci inviano file/testo via proxy.
     pub drop_hub_id: String,
-    /// Nome mostrato agli altri hub; vuoto = usa l'hostname di sistema.
     pub drop_hub_name: String,
-    /// Profili di avvio composito (più task lanciati insieme).
     pub launch_bundles: Vec<crate::services::launch::LaunchBundle>,
-    /// Host Docker remoto (es. "ssh://user@host" o "tcp://ip:2375"); vuoto = daemon locale.
     #[serde(default)]
     pub docker_host: Option<String>,
-    /// Snippet / comandi salvati eseguibili al volo.
     #[serde(default)]
     pub snippets: Vec<crate::services::snippets::Snippet>,
-    /// Host SSH salvati per l'esecuzione rapida di comandi.
     #[serde(default)]
     pub ssh_hosts: Vec<crate::services::ssh::SshHost>,
-    /// Soglie configurabili degli alert (CPU/RAM/temperatura/batteria).
     #[serde(default)]
     pub alert_thresholds: AlertThresholds,
-    // I campi di RickyAI non portano un `#[serde(default)]` per campo, ed è
-    // voluto: quell'attributo scavalca il `default` della struct e ricade sul
-    // default del *tipo*. Su `ai_enabled` significherebbe `false` per chiunque
-    // abbia già un config.json — cioè RickyAI spenta su ogni installazione
-    // esistente, senza che nessuno l'abbia disattivata.
-    /// RickyAI accesa: `local` avvia `of-free`, `remote` usa quello di un altro
-    /// computer. Spenta, la sezione non compare nemmeno.
+    // 20260804 ++ RG #RickyAI niente `#[serde(default)]` su questi campi: scavalca il Default della
+    // struct e ricade su quello del tipo, cioè RickyAI spenta su ogni config già esistente.
     pub ai_enabled: bool,
-    /// `local` (of-free avviato dal tool) | `remote` (servizio già in rete).
     pub ai_mode: String,
-    /// Indirizzo del servizio in modalità `remote` (es. `http://192.168.1.50:4141`).
     pub ai_remote_url: Option<String>,
-    /// Porta di `of-free` locale (con fallback sulle successive se occupata).
+    pub ai_remote_key: Option<String>,
     pub ai_port: u16,
-    /// Override del percorso del binario `of-free`; vuoto = risolto nel PATH.
     pub ai_command: Option<String>,
-    /// Chiavi dei provider (nome della variabile d'ambiente -> valore), passate
-    /// a `of-free` locale nel suo environment. Non escono mai da qui: la REST
-    /// espone quali sono impostate, mai il valore.
     pub ai_keys: std::collections::BTreeMap<String, String>,
-    /// Strategia di routing: balanced | fast | local.
     pub ai_strategy: String,
-    /// Prompt di sistema anteposto alle conversazioni di RickyAI.
     pub ai_system_prompt: String,
 }
 
-/// Soglie oltre le quali scattano gli alert. Modificabili dall'utente; i default
-/// riproducono i valori storici (CPU 90%, RAM 92%) più temperatura e batteria.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AlertThresholds {
@@ -139,6 +103,7 @@ impl Default for AppConfig {
             ai_enabled: false,
             ai_mode: "local".to_string(),
             ai_remote_url: None,
+            ai_remote_key: None,
             ai_port: crate::services::rickyai::DEFAULT_PORT,
             ai_command: None,
             ai_keys: std::collections::BTreeMap::new(),
@@ -171,14 +136,11 @@ impl ConfigHandle {
             cfg.pair_token = generate_token();
         }
         if cfg.push_topic.is_empty() {
-            // Il topic è l'unico segreto di ntfy: random e impronunciabile.
             cfg.push_topic = format!("rickydev-{}", generate_token());
         }
         if cfg.drop_hub_id.is_empty() {
             cfg.drop_hub_id = format!("hub-{}", generate_token());
         }
-        // Integra i preset mancanti (nuovi preset in versioni future compaiono da soli;
-        // le personalizzazioni enabled/disabled dell'utente restano).
         for preset in crate::services::online::builtin_presets() {
             if !cfg.services.iter().any(|s| s.id == preset.id) {
                 cfg.services.push(preset);
@@ -192,7 +154,6 @@ impl ConfigHandle {
         handle
     }
 
-    /// Config isolata per i test: default in memoria, salvataggi su file temporaneo.
     #[cfg(test)]
     pub fn in_memory() -> Self {
         let mut token = [0u8; 8];
@@ -216,7 +177,6 @@ impl ConfigHandle {
         self.save();
     }
 
-    /// Scrittura atomica: file temporaneo + rename.
     fn save(&self) {
         let cfg = self.get();
         let tmp = self.path.with_extension("json.tmp");
@@ -230,11 +190,8 @@ impl ConfigHandle {
     }
 }
 
-/// Solo il proprietario può leggere il file: dentro ci sono il token di
-/// pairing e le chiavi API dei provider LLM, e il default di `fs::write`
-/// (0644) le rende leggibili da qualunque altro utente della macchina.
-/// I permessi si mettono sul temporaneo *prima* del rename, così il file
-/// definitivo non esiste mai con i permessi larghi.
+// 20260704 RG la config contiene token di pairing e chiavi API: i permessi vanno messi
+// sul file temporaneo prima del rename, o il definitivo esiste un istante a 0644.
 fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -242,7 +199,7 @@ fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     #[cfg(not(unix))]
-    let _ = path; // su Windows valgono le ACL ereditate dalla cartella utente.
+    let _ = path;
     Ok(())
 }
 
@@ -256,12 +213,6 @@ fn generate_token() -> String {
 mod tests {
     use super::*;
 
-    /// Un config.json scritto da una versione precedente non conosce i campi
-    /// nuovi: devono arrivare dal `Default` della struct, non da quello del
-    /// tipo. Sembra la stessa cosa e non lo è — un `#[serde(default)]` per
-    /// campo scavalca il primo e ricade sul secondo, e i default del tipo sono
-    /// tutti valori plausibili (porta 0, strategia ""), quindi la differenza
-    /// non si vede finché qualcosa non parte male senza spiegazioni.
     #[test]
     fn i_campi_nuovi_prendono_il_default_della_struct_non_del_tipo() {
         let vecchio = r#"{ "port": 6969, "lanEnabled": true, "statsIntervalMs": 5000 }"#;
@@ -270,7 +221,6 @@ mod tests {
         assert_eq!(cfg.ai_port, crate::services::rickyai::DEFAULT_PORT);
         assert_eq!(cfg.ai_strategy, "balanced");
         assert!(!cfg.ai_enabled);
-        // I campi già presenti nel file restano quelli del file.
         assert_eq!(cfg.port, 6969);
         assert_eq!(cfg.stats_interval_ms, 5000);
     }
@@ -283,9 +233,6 @@ mod tests {
         assert_eq!(cfg.ai_port, 4200);
     }
 
-    /// Ogni campo della struct sopravvive a un giro di serializzazione: è il
-    /// modo generico di accorgersi che un `#[serde(default)]` di troppo sta
-    /// riscrivendo un valore invece di conservarlo.
     #[test]
     fn un_config_completo_sopravvive_al_salvataggio() {
         let mut cfg = AppConfig::default();
@@ -309,9 +256,6 @@ mod tests {
         assert_eq!(riletto.ai_keys.get("GROQ_API_KEY").map(String::as_str), Some("gsk_test"));
     }
 
-    /// Le chiavi API stanno in questo file: non deve essere leggibile dagli
-    /// altri utenti della macchina, che è ciò che il default di `fs::write`
-    /// (0644) invece consente.
     #[test]
     #[cfg(unix)]
     fn il_file_di_config_e_leggibile_solo_dal_proprietario() {

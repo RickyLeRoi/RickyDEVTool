@@ -49,7 +49,6 @@ pub fn run() {
             tracing::info!(port = info.port, "RickyDEVTool avviato");
 
             let window_url = if cfg!(debug_assertions) {
-                // Dev: Vite con HMR; la SPA parla comunque col server su info.port.
                 "http://localhost:1420".to_string()
             } else {
                 format!("http://127.0.0.1:{}", info.port)
@@ -61,9 +60,6 @@ pub fn run() {
                     .min_inner_size(900.0, 600.0)
                     .build()?;
 
-            // Dopo un riavvio automatico (es. al termine di un aggiornamento) su
-            // macOS la finestra può restare in secondo piano o minimizzata: la
-            // portiamo esplicitamente in primo piano.
             let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
@@ -72,7 +68,6 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Chiudere la finestra non termina l'app: il server resta su per la LAN.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
                 api.prevent_close();
@@ -82,9 +77,6 @@ pub fn run() {
         .expect("errore in avvio dell'applicazione tauri");
 
     app.run(|_handle, event| {
-        // `of-free` gira in un process group suo (serve a poterlo terminare
-        // tutto insieme), quindi non muore quando muore il tool: senza questo
-        // resterebbe un processo in ascolto sulla 4141 dopo la chiusura.
         if let tauri::RunEvent::Exit = event {
             services::rickyai::shutdown_all();
         }
@@ -115,8 +107,6 @@ fn init_logging() {
         .init();
 }
 
-/// Le app GUI su macOS non ereditano il PATH della shell di login:
-/// senza questo fix git/node/dotnet non si troverebbero quando serviranno.
 #[cfg(target_os = "macos")]
 fn fix_gui_path() {
     let output = crate::exec::sync_cmd("/bin/zsh")

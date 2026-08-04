@@ -3,11 +3,6 @@ import type { WsEvent } from "./types";
 
 type Handler = (event: WsEvent) => void;
 
-/**
- * Client WS unico per tutta la SPA, con multiplexing per topic.
- * subscribe() comunica al backend di accendere il poller del topic;
- * alla disconnessione il backend spegne i poller senza subscriber.
- */
 class WsClient {
   private socket: WebSocket | null = null;
   private handlers = new Map<string, Set<Handler>>();
@@ -21,7 +16,6 @@ class WsClient {
 
     socket.onopen = () => {
       this.backoffMs = 500;
-      // Ripristina le sottoscrizioni dopo una riconnessione.
       for (const topic of this.handlers.keys()) {
         socket.send(JSON.stringify({ type: "subscribe", topic }));
       }

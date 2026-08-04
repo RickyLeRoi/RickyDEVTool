@@ -1,14 +1,5 @@
 #!/usr/bin/env node
 
-//   - package.json                 (npm)
-//   - src-tauri/Cargo.toml         (crate + env!("CARGO_PKG_VERSION") in /api/health)
-//   - src-tauri/tauri.conf.json    (bundle + updater/latest.json)
-//   - src-tauri/Cargo.lock         (voce del crate, per non lasciare il lock sporco)
-
-//   node scripts/set-version.mjs           # legge VERSION e sincronizza i file
-//   node scripts/set-version.mjs 1.2.3     # scrive 1.2.3 in VERSION, poi sincronizza
-//   node scripts/set-version.mjs --check   # non scrive: esce !=0 se qualcosa è disallineato
-
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -26,7 +17,6 @@ if (!SEMVER.test(version)) {
   fail(`Versione non valida: "${version}". Attesa x.y.z (semver, con eventuale -suffix).`);
 }
 
-// Ogni target sa leggere la propria versione attuale e riscriversi col nuovo valore.
 const targets = [
   {
     file: "VERSION",
@@ -50,7 +40,7 @@ const targets = [
   },
   {
     file: "src-tauri/Cargo.lock",
-    optional: true, // rigenerato comunque al prossimo build, ma lo teniamo pulito
+    optional: true,
     read: (s) => (s.match(/name = "rickydevtool"\r?\nversion = "([^"]*)"/) ?? [])[1],
     write: (s) => s.replace(/(name = "rickydevtool"\r?\nversion = ")[^"]*(")/, `$1${version}$2`),
   },

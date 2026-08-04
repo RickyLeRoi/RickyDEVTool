@@ -8,7 +8,6 @@ interface TaskLogProps {
   onDone?: (ok: boolean) => void;
 }
 
-/** Pannello log di un task: stream stdout/stderr via WS + bottone Stop. */
 export function TaskLog({ task, onDone }: TaskLogProps) {
   const [lines, setLines] = useState<{ stream: string; line: string }[]>([]);
   const [running, setRunning] = useState(task.state === "running");
@@ -17,10 +16,6 @@ export function TaskLog({ task, onDone }: TaskLogProps) {
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
 
-  // Backfill dello storico bufferizzato lato server: riaprendo un task (anche
-  // già terminato) si rivede tutto l'output, non solo ciò che è arrivato via
-  // WS dal momento dell'apertura. Si usa solo se non è ancora arrivato nulla
-  // in streaming, per non duplicare le righe di un task appena avviato.
   useEffect(() => {
     let active = true;
     api<{ lines: { stream: "out" | "err"; line: string }[] }>(`/api/tasks/${task.id}/log`).then(

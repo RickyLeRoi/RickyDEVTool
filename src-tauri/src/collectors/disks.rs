@@ -12,7 +12,6 @@ pub fn register(registry: &Arc<PollerRegistry>) {
         DEFAULT_INTERVAL_MS,
         Arc::new(|| {
             Box::pin(async {
-                // La lista è veloce ma tocca il filesystem: fuori dal runtime async.
                 let disks = tokio::task::spawn_blocking(disks::list)
                     .await
                     .map_err(|e| e.to_string())?;

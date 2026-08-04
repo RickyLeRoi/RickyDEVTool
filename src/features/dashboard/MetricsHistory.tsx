@@ -16,7 +16,6 @@ const SERIES = [
 
 type SeriesKey = (typeof SERIES)[number]["key"];
 
-// Serie nascoste dalla legenda: scelta dell'utente, ricordata tra le sessioni.
 const HIDDEN_KEY = "rdt-metrics-hidden";
 
 function loadHidden(): SeriesKey[] {
@@ -34,8 +33,6 @@ const H = 160;
 const PAD_L = 6;
 const PAD_R = 10;
 const PAD_T = 8;
-// Le etichette dell'asse X stanno fuori dall'SVG (vedi sotto): qui serve solo
-// un filo di respiro sotto l'ultima griglia.
 const PAD_B = 6;
 
 function yFor(pct: number) {
@@ -45,12 +42,8 @@ function topPct(pct: number) {
   return (yFor(pct) / H) * 100;
 }
 const MAX_POINTS = 400;
-// Il campionamento è ogni 30s: oltre questo scarto tra due punti c'è un buco
-// (app spenta). Non va disegnata una diagonale che lo attraversa.
 const GAP_MS = 5 * 60_000;
 
-// Media a bucket per non generare polyline con migliaia di punti (24h @ 30s
-// = 2880 campioni): l'occhio non distingue oltre qualche centinaio.
 function downsample(samples: MetricSample[]): MetricSample[] {
   if (samples.length <= MAX_POINTS) return samples;
   const bucketSize = Math.ceil(samples.length / MAX_POINTS);
@@ -133,7 +126,7 @@ export function MetricsHistory() {
         </div>
       </div>
 
-      {/* Legenda cliccabile: ogni voce accende/spegne la sua serie nel grafico. */}
+      {}
       <div className="metrics-legend">
         {SERIES.map((s) => {
           const v = last ? (last[s.key] as number | null) : null;
@@ -189,8 +182,6 @@ export function MetricsHistory() {
                 />
               ))}
               {visible.map((s) => {
-                // Segmenti spezzati sui buchi temporali e sui valori mancanti:
-                // ogni tratto continuo è una polyline separata.
                 const segments: string[][] = [];
                 let current: string[] = [];
                 let prevTs: number | null = null;
@@ -223,9 +214,8 @@ export function MetricsHistory() {
               })}
             </svg>
           </div>
-          {/* Etichette dell'ora in HTML e non dentro l'SVG: nel viewBox il testo
-              veniva rimpicciolito insieme al grafico e finiva a metà della
-              dimensione dell'asse Y. Qui i due assi hanno lo stesso font. */}
+          {
+}
           <div className="metrics-xaxis" aria-hidden>
             <span>{fmtTime(geometry.t0)}</span>
             <span>{fmtTime((geometry.t0 + geometry.t1) / 2)}</span>

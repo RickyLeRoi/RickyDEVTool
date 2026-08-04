@@ -18,19 +18,15 @@ interface HSVA {
   a: number;
 }
 
-// L'API EyeDropper esiste solo su webview Chromium (Windows WebView2), non su
-// WKWebView (macOS). Feature-detection: il bottone appare solo se usabile.
 const HAS_EYEDROPPER = typeof window !== "undefined" && "EyeDropper" in window;
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const IS_MAC = typeof navigator !== "undefined" && /Macintosh/.test(navigator.userAgent);
-// Su macOS senza EyeDropper si ripiega sul Colorimetro digitale di sistema.
 const USE_COLOR_METER = !HAS_EYEDROPPER && IS_TAURI && IS_MAC;
 
 function hsvaToRgba({ h, s, v, a }: HSVA): RGBA {
   return { ...hsvToRgb(h, s, v), a };
 }
 
-/** Handler di trascinamento su un elemento: riporta x,y normalizzati 0..1. */
 function useDrag(onMove: (x: number, y: number) => void) {
   const ref = useRef<HTMLDivElement>(null);
   const move = (e: PointerEvent | React.PointerEvent) => {
@@ -91,8 +87,6 @@ export function Color() {
     }
   };
 
-  // Parsing tollerante per il Colorimetro digitale, che copia spesso "R, G, B"
-  // (interi 0..255) invece di un formato CSS.
   const applyLoose = (text: string): boolean => {
     const t = text.trim();
     const parsed = parseColor(t);
@@ -139,7 +133,6 @@ export function Color() {
       setCopied(value);
       setTimeout(() => setCopied(null), 1200);
     } catch {
-      /* clipboard negata: ignora */
     }
   };
 
@@ -149,7 +142,6 @@ export function Color() {
       const result = await new window.EyeDropper().open();
       applyInput(result.sRGBHex);
     } catch {
-      /* annullato dall'utente */
     }
   };
 

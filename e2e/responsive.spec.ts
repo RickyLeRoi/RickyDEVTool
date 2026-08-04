@@ -1,8 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Stessa tecnica dello smoke: WS mockato in-browser. Serve perché la SPA
-// sottoscrive "stats" all'avvio; gli altri topic senza dati canned non spingono
-// nulla (sensors/docker:stats restano vuoti, ok per il test di layout).
 const stats = {
   ts: Date.now(),
   cpuTotalPct: 42,
@@ -38,13 +35,10 @@ const VIEWPORTS = [
   { name: "desktop", width: 1440, height: 900 },
 ];
 
-// Pagine da verificare via deep-link (hash) e heading atteso (null = niente h2
-// di pagina, es. Tool che ha solo la barra dei tab).
 const PAGES: { hash: string; heading: string | null }[] = [
   { hash: "#/dashboard", heading: "Dashboard" },
   { hash: "#/rickyai", heading: "RickyAI" },
   { hash: "#/net", heading: "Rete" },
-  // Docker è un tab di Rete: il deep-link storico resta valido e apre lì.
   { hash: "#/docker", heading: "Rete" },
   { hash: "#/tool", heading: null },
   { hash: "#/compare", heading: null },
@@ -64,11 +58,11 @@ for (const vp of VIEWPORTS) {
       } else {
         await expect(page.locator(".tool-tabbar")).toBeVisible();
       }
-      // Il body non deve MAI scrollare orizzontalmente (regola d'oro responsive).
       const m = await page.evaluate(() => ({
         scrollW: document.documentElement.scrollWidth,
         clientW: document.documentElement.clientWidth,
       }));
+      // 20260704 RG il body non deve MAI scrollare in orizzontale.
       expect(m.scrollW, `overflow su ${p.hash} @ ${vp.name}`).toBeLessThanOrEqual(m.clientW + 1);
     }
   });
@@ -120,7 +114,6 @@ test("storico metriche: la legenda spegne e riaccende una serie", async ({ page 
   await page.goto("/#/dashboard");
   const chart = page.locator(".metrics-chart");
   await expect(chart).toBeVisible();
-  // Una polyline per serie (i campioni mockati sono contigui: nessun buco).
   await expect(chart.locator("polyline")).toHaveCount(3);
   const cpu = page.locator(".metrics-legend-item", { hasText: "CPU" });
   await cpu.click();
@@ -140,14 +133,11 @@ test("confronto cartelle: differenze, apertura di una cartella e azioni", async 
 
   await expect(page.getByText("diverso.txt")).toBeVisible();
   await expect(page.locator(".compare-rel", { hasText: "solo-sx" })).toBeVisible();
-  // Le quattro azioni su ogni riga.
   await expect(page.locator(".compare-table tbody tr").first().locator(".compare-btn")).toHaveCount(4);
 
-  // La cartella si apre e i suoi file ricevono le stesse azioni.
   await page.locator("button.compare-expand").first().click();
   await expect(page.getByText("uno.txt")).toBeVisible();
 
-  // "Ignora" toglie la riga dall'elenco.
   await page.locator(".compare-table tbody tr").first().getByLabel("Ignora").click();
   await expect(page.getByText("diverso.txt")).toHaveCount(0);
   await expect(page.locator(".compare-ignored")).toBeVisible();
@@ -156,7 +146,6 @@ test("confronto cartelle: differenze, apertura di una cartella e azioni", async 
 test("persistenza: l'ultima pagina è ricordata dopo un reload", async ({ page }) => {
   await page.goto("/#/ssh");
   await expect(page.getByRole("heading", { name: "SSH", exact: true })).toBeVisible();
-  // Torna sulla root senza hash: deve ripristinare l'ultima pagina da localStorage.
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "SSH", exact: true })).toBeVisible();
 });

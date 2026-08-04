@@ -1,4 +1,3 @@
-// Servizi applicativi OS-agnostici (parlano solo con CLI cross-platform o std).
 pub mod clipboard;
 pub mod clipboard_cache;
 pub mod dotnet;

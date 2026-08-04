@@ -13,8 +13,6 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
 
-  // "Invia testo..." scelto dal menu del tray per QUESTO dispositivo
-  // (focusSeq cambia a ogni click, anche ripetuto sulla stessa voce).
   useEffect(() => {
     if (focusSeq === 0) return;
     setShowText(true);
@@ -121,7 +119,6 @@ function ReceivedPanel() {
     load();
   }, []);
 
-  // Da telefono la cartella dei ricevuti vive sul desktop: non mostrarla.
   if (remote) return null;
 
   return (

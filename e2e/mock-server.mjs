@@ -1,10 +1,3 @@
-// Backend fake per gli smoke test Playwright: serve la SPA buildata (dist/) e
-// risponde alle REST minime che servono al primo render (health, alerts,
-// metriche, drop). Il WebSocket NON è gestito qui: lo intercetta e lo mocka
-// Playwright con page.routeWebSocket (vedi e2e/smoke.spec.ts), così i dati di
-// dashboard/porte arrivano dal test senza un vero canale WS.
-//
-// Nessuna dipendenza esterna: solo i moduli built-in di Node.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
@@ -25,8 +18,6 @@ const MIME = {
   ".woff2": "font/woff2",
 };
 
-// Storico metriche: qualche campione contiguo (30s l'uno dall'altro) così il
-// grafico ha una geometria vera e la legenda può accendere/spegnere le serie.
 function metricSamples() {
   const now = Date.now();
   return Array.from({ length: 20 }, (_, i) => ({
@@ -37,7 +28,6 @@ function metricSamples() {
   }));
 }
 
-// RickyAI: stato "pronto" plausibile, con due provider e le quote residue.
 function aiStatus() {
   return {
     state: "ready",
@@ -50,8 +40,10 @@ function aiStatus() {
     restarts: 0,
     log: [],
     enabled: true,
+    ofFree: true,
     mode: "local",
     remoteUrl: null,
+    remoteKeySet: false,
     configuredPort: 4141,
     strategy: "balanced",
     systemPrompt: "",
@@ -100,9 +92,6 @@ function readBody(req) {
   });
 }
 
-// La risposta fa da eco all'ultimo messaggio utente: così il test verifica che
-// la conversazione sia davvero arrivata al backend, non solo che compaia una
-// bolla qualsiasi.
 async function aiChat(req, res) {
   const body = await readBody(req);
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -128,8 +117,6 @@ function sendJson(res, obj, status = 200) {
   res.end(body);
 }
 
-// Risposte REST canned. Le poche che ritornano array mappati dalla UI vanno
-// esplicitate, altrimenti un `data` vuoto farebbe crashare il render.
 function handleApi(req, res, url) {
   switch (url.pathname) {
     case "/api/health":
@@ -150,8 +137,6 @@ function handleApi(req, res, url) {
         ok: true,
         data: { samples: metricSamples(), hours: Number(url.searchParams.get("hours") ?? 24) },
       });
-    // Confronto di due alberature: due differenze di primo livello (una delle
-    // quali è una cartella, apribile sui singoli file).
     case "/api/fs/compare":
       return sendJson(res, {
         ok: true,
@@ -180,9 +165,6 @@ function handleApi(req, res, url) {
       return sendJson(res, { ok: true, data: { hubId: "mock-hub" } });
     case "/api/drop/hello":
       return sendJson(res, { ok: true, data: { peers: [] } });
-    // Endpoint delle nuove sezioni/tab: shape reali (array/oggetti attesi dai
-    // componenti). Il default permissivo {} farebbe crashare i render che
-    // iterano su liste (es. Appunti, Log, Snippet, SSH).
     case "/api/clipboard/history":
       return sendJson(res, { ok: true, data: { entries: [], enabled: true, supported: true } });
     case "/api/snippets":
@@ -214,14 +196,11 @@ function handleApi(req, res, url) {
     case "/api/ai/config":
       return sendJson(res, { ok: true, data: aiStatus() });
     default:
-      // Default permissivo: ok con data vuoto. Copre i POST idempotenti (ack,
-      // interval…) toccati dagli smoke test senza bisogno di logica dedicata.
       return sendJson(res, { ok: true, data: {} });
   }
 }
 
 async function serveStatic(req, res, url) {
-  // Path traversal guard: risolvi dentro DIST, fallback su index.html (SPA).
   const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
   let filePath = join(DIST, rel);
   if (!filePath.startsWith(DIST)) filePath = join(DIST, "index.html");
@@ -230,7 +209,6 @@ async function serveStatic(req, res, url) {
     res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "application/octet-stream" });
     res.end(data);
   } catch {
-    // File non trovato → è una route SPA: servi index.html.
     try {
       const html = await readFile(join(DIST, "index.html"));
       res.writeHead(200, { "Content-Type": MIME[".html"] });

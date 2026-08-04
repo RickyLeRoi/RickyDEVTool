@@ -1,14 +1,6 @@
 import { create } from "zustand";
 import type { Update, DownloadEvent } from "@tauri-apps/plugin-updater";
 
-// Stato dell'auto-updater condiviso tra il banner (auto-check all'avvio) e il
-// pulsante "Verifica aggiornamenti" della sezione About.
-//   idle      → non ancora controllato
-//   checking  → controllo in corso
-//   available → aggiornamento trovato (mostra il banner)
-//   downloading
-//   uptodate  → controllato, già all'ultima versione
-//   error
 export type UpdatePhase =
   | "idle"
   | "checking"
@@ -25,7 +17,6 @@ interface UpdateState {
   progress: number;
   error: string | null;
   dismissed: boolean;
-  /** Controlla se c'è un aggiornamento. `manual` distingue il click utente dall'auto-check. */
   check: (manual?: boolean) => Promise<void>;
   install: () => Promise<void>;
   dismiss: () => void;
@@ -39,12 +30,10 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   dismissed: false,
 
   check: async (manual = false) => {
-    // L'updater esiste solo nella finestra desktop; da browser LAN non si applica.
     if (!isTauri) {
       if (manual) set({ phase: "uptodate", update: null });
       return;
     }
-    // Evita check concorrenti (es. auto-check + click ravvicinati).
     if (get().phase === "checking" || get().phase === "downloading") return;
     set({ phase: "checking", error: null, dismissed: false });
     try {
@@ -78,7 +67,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
             break;
         }
       });
-      // Riavvia sulla nuova versione.
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (e) {

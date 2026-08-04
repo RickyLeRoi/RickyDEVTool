@@ -1,8 +1,3 @@
-//! Snippet / comandi salvati: piccole righe di comando ad-hoc che l'utente
-//! tiene a portata di mano ed esegue con un click, ciascuna come task del
-//! [`crate::tasks::TaskRegistry`] (output in streaming, come i profili di avvio).
-//! Persistiti in config. Il fratello ad-hoc degli "avvii compositi".
-
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +7,6 @@ pub struct Snippet {
     pub id: String,
     pub name: String,
     pub command: String,
-    /// Cartella di lavoro; vuota = home dell'utente (risolta all'esecuzione).
     #[serde(default)]
     pub cwd: String,
 }

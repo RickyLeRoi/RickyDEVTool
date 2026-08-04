@@ -1,12 +1,5 @@
 use crate::config::ConfigHandle;
 
-/// Push degli alert sul telefono via ntfy (https://ntfy.sh o self-hosted).
-/// Scelto al posto delle Web Push API perché la UI in LAN gira su http://
-/// (niente secure context, niente service worker): con ntfy basta l'app
-/// sottoscritta al topic, che è random e fa da segreto condiviso.
-///
-/// Pubblicazione in formato JSON (POST alla root del server) così titoli e
-/// messaggi con accenti non passano dagli header HTTP (solo latin-1).
 pub fn severity_rank(severity: &str) -> u8 {
     match severity {
         "critical" => 2,
@@ -17,14 +10,12 @@ pub fn severity_rank(severity: &str) -> u8 {
 
 fn ntfy_priority(severity: &str) -> u8 {
     match severity {
-        "critical" => 4, // high
-        "warning" => 3,  // default
-        _ => 2,          // low
+        "critical" => 4,
+        "warning" => 3,
+        _ => 2,
     }
 }
 
-/// Invia l'alert se il push è attivo e la severità supera la soglia.
-/// Fire-and-forget: un errore di rete non deve toccare il flusso degli alert.
 pub fn push_alert(config: &ConfigHandle, severity: &'static str, title: &str, detail: &str) {
     let cfg = config.get();
     if !cfg.push_enabled

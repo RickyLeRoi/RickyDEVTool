@@ -4,8 +4,6 @@ import { fmtBytes } from "../../lib/format";
 import type { CompareResult, DiffEntry, DiffStatus, DirListing } from "../../lib/types";
 
 const STORE_KEY = "rdt-compare-paths";
-// Cartelle che in un confronto tra progetti sono solo rumore (e migliaia di
-// voci): pre-compilate ma modificabili/svuotabili dall'utente.
 const DEFAULT_EXCLUDES = ".git, node_modules";
 
 interface StoredPaths {
@@ -25,7 +23,6 @@ function loadPaths(): StoredPaths {
       };
     }
   } catch {
-    /* preferenza illeggibile: si riparte dai default */
   }
   return { left: "", right: "", excludes: DEFAULT_EXCLUDES };
 }
@@ -43,7 +40,6 @@ const FILTERS: { id: "all" | DiffStatus; label: string }[] = [
   { id: "different", label: "≠ Diverse" },
 ];
 
-/** Campo percorso con sfoglia-cartelle inline (stesso browser dei Progetti). */
 function PathField({
   label,
   value,
@@ -130,27 +126,17 @@ function sizeCell(entry: DiffEntry, size: number | null) {
   return <>{fmtBytes(size)}</>;
 }
 
-/**
- * Confronto di due alberature: cosa ha in più il ramo sinistro, cosa il destro
- * e — a parità di percorso — i file con dimensioni diverse. Su ogni riga
- * l'utente sceglie con quattro tasti: porta a destra, porta a sinistra, ignora
- * (sparisce dall'elenco) o elimina.
- */
 export function Compare() {
   const [paths, setPaths] = useState<StoredPaths>(loadPaths);
   const [result, setResult] = useState<CompareResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | DiffStatus>("all");
-  // Righe risolte in questa sessione: ignorate (scelta dell'utente) o già
-  // sistemate da una copia/eliminazione andata a buon fine.
   const [ignored, setIgnored] = useState<string[]>([]);
   const [done, setDone] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<string | null>(null);
   const [askDelete, setAskDelete] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ rel: string; message: string } | null>(null);
-  // Cartelle aperte e loro contenuto: una cartella che sta da un lato solo è una
-  // riga sola, ma va poterci entrare per agire sui singoli file.
   const [expanded, setExpanded] = useState<string[]>([]);
   const [children, setChildren] = useState<Record<string, DiffEntry[]>>({});
   const [loadingKids, setLoadingKids] = useState<string | null>(null);
@@ -185,8 +171,6 @@ export function Compare() {
       setDone({});
       setExpanded([]);
       setChildren({});
-      // Il backend risolve i percorsi (link, "..", maiuscole): riallinea i
-      // campi a quelli davvero confrontati.
       update({ left: r.data.left, right: r.data.right });
     } else {
       setResult(null);
@@ -201,7 +185,7 @@ export function Compare() {
       return;
     }
     setExpanded((prev) => [...prev, entry.relPath]);
-    if (children[entry.relPath]) return; // già caricata
+    if (children[entry.relPath]) return;
     setLoadingKids(entry.relPath);
     const r = await post<{ entries: DiffEntry[] }>("/api/fs/compare/children", {
       left: result.left,
@@ -241,7 +225,6 @@ export function Compare() {
   };
 
   const copy = (entry: DiffEntry, action: "toRight" | "toLeft") => {
-    // Sovrascrittura: l'altro lato ha già qualcosa con quel nome.
     if (entry.status === "different") {
       const where = action === "toRight" ? "destra" : "sinistra";
       if (!confirm(`Sovrascrivere "${entry.relPath}" a ${where} con la versione dell'altro ramo?`))
@@ -258,8 +241,6 @@ export function Compare() {
     apply(entry, "delete", side);
   };
 
-  // Righe da disegnare: le differenze di primo livello più il contenuto delle
-  // cartelle aperte, ognuna con la sua profondità per il rientro.
   const visible = useMemo(() => {
     if (!result) return [];
     const walk = (entries: DiffEntry[], depth: number): { entry: DiffEntry; depth: number }[] =>
@@ -271,8 +252,6 @@ export function Compare() {
           ...(kids ? walk(kids, depth + 1) : []),
         ];
       });
-    // Il filtro vale sulle differenze di primo livello: i figli di una cartella
-    // aperta seguono la loro cartella.
     const top = result.entries.filter((e) => filter === "all" || e.status === filter);
     return walk(top, 0);
   }, [result, ignored, filter, expanded, children]);
@@ -460,7 +439,6 @@ export function Compare() {
                                 disabled={busyRow || !!resolved}
                                 onClick={() => {
                                   // Presente da un lato solo: non c'è nulla da
-                                  // chiedere, si elimina quello che c'è.
                                   if (e.status === "onlyLeft") remove(e, "left");
                                   else if (e.status === "onlyRight") remove(e, "right");
                                   else setAskDelete(e.relPath);

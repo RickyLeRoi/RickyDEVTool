@@ -13,11 +13,6 @@ function Bar({ pct, warn }: { pct: number; warn?: boolean }) {
   );
 }
 
-/**
- * Temperature, batteria e GPU. Sottoscrive il topic "sensors" (poller attivo
- * solo mentre la dashboard è montata). Best-effort: mostra solo ciò che la
- * piattaforma espone e resta silenzioso quando non c'è nulla di utile.
- */
 export function SensorsPanel() {
   const [s, setS] = useState<SensorsSnapshot | null>(null);
 

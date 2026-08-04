@@ -51,7 +51,6 @@ pub struct DirListing {
     pub dirs: Vec<DirEntryInfo>,
 }
 
-/// Elenco delle sottocartelle per il picker (niente file, niente nascoste).
 pub async fn list_dirs(path: Option<String>) -> Result<DirListing, String> {
     let base = match path {
         Some(p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -108,9 +107,6 @@ pub struct FsListing {
     pub entries: Vec<FsEntry>,
 }
 
-/// Cartelle e file (per il picker del tail log). A differenza di list_dirs
-/// include anche i nascosti: su macOS i log stanno spesso sotto ~/Library
-/// o in dotdir.
 pub async fn list_entries(path: Option<String>) -> Result<FsListing, String> {
     let base = match path {
         Some(p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -137,7 +133,6 @@ pub async fn list_entries(path: Option<String>) -> Result<FsListing, String> {
                 });
             }
         }
-        // Cartelle prima, poi file, alfabetico dentro i gruppi.
         entries_found.sort_by(|a, b| {
             b.is_dir
                 .cmp(&a.is_dir)
@@ -155,7 +150,6 @@ pub async fn list_entries(path: Option<String>) -> Result<FsListing, String> {
     Ok(listing)
 }
 
-/// Riconosce i progetti dentro `path` (inclusa la cartella stessa), profondità max 3.
 pub async fn scan(path: String) -> Result<FolderScan, String> {
     let base = PathBuf::from(&path)
         .canonicalize()
@@ -170,9 +164,6 @@ pub async fn scan(path: String) -> Result<FolderScan, String> {
         let mut visited: usize = 0;
         let truncated = walk(&base, 0, &mut raw, &mut slns, &mut visited);
 
-        // I csproj referenziati da una solution trovata appartengono a lei:
-        // le loro cartelle non vanno elencate come progetti a sé (né annidate
-        // né sorelle della cartella della .sln).
         let referenced = sln_referenced_csprojs(&slns);
         let mut projects: Vec<ProjectRef> = Vec::new();
         for (mut project, csprojs) in raw {
@@ -215,7 +206,6 @@ fn sln_referenced_csprojs(slns: &[PathBuf]) -> std::collections::HashSet<PathBuf
     referenced
 }
 
-/// Limite di sicurezza contro cartelle enormi.
 const MAX_VISITED: usize = 5000;
 
 fn walk(
@@ -232,8 +222,6 @@ fn walk(
 
     let detected = detect_dir(dir);
     let is_git_root = detected.kinds.contains(&ProjectKind::Git);
-    // Un progetto Tauri ha un crate Rust in src-tauri: è parte del progetto, non
-    // un progetto Rust a sé — non va ri-scoperto scendendo in quella cartella.
     let is_tauri = detected.kinds.contains(&ProjectKind::Tauri);
     slns.extend(detected.slns);
     if !detected.kinds.is_empty() {
@@ -252,7 +240,6 @@ fn walk(
     if depth >= MAX_DEPTH {
         return false;
     }
-    // Dentro un repo git non si cercano altri progetti: il repo è l'unità.
     if is_git_root && depth > 0 {
         return false;
     }
@@ -277,14 +264,11 @@ fn walk(
 struct DirDetect {
     kinds: Vec<ProjectKind>,
     slns: Vec<PathBuf>,
-    /// Csproj diretti della cartella; vuoto se la cartella ha una propria .sln
-    /// (in quel caso è lei l'unità di progetto e non va mai filtrata).
     csprojs: Vec<PathBuf>,
 }
 
 fn detect_dir(dir: &Path) -> DirDetect {
     let mut kinds = Vec::new();
-    // .git può essere directory (repo normale) o file (worktree/submodule).
     if dir.join(".git").exists() {
         kinds.push(ProjectKind::Git);
     }
@@ -309,22 +293,18 @@ fn detect_dir(dir: &Path) -> DirDetect {
     if !slns.is_empty() {
         csprojs.clear();
     }
-    // Python: uno qualsiasi dei marker d'ecosistema.
     if ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile", "manage.py"]
         .iter()
         .any(|f| dir.join(f).is_file())
     {
         kinds.push(ProjectKind::Python);
     }
-    // Rust (il crate/workspace è identificato dal Cargo.toml).
     if dir.join("Cargo.toml").is_file() {
         kinds.push(ProjectKind::Rust);
     }
-    // Tauri: src-tauri/ con un tauri.conf.* accanto al frontend.
     if is_tauri_dir(dir) {
         kinds.push(ProjectKind::Tauri);
     }
-    // Flutter/Dart.
     if dir.join("pubspec.yaml").is_file() {
         kinds.push(ProjectKind::Flutter);
     }
@@ -347,13 +327,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
 
-        // progetto node
         std::fs::create_dir_all(root.join("webapp")).unwrap();
         std::fs::write(root.join("webapp/package.json"), "{}").unwrap();
-        // repo git + dotnet nella stessa cartella
         std::fs::create_dir_all(root.join("api/.git")).unwrap();
         std::fs::write(root.join("api/Servizio.sln"), "").unwrap();
-        // node_modules va ignorato
         std::fs::create_dir_all(root.join("webapp/node_modules/x")).unwrap();
         std::fs::write(root.join("webapp/node_modules/x/package.json"), "{}").unwrap();
 
@@ -371,8 +348,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
 
-        // Layout come nel repo reale: Share/ contiene la .sln, i csproj sono
-        // in cartelle sorelle referenziate dalla solution.
         std::fs::create_dir_all(root.join("Share")).unwrap();
         std::fs::create_dir_all(root.join("Share.Algorithms")).unwrap();
         std::fs::create_dir_all(root.join("Share.Dto")).unwrap();
@@ -388,7 +363,6 @@ EndProject
         .unwrap();
         std::fs::write(root.join("Share.Algorithms/Share.Algorithms.csproj"), "<Project/>").unwrap();
         std::fs::write(root.join("Share.Dto/Share.Dto.csproj"), "<Project/>").unwrap();
-        // csproj NON referenziato dalla sln: deve restare visibile.
         std::fs::write(root.join("Indipendente/Indipendente.csproj"), "<Project/>").unwrap();
 
         let scan = scan(root.to_string_lossy().to_string()).await.expect("scan");
@@ -413,7 +387,6 @@ EndProject
         std::fs::create_dir_all(root.join("flut")).unwrap();
         std::fs::write(root.join("flut/pubspec.yaml"), "name: x").unwrap();
 
-        // Progetto Tauri: package.json + src-tauri con tauri.conf.json e Cargo.toml.
         std::fs::create_dir_all(root.join("app/src-tauri")).unwrap();
         std::fs::write(root.join("app/package.json"), "{}").unwrap();
         std::fs::write(root.join("app/src-tauri/tauri.conf.json"), "{}").unwrap();
@@ -427,7 +400,6 @@ EndProject
         let app = by("app");
         assert!(app.kinds.contains(&ProjectKind::Tauri));
         assert!(app.kinds.contains(&ProjectKind::Node));
-        // src-tauri NON deve comparire come progetto Rust a sé.
         assert!(
             !scan.projects.iter().any(|p| p.name == "src-tauri"),
             "{:?}",

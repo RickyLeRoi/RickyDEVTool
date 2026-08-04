@@ -3,9 +3,6 @@ use std::sync::Arc;
 use crate::events::now_ms;
 use crate::poller::PollerRegistry;
 
-/// Temperature + batteria + GPU in un unico poller: cambiano lentamente, quindi
-/// un intervallo di default più lungo e una sola sottoscrizione bastano. Attivo
-/// solo mentre la dashboard è aperta.
 pub const TOPIC: &str = "sensors";
 
 const DEFAULT_INTERVAL_MS: u64 = 5000;

@@ -1,8 +1,6 @@
 import { useEffect } from "react";
 import { useUpdateStore } from "../../stores/updateStore";
 
-// Banner di aggiornamento in alto. Fa l'auto-check all'avvio; lo stato vive
-// nello store condiviso, così anche il pulsante in About può innescare il check.
 export function UpdateBanner() {
   const phase = useUpdateStore((s) => s.phase);
   const progress = useUpdateStore((s) => s.progress);
@@ -16,7 +14,6 @@ export function UpdateBanner() {
     check();
   }, [check]);
 
-  // Visibile solo quando c'è qualcosa da comunicare sull'aggiornamento.
   const visible = !dismissed && (phase === "available" || phase === "downloading" || phase === "error");
   if (!visible) return null;
 

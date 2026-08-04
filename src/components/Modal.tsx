@@ -3,29 +3,20 @@ import type { ApiError } from "../lib/types";
 
 interface ModalProps {
   title: ReactNode;
-  /** Chiusura senza conferma: click fuori, Esc, pulsante di annullamento. */
   onCancel: () => void;
   children: ReactNode;
-  /** Errore dell'ultima azione: reso in fondo, sopra ai pulsanti. */
   error?: ApiError | null;
-  /** Azione in corso: blocca i pulsanti per evitare doppi invii. */
   busy?: boolean;
-  /** Azione principale. Assente = dialog puramente informativo (solo "Chiudi"). */
   confirm?: {
     label: string;
     onClick: () => void;
-    /** Rende il pulsante rosso: per le operazioni distruttive. */
     danger?: boolean;
     disabled?: boolean;
   };
   cancelLabel?: string;
-  /** Classe extra sul riquadro, per i dialog con layout proprio (es. il QR). */
   className?: string;
 }
 
-/// Guscio comune dei dialog: overlay, riquadro, titolo, banner d'errore e barra
-/// dei pulsanti. Prima ogni dialog si riscriveva questa impalcatura, e le
-/// differenze erano tutte involontarie — uno chiudeva con Esc, gli altri no.
 export function Modal({
   title,
   onCancel,
@@ -36,11 +27,11 @@ export function Modal({
   cancelLabel = confirm ? "Annulla" : "Chiudi",
   className,
 }: ModalProps) {
-  // Esc chiude, ma non mentre un'azione è in volo: annullare a metà lascerebbe
-  // l'utente senza sapere se l'operazione è andata a buon fine.
   useEffect(() => {
     if (busy) return;
     const onKey = (e: KeyboardEvent) => {
+      // 20260704 RG Esc non chiude mentre un'azione è in volo: l'utente resterebbe senza
+      // sapere se l'operazione è andata a buon fine.
       if (e.key === "Escape") onCancel();
     };
     window.addEventListener("keydown", onKey);

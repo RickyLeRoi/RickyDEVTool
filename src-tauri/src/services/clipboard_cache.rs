@@ -1,15 +1,3 @@
-//! Cache su disco dei blob (immagini e file copiati) dello storico appunti.
-//!
-//! Vive in una cartella temporanea **svuotata all'avvio** e best-effort alla
-//! chiusura: il contenuto continua così a "sparire a ogni riavvio", coerente con
-//! la promessa dello storico. Il **testo non passa mai di qui** (resta solo in
-//! RAM): su disco finiscono solo i file/immagini che l'utente ha copiato di
-//! proposito, non ciò che digita.
-//!
-//! Ogni blob è una **sotto-cartella** `<dir>/<id>/` che contiene un solo file
-//! col suo **nome reale** (così una ri-copia incolla il file col nome giusto, e
-//! il download ha il filename corretto).
-
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io;
@@ -19,24 +7,16 @@ use std::sync::Mutex;
 
 pub type BlobId = u64;
 
-/// Contatore di processo: dà a ogni cache una sotto-cartella distinta, così più
-/// istanze (es. i test in parallelo) non si pestano i piedi sulla stessa dir.
 static INSTANCE: AtomicU64 = AtomicU64::new(0);
 
 fn root() -> PathBuf {
     std::env::temp_dir().join("rickydev-clipboard")
 }
 
-/// Rimuove tutta la radice della cache: da chiamare **una volta all'avvio**
-/// (prima di creare la history) così i blob di sessioni precedenti spariscono,
-/// coerente con "sparisce a ogni riavvio".
 pub fn purge_root() {
     let _ = fs::remove_dir_all(root());
 }
 
-/// Oltre questo totale la cache sfratta i blob più vecchi (FIFO). I metadata
-/// della voce restano: il blob semplicemente non è più scaricabile e la UI lo
-/// segnala. Fa da tetto al consumo di disco anche con molti file grandi.
 const BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 pub struct BlobCache {
@@ -46,9 +26,7 @@ pub struct BlobCache {
 }
 
 struct Inner {
-    /// Ordine d'inserimento per l'eviction FIFO sul budget.
     order: VecDeque<BlobId>,
-    /// id → (nome file, dimensione in byte).
     meta: HashMap<BlobId, (String, u64)>,
     total: u64,
 }
@@ -57,7 +35,6 @@ impl BlobCache {
     pub fn new() -> Self {
         let n = INSTANCE.fetch_add(1, Ordering::Relaxed);
         let dir = root().join(format!("{}-{}", std::process::id(), n));
-        // Parti da una sotto-cartella pulita e solo nostra.
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::create_dir_all(&dir);
         BlobCache {
@@ -75,8 +52,6 @@ impl BlobCache {
         self.dir.join(id.to_string())
     }
 
-    /// Copia i byte di `src` nella cache col nome `name` (usato per i file
-    /// copiati). Restituisce l'id del blob.
     pub fn store_copy(&self, src: &Path, name: &str) -> io::Result<BlobId> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let sub = self.sub(id);
@@ -87,8 +62,6 @@ impl BlobCache {
         Ok(id)
     }
 
-    /// Adotta un file già scritto da noi (il PNG temporaneo di un'immagine)
-    /// spostandolo nella cache; fallback a copia se il rename cross-device fallisce.
     pub fn store_move(&self, src: &Path, name: &str) -> io::Result<BlobId> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let sub = self.sub(id);
@@ -117,8 +90,6 @@ impl BlobCache {
         }
     }
 
-    /// Percorso del file del blob se ancora presente su disco (altrimenti
-    /// sfrattato/mancante → `None`).
     pub fn path(&self, id: BlobId) -> Option<PathBuf> {
         let st = self.state.lock().unwrap();
         let (name, _) = st.meta.get(&id)?;
@@ -131,7 +102,6 @@ impl BlobCache {
         }
     }
 
-    /// Rimuove un singolo blob (file su disco + contabilità).
     pub fn remove(&self, id: BlobId) {
         let mut st = self.state.lock().unwrap();
         if let Some((_, sz)) = st.meta.remove(&id) {
@@ -144,8 +114,6 @@ impl BlobCache {
     }
 }
 
-/// Riduce `name` al solo nome file, senza separatori o `..`: il blob resta
-/// confinato nella sua sotto-cartella qualunque sia il nome originale.
 fn sanitize(name: &str) -> String {
     let base = Path::new(name)
         .file_name()

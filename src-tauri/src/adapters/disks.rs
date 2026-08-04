@@ -13,12 +13,9 @@ pub struct DiskInfo {
     pub available_bytes: u64,
     pub used_pct: f32,
     pub is_removable: bool,
-    /// Il disco di sistema non è mai eject/format-abile.
     pub is_system: bool,
 }
 
-/// Volumi rilevanti per la dashboard: disco di sistema + volumi montati esterni.
-/// Filtra le decine di mount sintetici che macOS espone.
 pub fn list() -> Vec<DiskInfo> {
     let disks = Disks::new_with_refreshed_list();
     let mut result: Vec<DiskInfo> = disks
@@ -49,7 +46,6 @@ pub fn list() -> Vec<DiskInfo> {
         .filter(|d| d.total_bytes > 0)
         .collect();
 
-    // Dedup per mount point (sysinfo può ripetere lo stesso volume).
     result.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
     result.dedup_by(|a, b| a.mount_point == b.mount_point);
     result
@@ -87,7 +83,6 @@ fn is_system_mount(mount: &str) -> bool {
 pub enum DiskError {
     NotFound,
     NotRemovable,
-    // Costruito solo su Windows/Linux (format non supportato / fs incompatibile).
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     Unsupported(String),
     Failed { message: String, os_hint: Option<String> },
@@ -114,13 +109,10 @@ pub async fn eject(mount_point: &str) -> Result<(), DiskError> {
 #[serde(rename_all = "camelCase")]
 pub struct FormatRequest {
     pub mount_point: String,
-    /// exfat | fat32 | apfs | hfs+
     pub filesystem: String,
     pub label: String,
-    /// true = ripartiziona l'intero disco (basso livello); false = solo il volume.
     #[serde(default)]
     pub whole_disk: bool,
-    /// Deve combaciare col nome del volume: conferma esplicita dell'utente.
     pub confirm_name: String,
 }
 
@@ -137,7 +129,6 @@ pub async fn format(req: FormatRequest) -> Result<(), DiskError> {
     format_impl(&disk.mount_point, &req.filesystem, &label, req.whole_disk).await
 }
 
-/// Nome volume sicuro per la CLI: niente spazi problematici, fallback al nome attuale.
 fn sanitize_label(label: &str, current: &str) -> String {
     let cleaned: String = label
         .chars()
@@ -150,8 +141,6 @@ fn sanitize_label(label: &str, current: &str) -> String {
         trimmed.to_string()
     }
 }
-
-// ---------- macOS ----------
 
 #[cfg(target_os = "macos")]
 async fn eject_impl(mount_point: &str) -> Result<(), DiskError> {
@@ -167,7 +156,6 @@ async fn format_impl(
 ) -> Result<(), DiskError> {
     let fs = macos_fs(filesystem)?;
     if whole_disk {
-        // Ripartiziona l'intero disco fisico che contiene il volume.
         let device = whole_disk_device(mount_point).await?;
         run_diskutil(&["eraseDisk", fs, label, "GPT", &device]).await
     } else {
@@ -189,7 +177,6 @@ fn macos_fs(filesystem: &str) -> Result<&'static str, DiskError> {
     }
 }
 
-/// Estrae il disco fisico ("Part of Whole") dal mount point via `diskutil info`.
 #[cfg(target_os = "macos")]
 async fn whole_disk_device(mount_point: &str) -> Result<String, DiskError> {
     let output = exec::cmd("diskutil")
@@ -227,8 +214,6 @@ async fn run_diskutil(args: &[&str]) -> Result<(), DiskError> {
         os_hint: Some("Il volume potrebbe essere in uso: chiudi le app che lo stanno usando".into()),
     })
 }
-
-// ---------- Windows (best-effort, non testato) ----------
 
 #[cfg(target_os = "windows")]
 async fn eject_impl(mount_point: &str) -> Result<(), DiskError> {
@@ -280,8 +265,6 @@ async fn run_powershell(script: &str) -> Result<(), DiskError> {
         })
     }
 }
-
-// ---------- altri OS ----------
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 async fn eject_impl(mount_point: &str) -> Result<(), DiskError> {

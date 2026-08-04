@@ -21,7 +21,6 @@ function fmtBytes(n: number) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** URL del blob (immagine o file) servito dal backend. */
 function blobUrl(id: number, index?: number) {
   const q = index != null ? `&i=${index}` : "";
   return `${API_BASE}/api/clipboard/blob?id=${id}${q}`;
