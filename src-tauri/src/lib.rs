@@ -35,7 +35,7 @@ pub fn run() {
     let pollers = Arc::new(PollerRegistry::new(bus.clone()));
     collectors::register_all(&pollers, &config);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -78,8 +78,17 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("errore in avvio dell'applicazione tauri");
+
+    app.run(|_handle, event| {
+        // `of-free` gira in un process group suo (serve a poterlo terminare
+        // tutto insieme), quindi non muore quando muore il tool: senza questo
+        // resterebbe un processo in ascolto sulla 4141 dopo la chiusura.
+        if let tauri::RunEvent::Exit = event {
+            services::rickyai::shutdown_all();
+        }
+    });
 }
 
 fn init_logging() {

@@ -5,6 +5,7 @@ import { create } from "zustand";
 export type Page =
   | "dashboard"
   | "projects"
+  | "rickyai"
   | "net"
   | "tool"
   | "log"
@@ -18,6 +19,7 @@ export type Page =
 export const PAGES: readonly Page[] = [
   "dashboard",
   "projects",
+  "rickyai",
   "net",
   "tool",
   "log",

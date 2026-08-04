@@ -3149,3 +3149,321 @@ button.compare-expand:hover {
 .cron-detail-list li {
   padding: 1px 0;
 }
+
+/* ---------- RickyAI (chat su of-free) ---------- */
+
+.rickyai {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ai-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ai-model {
+  max-width: 220px;
+  background: var(--bg-hover);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font: inherit;
+}
+
+.ai-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.ai-status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ai-status-line > button {
+  margin-left: auto;
+}
+.ai-status-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-log {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 6px 8px;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.ai-provider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ai-provider-bar {
+  width: 46px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.ai-provider-fill {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.ai-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.ai-threads {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+  border-right: 1px solid var(--border);
+}
+.ai-thread {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.ai-thread:hover {
+  background: var(--bg-hover);
+}
+.ai-thread.active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.ai-thread-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.ai-thread-del {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  color: var(--text-dim);
+  opacity: 0;
+  line-height: 1;
+}
+.ai-thread:hover .ai-thread-del,
+.ai-thread.active .ai-thread-del {
+  opacity: 1;
+}
+.ai-thread-del:hover {
+  color: var(--error);
+  background: none;
+}
+
+.ai-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.ai-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px 10px;
+}
+
+.ai-msg {
+  max-width: min(78%, 680px);
+  border-radius: 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+}
+.ai-msg-user {
+  align-self: flex-end;
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.ai-msg-bot {
+  align-self: flex-start;
+  background: var(--bg-panel);
+}
+/* Il testo del modello arriva senza markup: gli a-capo e l'indentazione dei
+   blocchi di codice sono l'unica formattazione che ha, e vanno rispettati. */
+.ai-msg-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-msg-meta {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ai-typing {
+  display: flex;
+  gap: 4px;
+  padding: 2px 0;
+}
+.ai-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: ai-blink 1.2s infinite ease-in-out;
+}
+.ai-typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ai-typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes ai-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.ai-empty {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.ai-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.ai-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.ai-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.ai-composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  max-height: 40vh;
+  font: inherit;
+  color: inherit;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+.ai-composer textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Sotto i 820px la colonna dei thread diventa una striscia orizzontale sopra la
+   chat: resta raggiungibile senza rubare larghezza ai messaggi. */
+@media (max-width: 820px) {
+  .ai-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .ai-threads {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 0 0 6px;
+  }
+  .ai-thread {
+    flex: 0 0 auto;
+    max-width: 160px;
+  }
+  .ai-msg {
+    max-width: 92%;
+  }
+}
+
+/* Pannello impostazioni di RickyAI (dentro Impostazioni). */
+.ai-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ai-settings .segmented {
+  align-self: flex-start;
+}
+.ai-settings textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  resize: vertical;
+}
+
+.badge-beta {
+  color: var(--accent2);
+  border-color: var(--accent2);
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

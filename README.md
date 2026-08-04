@@ -13,6 +13,7 @@ Developer operations console locale per macOS e Windows (Linux best-effort). Un 
 - **Servizi online**: health check HTTP/TCP dei preset (Google, Cloudflare, WhatsApp, …) e di servizi personali, solo a sezione aperta.
 - **Rete**: scan LAN, port scan, ping, traceroute, DNS/DoH, certificati TLS.
 - **Docker**: lista container e immagini, start/stop/restart, log in streaming, immagini non usate con **prune**, e connessione a un **host Docker remoto** via `ssh://` o `tcp://` (vedi [Docker remoto](#docker-remoto)).
+- **RickyAI** (beta, spenta di default): chatbot servito da [`of-free`](#rickyai-of-free), avviato in automatico all'accensione del tool una volta attivato dalle Impostazioni — routing sui piani gratuiti degli LLM, quote residue per provider, scelta del modello (automatico / solo locale / uno preciso) e conversazioni multiple.
 - **Task**: log persistente (ring buffer) di ogni task avviato dal tool, riapribile anche dopo la fine.
 - **Utility**: avvii compositi, calcolatrice scientifica, color picker (eyedropper su Windows/WebView2, Colorimetro digitale su macOS), storico appunti (in memoria) con clipboard di rete.
 - **Drop**: invio file/testo tra dispositivi in LAN (e tra host via discovery UDP), toast in ricezione.
@@ -75,10 +76,34 @@ Host host
 
 Se la sezione mostra un **errore** invece dei container, è lo stderr reale di `docker -H …`: lì trovi il motivo (risoluzione nome, chiave, daemon spento).
 
+## RickyAI (of-free)
+
+La sezione **RickyAI** è una chat che parla con [`of-free`](https://github.com/RickyLeRoi/onfeather-free) (OnFeather Free), il router che aggrega i piani gratuiti di Groq, Google AI Studio, Mistral, OpenRouter, GitHub Models e Ollama dietro un endpoint OpenAI-compatibile.
+
+La funzione è in **beta e nasce spenta**: finché non la si attiva da *Impostazioni → RickyAI*, il tool non avvia nessun processo e **la sezione non compare nemmeno** nella barra laterale (né nella command palette). Spegnendola torna a sparire, senza riavviare niente.
+
+Una volta attiva non c'è più niente da avviare a mano: **a ogni accensione il tool fa partire `of-free serve` da solo**, in ascolto su `127.0.0.1:4141` (fallback sulle porte successive se occupata). Se un `of-free serve` è già in ascolto — perché lo hai lanciato tu da terminale — quello viene **adottato** invece di avviarne un secondo: due router sullo stesso ledger SQLite si pesterebbero i piedi sul conteggio delle quote. Un'istanza adottata non viene mai spenta dal tool.
+
+Il binario si risolve nel PATH. Se manca, la pagina lo dice e spiega come installarlo, e il supervisore riprova da solo quando compare (nessun riavvio del tool).
+
+```bash
+git clone https://github.com/RickyLeRoi/onfeather-free && cd onfeather-free && pip install -e .
+```
+
+**Chiavi dei provider**: `of-free` le cerca in `~/.onfeather/.env`, poi `~/.config/onfeather/.env`. Senza nessuna chiave restano i modelli locali via Ollama. Un file diverso si indica con `envFile` (vedi sotto). Il tool avvia `of-free` con working directory nella propria data dir proprio per non intercettare un `~/.env` di tutt'altro contenuto, che interromperebbe quella ricerca.
+
+La SPA **non parla mai con la 4141**: passa da `/api/ai/chat`, che fa da proxy. Così la chat funziona anche dal telefono (che la 4141 del desktop non la vede) e l'endpoint — che non ha autenticazione, `api_key: unused` — non ha bisogno di uscire da localhost. Per lo stesso motivo `of-free` viene avviato sempre con `--host 127.0.0.1`, mai su `0.0.0.0`.
+
+Le conversazioni **restano nel browser** che le ha scritte (localStorage): il backend non ne conserva nessuna. Desktop e telefono hanno quindi chat separate.
+
+Configurazione dalle **Impostazioni** (`POST /api/ai/config`, solo dal desktop — decide quale binario il tool avvia da solo): avvio automatico, porta, percorso del binario, file delle chiavi, strategia (`balanced` | `fast` | `local`) e prompt di sistema.
+
+> Streaming non ancora supportato da `of-free`: la risposta arriva intera e la UI mostra l'attesa. Quando lo aggiungerà, il proxy andrà esteso di conseguenza.
+
 ## Sicurezza
 
 - Localhost: accesso libero. LAN: cookie di pairing (QR dalle Impostazioni), bind su 0.0.0.0 solo se l'accesso LAN è attivo.
-- Azioni di scrittura (kill, run, git, launch) solo da localhost, salvo toggle "Controllo remoto" (attivabile solo dal desktop).
+- Azioni di scrittura (kill, run, git, launch) solo da localhost, salvo toggle "Controllo remoto" (attivabile solo dal desktop). Anche la chat di RickyAI è una scrittura: il testo esce dalla macchina e consuma quote condivise.
 - Processi di sistema mai killabili; processi critici (sshd, docker, …) richiedono conferma digitata. Eject/format dischi mai da remoto; disco di sistema escluso.
 
 ## CI / release

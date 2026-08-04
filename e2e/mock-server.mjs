@@ -37,6 +37,84 @@ function metricSamples() {
   }));
 }
 
+// RickyAI: stato "pronto" plausibile, con due provider e le quote residue.
+function aiStatus() {
+  return {
+    state: "ready",
+    port: 4141,
+    baseUrl: "http://127.0.0.1:4141",
+    managed: true,
+    command: "/usr/local/bin/of-free",
+    message: null,
+    startedAt: Date.now() - 60_000,
+    restarts: 0,
+    log: [],
+    enabled: true,
+    configuredPort: 4141,
+    strategy: "balanced",
+    envFile: null,
+    systemPrompt: "",
+    providers: [
+      {
+        name: "groq",
+        label: "Groq",
+        available: true,
+        headroom: 0.82,
+        local: false,
+        limits: [
+          { unit: "req", window: "day", remaining: 11800, limit: 14400, authoritative: true },
+        ],
+      },
+      {
+        name: "ollama",
+        label: "Ollama (local)",
+        available: true,
+        headroom: 1,
+        local: true,
+        limits: [],
+      },
+    ],
+    next: { provider: "groq", model: "llama-3.3-70b-versatile" },
+    models: ["auto", "groq/llama-3.3-70b-versatile", "ollama/qwen2.5:7b"],
+  };
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(raw || "{}"));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+// La risposta fa da eco all'ultimo messaggio utente: così il test verifica che
+// la conversazione sia davvero arrivata al backend, non solo che compaia una
+// bolla qualsiasi.
+async function aiChat(req, res) {
+  const body = await readBody(req);
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const last = [...messages].reverse().find((m) => m?.role === "user");
+  return sendJson(res, {
+    ok: true,
+    data: {
+      content: `RickyAI dice: ${last?.content ?? "(niente)"}`,
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      failovers: 0,
+      repinned: null,
+      finishReason: "stop",
+      usage: { promptTokens: 12, completionTokens: 8, totalTokens: 20 },
+      elapsedMs: 420,
+    },
+  });
+}
+
 function sendJson(res, obj, status = 200) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -122,6 +200,12 @@ function handleApi(req, res, url) {
       return sendJson(res, { ok: true, data: { supported: false, trusted: false } });
     case "/api/tools":
       return sendJson(res, { ok: true, data: { tools: [] } });
+    case "/api/ai/status":
+      return sendJson(res, { ok: true, data: aiStatus() });
+    case "/api/ai/chat":
+      return aiChat(req, res);
+    case "/api/ai/config":
+      return sendJson(res, { ok: true, data: aiStatus() });
     default:
       // Default permissivo: ok con data vuoto. Copre i POST idempotenti (ack,
       // interval…) toccati dagli smoke test senza bisogno di logica dedicata.

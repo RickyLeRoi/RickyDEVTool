@@ -58,6 +58,24 @@ pub struct AppConfig {
     /// Soglie configurabili degli alert (CPU/RAM/temperatura/batteria).
     #[serde(default)]
     pub alert_thresholds: AlertThresholds,
+    // I campi di RickyAI non portano un `#[serde(default)]` per campo, ed è
+    // voluto: quell'attributo scavalca il `default` della struct e ricade sul
+    // default del *tipo*. Su `ai_enabled` significherebbe `false` per chiunque
+    // abbia già un config.json — cioè RickyAI spenta su ogni installazione
+    // esistente, senza che nessuno l'abbia disattivata.
+    /// RickyAI: avvia `of-free serve` all'accensione del tool.
+    pub ai_enabled: bool,
+    /// Porta di `of-free` (con fallback sulle successive se occupata).
+    pub ai_port: u16,
+    /// Override del percorso del binario `of-free`; vuoto = risolto nel PATH.
+    pub ai_command: Option<String>,
+    /// File con le chiavi dei provider; vuoto = catena di default di of-free
+    /// (`~/.onfeather/.env`, `~/.config/onfeather/.env`).
+    pub ai_env_file: Option<String>,
+    /// Strategia di routing: balanced | fast | local.
+    pub ai_strategy: String,
+    /// Prompt di sistema anteposto alle conversazioni di RickyAI.
+    pub ai_system_prompt: String,
 }
 
 /// Soglie oltre le quali scattano gli alert. Modificabili dall'utente; i default
@@ -112,6 +130,12 @@ impl Default for AppConfig {
             snippets: Vec::new(),
             ssh_hosts: Vec::new(),
             alert_thresholds: AlertThresholds::default(),
+            ai_enabled: false,
+            ai_port: crate::services::rickyai::DEFAULT_PORT,
+            ai_command: None,
+            ai_env_file: None,
+            ai_strategy: "balanced".to_string(),
+            ai_system_prompt: String::new(),
         }
     }
 }
@@ -199,6 +223,60 @@ fn generate_token() -> String {
     let mut buf = [0u8; 16];
     rand::rng().fill_bytes(&mut buf);
     buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un config.json scritto da una versione precedente non conosce i campi
+    /// nuovi: devono arrivare dal `Default` della struct, non da quello del
+    /// tipo. Sembra la stessa cosa e non lo è — un `#[serde(default)]` per
+    /// campo scavalca il primo e ricade sul secondo, e i default del tipo sono
+    /// tutti valori plausibili (porta 0, strategia ""), quindi la differenza
+    /// non si vede finché qualcosa non parte male senza spiegazioni.
+    #[test]
+    fn i_campi_nuovi_prendono_il_default_della_struct_non_del_tipo() {
+        let vecchio = r#"{ "port": 6969, "lanEnabled": true, "statsIntervalMs": 5000 }"#;
+        let cfg: AppConfig = serde_json::from_str(vecchio).expect("config leggibile");
+
+        assert_eq!(cfg.ai_port, crate::services::rickyai::DEFAULT_PORT);
+        assert_eq!(cfg.ai_strategy, "balanced");
+        assert!(!cfg.ai_enabled);
+        // I campi già presenti nel file restano quelli del file.
+        assert_eq!(cfg.port, 6969);
+        assert_eq!(cfg.stats_interval_ms, 5000);
+    }
+
+    #[test]
+    fn un_config_che_ha_acceso_rickyai_resta_acceso() {
+        let acceso = r#"{ "aiEnabled": true, "aiPort": 4200 }"#;
+        let cfg: AppConfig = serde_json::from_str(acceso).expect("config leggibile");
+        assert!(cfg.ai_enabled);
+        assert_eq!(cfg.ai_port, 4200);
+    }
+
+    /// Ogni campo della struct sopravvive a un giro di serializzazione: è il
+    /// modo generico di accorgersi che un `#[serde(default)]` di troppo sta
+    /// riscrivendo un valore invece di conservarlo.
+    #[test]
+    fn un_config_completo_sopravvive_al_salvataggio() {
+        let mut cfg = AppConfig::default();
+        cfg.ai_enabled = false;
+        cfg.ai_port = 4300;
+        cfg.ai_strategy = "fast".into();
+        cfg.ai_system_prompt = "sei RickyAI".into();
+        cfg.ai_env_file = Some("/tmp/keys.env".into());
+
+        let json = serde_json::to_string(&cfg).expect("serializzabile");
+        let riletto: AppConfig = serde_json::from_str(&json).expect("rileggibile");
+
+        assert!(!riletto.ai_enabled);
+        assert_eq!(riletto.ai_port, 4300);
+        assert_eq!(riletto.ai_strategy, "fast");
+        assert_eq!(riletto.ai_system_prompt, "sei RickyAI");
+        assert_eq!(riletto.ai_env_file.as_deref(), Some("/tmp/keys.env"));
+    }
 }
 
 pub fn data_dir() -> PathBuf {

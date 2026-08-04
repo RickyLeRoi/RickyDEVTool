@@ -40,6 +40,8 @@ pub struct ServerState {
     pub drop: Arc<crate::services::drop::DropService>,
     pub metrics: Arc<crate::services::metrics::MetricsService>,
     pub clipboard: Arc<crate::services::clipboard::ClipboardHistory>,
+    /// RickyAI: supervisore di `of-free` e proxy verso il suo endpoint.
+    pub ai: Arc<crate::services::rickyai::AiService>,
 }
 
 /// Le azioni che modificano il sistema sono locali, oppure LAN se l'utente
@@ -134,6 +136,9 @@ pub async fn start(
     let metrics = crate::services::metrics::MetricsService::start();
     // Storico appunti sempre attivo (solo in memoria), thread OS dedicato.
     let clipboard = crate::services::clipboard::ClipboardHistory::start();
+    // RickyAI: `of-free serve` acceso in background (solo su 127.0.0.1). Se il
+    // binario non c'è, il supervisore lo dice nello stato senza far rumore.
+    let ai = crate::services::rickyai::AiService::start(config.clone(), bus.clone());
     // Campionatore sensori a bassa frequenza SEMPRE attivo, solo per gli alert
     // termici/batteria: il poller "sensors" gira solo con la dashboard aperta,
     // ma questi alert devono scattare anche in background. Topic "sensorsbg"
@@ -160,6 +165,7 @@ pub async fn start(
         drop: drop_service,
         metrics,
         clipboard,
+        ai,
     };
 
     // Il permesso si legge dal gruppo in cui la rotta è scritta, non dal corpo
@@ -182,6 +188,9 @@ pub async fn start(
         .route("/api/drop/received/{name}", axum::routing::delete(drop_received_delete))
         .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
+        // Decide quale binario il tool avvia da solo e con quale file di
+        // chiavi: sta accanto agli altri interruttori che concedono qualcosa.
+        .route("/api/ai/config", post(ai_config_set))
         .route("/api/system/open-accessibility", post(open_accessibility))
         .route("/api/system/color-meter", post(open_color_meter))
         .route("/api/system/open-url", post(open_url))
@@ -242,6 +251,11 @@ pub async fn start(
         .route("/api/net/scan", post(net_scan))
         .route("/api/net/traceroute", post(net_traceroute))
         .route("/api/config/anti-idle", post(set_anti_idle))
+        // Una chat esce dalla macchina e consuma quote condivise fra tutti i
+        // client del tool: è una scrittura, non una lettura, e dal telefono
+        // segue il "Controllo remoto" come tutto il resto.
+        .route("/api/ai/chat", post(ai_chat))
+        .route("/api/ai/restart", post(ai_restart))
         .layer(write_layer.clone());
 
     // (3) Sola lettura: qualsiasi device abbinato. Dove GET e POST condividono
@@ -322,6 +336,8 @@ pub async fn start(
             "/api/config/docker-host",
             get(docker_host_get).merge(post(docker_host_set).layer(local_layer.clone())),
         )
+        // Lo stato è una lettura: il telefono deve poter vedere se è pronto.
+        .route("/api/ai/status", get(ai_status))
         .route("/api/system/accessibility", get(accessibility_status))
         .route("/ws", get(ws::ws_handler));
 
@@ -2742,6 +2758,137 @@ async fn drop_reveal_file(
     }
 }
 
+// ---------- RickyAI ----------
+
+/// Stato del supervisore + quote e modelli letti da `of-free` quando è pronto.
+async fn ai_status(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": state.ai.detailed_snapshot().await }))
+}
+
+fn ai_error_response(error: crate::services::rickyai::AiError) -> Response {
+    let status =
+        StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (
+        status,
+        Json(json!({
+            "ok": false,
+            "error": {
+                "code": error.code,
+                "message": error.message,
+                // Secondi da attendere: su quota esaurita la UI propone il
+                // riprova invece di far ripetere il messaggio a vuoto.
+                "retryAfter": error.retry_after,
+                "retryable": error.status == 429 || error.status >= 500,
+            }
+        })),
+    )
+        .into_response()
+}
+
+async fn ai_chat(
+    State(state): State<ServerState>,
+    Json(body): Json<crate::services::rickyai::ChatRequest>,
+) -> Response {
+    match state.ai.chat(body).await {
+        Ok(reply) => Json(json!({ "ok": true, "data": reply })).into_response(),
+        Err(error) => ai_error_response(error),
+    }
+}
+
+/// Riavvia `of-free` (o ne ritenta l'avvio dopo un fallimento).
+async fn ai_restart(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    state.ai.request_restart();
+    Json(json!({ "ok": true, "data": { "restarting": true } }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiConfigBody {
+    /// Campo assente = invariato. Stringa vuota = torna al default.
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    port: Option<u16>,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    env_file: Option<String>,
+    #[serde(default)]
+    strategy: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+}
+
+/// Un percorso configurato che non esiste va rifiutato subito: altrimenti il
+/// supervisore lo riprova a ogni giro e l'utente vede solo "non installato".
+fn existing_file(path: &str, what: &str) -> Result<Option<String>, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if !std::path::Path::new(trimmed).is_file() {
+        return Err(format!("{what} non trovato: {trimmed}"));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+async fn ai_config_set(
+    State(state): State<ServerState>,
+    Json(body): Json<AiConfigBody>,
+) -> Response {
+    use crate::services::rickyai::STRATEGIES;
+
+    let command = match body.command.as_deref().map(|p| existing_file(p, "binario of-free")) {
+        Some(Err(message)) => return internal_error(message),
+        Some(Ok(value)) => Some(value),
+        None => None,
+    };
+    let env_file = match body.env_file.as_deref().map(|p| existing_file(p, "file delle chiavi")) {
+        Some(Err(message)) => return internal_error(message),
+        Some(Ok(value)) => Some(value),
+        None => None,
+    };
+    if let Some(strategy) = &body.strategy {
+        if !STRATEGIES.contains(&strategy.trim()) {
+            return internal_error(format!(
+                "strategia non valida: usa {}",
+                STRATEGIES.join(", ")
+            ));
+        }
+    }
+    if let Some(port) = body.port {
+        // Sotto la 1024 servono privilegi di root: of-free non partirebbe.
+        if port < 1024 {
+            return internal_error("porta non valida: usane una da 1024 in su".into());
+        }
+    }
+
+    state.config.update(|c| {
+        if let Some(enabled) = body.enabled {
+            c.ai_enabled = enabled;
+        }
+        if let Some(port) = body.port {
+            c.ai_port = port;
+        }
+        if let Some(command) = &command {
+            c.ai_command = command.clone();
+        }
+        if let Some(env_file) = &env_file {
+            c.ai_env_file = env_file.clone();
+        }
+        if let Some(strategy) = &body.strategy {
+            c.ai_strategy = strategy.trim().to_string();
+        }
+        if let Some(prompt) = &body.system_prompt {
+            c.ai_system_prompt = prompt.trim().to_string();
+        }
+    });
+    // Il supervisore rilegge la config al giro successivo: senza questa sveglia
+    // resterebbe fermo sull'attesa in corso (fino a cinque minuti).
+    state.ai.request_restart();
+    Json(json!({ "ok": true, "data": state.ai.snapshot() })).into_response()
+}
+
 /// Serve la SPA embedded; fallback su index.html per le route client-side.
 async fn static_assets(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
@@ -2842,6 +2989,33 @@ mod tests {
             StatusCode::FORBIDDEN,
             "la scrittura sullo stesso path è bloccata da remoto"
         );
+    }
+
+    /// Il testo di una chat esce dalla macchina e consuma quote condivise, e la
+    /// configurazione decide *quale binario* il tool avvia da solo: nessuna
+    /// delle due può stare fra le letture aperte ai device abbinati. Spostare
+    /// una riga di rotta è un attimo, e da fuori non si vedrebbe.
+    #[test]
+    fn le_rotte_di_rickyai_stanno_nel_gruppo_giusto() {
+        let sorgente = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
+        let gruppo = |inizio: &str, fine: &str| {
+            let start = sorgente.find(inizio).unwrap_or_else(|| panic!("gruppo {inizio}"));
+            let end = sorgente[start..].find(fine).expect("fine del gruppo") + start;
+            sorgente[start..end].to_string()
+        };
+
+        let write = gruppo("let write = Router::new()", "let read = ");
+        assert!(write.contains("\"/api/ai/chat\""), "la chat deve stare nel gruppo di scrittura");
+        assert!(write.contains("\"/api/ai/restart\""), "il riavvio deve stare nel gruppo di scrittura");
+
+        // La configurazione dice *quale binario* il tool avvia da solo: come
+        // l'host Docker, si tocca solo dal desktop, e il controllo remoto non
+        // la sblocca.
+        let local = gruppo("let local_only = Router::new()", "let write = ");
+        assert!(local.contains("\"/api/ai/config\""), "la config deve essere solo dal desktop");
+
+        let read = gruppo("let read = Router::new()", "let api = ");
+        assert!(read.contains("\"/api/ai/status\""), "lo stato deve restare leggibile");
     }
 
     #[test]

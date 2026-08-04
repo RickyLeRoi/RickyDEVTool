@@ -14,6 +14,7 @@ pub mod nettools;
 pub mod node;
 pub mod online;
 pub mod projects;
+pub mod rickyai;
 pub mod runners;
 pub mod snippets;
 pub mod ssh;

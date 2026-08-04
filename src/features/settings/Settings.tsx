@@ -3,6 +3,7 @@ import { api, API_BASE, post } from "../../lib/api";
 import { Modal } from "../../components/Modal";
 import { Toggle } from "../../components/Toggle";
 import { AlertSettings } from "./AlertSettings";
+import { AiSettings } from "./AiSettings";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { LanInfo } from "../../lib/types";
@@ -66,6 +67,8 @@ export function Settings() {
       </section>
 
       <AlertSettings />
+
+      <AiSettings />
 
       <section>
         <h3>Accesso da smartphone (LAN)</h3>

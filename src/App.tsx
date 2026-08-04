@@ -3,6 +3,7 @@ import { PairGate } from "./app/PairGate";
 import { VitalsPanel } from "./app/VitalsPanel";
 import { Dashboard } from "./features/dashboard/Dashboard";
 import { Projects } from "./features/projects/Projects";
+import { RickyAI } from "./features/rickyai/RickyAI";
 import { Settings } from "./features/settings/Settings";
 import { Drop } from "./features/drop/Drop";
 import { NetTools } from "./features/nettools/NetTools";
@@ -25,7 +26,7 @@ import { useDisksStore } from "./stores/disksStore";
 import { useDropStore } from "./stores/dropStore";
 import { useTrayIntentStore } from "./stores/trayIntentStore";
 import { useTasksStore } from "./stores/tasksStore";
-import type { DiskInfo, MachineStats, TaskInfo } from "./lib/types";
+import type { AiStatus, DiskInfo, MachineStats, TaskInfo } from "./lib/types";
 
 const SECTIONS: { id: Page; icon: string; label: string; position: "top" | "bottom" }[] = [
   { id: "dashboard", icon: "🖥", label: "Dashboard", position: "top" },
@@ -37,6 +38,7 @@ const SECTIONS: { id: Page; icon: string; label: string; position: "top" | "bott
   { id: "ssh", icon: "🔑", label: "SSH", position: "top" },
   { id: "drop", icon: "📤", label: "Drop", position: "top" },
   { id: "tasks", icon: "🧾", label: "Task", position: "bottom" },
+  { id: "rickyai", icon: "🤖", label: "RickyAI", position: "bottom" },
   { id: "about", icon: "ℹ️", label: "About", position: "bottom" },
   { id: "settings", icon: "⚙️", label: "Impostazioni", position: "bottom" },
 ];
@@ -70,6 +72,7 @@ export default function App() {
   const setTasks = useTasksStore((s) => s.setTasks);
   const taskCount = useTasksStore((s) => s.tasks.length);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
 
   // Presenza drop attiva sempre: sei visibile e ricevi da qualsiasi sezione.
   usePresence();
@@ -90,6 +93,23 @@ export default function App() {
       if (event.topic === "tasks") setTasks((event.payload as { tasks?: TaskInfo[] }).tasks ?? []);
     });
   }, [setTasks]);
+
+  // Stato di RickyAI: fa comparire la voce senza ricaricare la pagina.
+  useEffect(() => {
+    const load = () => {
+      api<AiStatus>("/api/ai/status").then((r) => {
+        if (r.ok) setAiEnabled(r.data.enabled === true);
+      });
+    };
+    load();
+    return ws.subscribe("ai", load);
+  }, []);
+
+  // Se la sezione sparisce mentre ci si è dentro (o era l'ultima pagina
+  // ricordata), si torna alla dashboard invece di restare su un vuoto.
+  useEffect(() => {
+    if (aiEnabled === false && page === "rickyai") go("dashboard");
+  }, [aiEnabled, page, go]);
 
   // ⌘K / Ctrl+K apre/chiude la command palette.
   useEffect(() => {
@@ -156,9 +176,15 @@ export default function App() {
     });
   }, [page, setDisks]);
 
+  const isVisible = (s: (typeof SECTIONS)[number]) => {
+    if (s.id === "tasks") return taskCount > 0;
+    if (s.id === "rickyai") return aiEnabled === true;
+    return true;
+  };
+
   // Comandi della palette: navigazione + azioni rapide + tema.
   const commands = useMemo<Command[]>(() => {
-    const nav: Command[] = SECTIONS.map((s) => ({
+    const nav: Command[] = SECTIONS.filter(isVisible).map((s) => ({
       id: `nav:${s.id}`,
       title: s.label,
       hint: "Vai a",
@@ -185,16 +211,14 @@ export default function App() {
       run: () => applyTheme(t.key as "auto" | "light" | "dark", true),
     }));
     return [...nav, ...quick, ...themes];
-  }, [go]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [go, taskCount, aiEnabled]);
 
   const railDot = (id: Page): { count: number; title: string } | undefined => {
     if (id === "drop") return { count: peerCount, title: `${peerCount} dispositivi online` };
     if (id === "tasks") return { count: taskCount, title: `${taskCount} task` };
     return undefined;
   };
-
-  // Task è l'unica voce a comparsa condizionata: senza task non viene mostrata.
-  const isVisible = (s: (typeof SECTIONS)[number]) => s.id !== "tasks" || taskCount > 0;
 
   const railButton = (s: (typeof SECTIONS)[number]) => {
     const dot = railDot(s.id);
@@ -219,7 +243,7 @@ export default function App() {
     <PairGate>
       <div className="shell">
         <nav className="rail">
-          {SECTIONS.filter((s) => s.position === "top").map(railButton)}
+          {SECTIONS.filter((s) => s.position === "top" && isVisible(s)).map(railButton)}
           <div className="rail-spacer" />
           {SECTIONS.filter((s) => s.position === "bottom" && isVisible(s)).map(railButton)}
         </nav>
@@ -227,6 +251,7 @@ export default function App() {
         <main className="main">
           {page === "dashboard" && <Dashboard />}
           {page === "projects" && <Projects />}
+          {page === "rickyai" && aiEnabled && <RickyAI />}
           {page === "net" && <NetTools />}
           {page === "tool" && <Tool />}
           {page === "log" && <LogViewer />}

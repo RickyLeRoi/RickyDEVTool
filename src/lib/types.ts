@@ -10,6 +10,8 @@ export interface ApiError {
   message: string;
   osHint?: string;
   retryable: boolean;
+  /** Secondi da attendere prima di riprovare (quota LLM esaurita). */
+  retryAfter?: number | null;
 }
 
 export interface CoreSample {
@@ -579,6 +581,68 @@ export interface Alert {
   detail: string;
   createdAt: number;
   acknowledged: boolean;
+}
+
+// ---------- RickyAI (of-free) ----------
+
+export type AiState = "disabled" | "notInstalled" | "starting" | "ready" | "failed";
+
+export interface AiQuotaLimit {
+  unit: string;
+  window: string;
+  remaining: number | null;
+  limit: number | null;
+  /** Confermato dagli header del provider, non solo dedotto dal registro. */
+  authoritative: boolean;
+}
+
+export interface AiProvider {
+  name: string;
+  label: string;
+  available: boolean;
+  /** Quota residua, 0–1. */
+  headroom: number;
+  local: boolean;
+  limits: AiQuotaLimit[];
+}
+
+export interface AiStatus {
+  state: AiState;
+  port: number;
+  baseUrl: string;
+  /** false = istanza esterna adottata: il tool non la spegne né la riavvia. */
+  managed: boolean;
+  command: string | null;
+  message: string | null;
+  startedAt: number | null;
+  restarts: number;
+  /** Ultime righe di of-free: spiegano un avvio fallito. */
+  log: string[];
+  enabled: boolean;
+  configuredPort: number;
+  strategy: string;
+  envFile: string | null;
+  systemPrompt: string;
+  providers: AiProvider[] | null;
+  next: { provider: string; model: string } | null;
+  models: string[];
+}
+
+export interface AiUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface AiReply {
+  content: string;
+  provider: string | null;
+  model: string | null;
+  failovers: number | null;
+  repinned: string | null;
+  finishReason: string | null;
+  usage: AiUsage | null;
+  elapsedMs: number;
 }
 
 export interface WsEvent {

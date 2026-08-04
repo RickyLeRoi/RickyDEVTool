@@ -42,6 +42,7 @@ const VIEWPORTS = [
 // di pagina, es. Tool che ha solo la barra dei tab).
 const PAGES: { hash: string; heading: string | null }[] = [
   { hash: "#/dashboard", heading: "Dashboard" },
+  { hash: "#/rickyai", heading: "RickyAI" },
   { hash: "#/net", heading: "Rete" },
   // Docker è un tab di Rete: il deep-link storico resta valido e apre lì.
   { hash: "#/docker", heading: "Rete" },
