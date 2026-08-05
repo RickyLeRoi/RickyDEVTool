@@ -4,6 +4,7 @@ pub mod disks;
 pub mod docker;
 pub mod gpu;
 pub mod kill;
+pub mod localnetwork;
 pub mod ports;
 pub mod procs;
 pub mod scheduler;

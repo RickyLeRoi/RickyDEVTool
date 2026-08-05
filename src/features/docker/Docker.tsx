@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import { TaskLog } from "../../components/TaskLog";
+import { LocalNetworkBanner } from "../../components/LocalNetworkBanner";
 import type {
   ContainerStat,
   DockerContainer,
@@ -162,6 +163,7 @@ function HostBar({
         </button>
       </label>
       {error && <div className="banner banner-error">{error}</div>}
+      {host && <LocalNetworkBanner what="il motore Docker" />}
       <div className={`hint ${health === "down" ? "hint-error" : ""}`}>
         {health === "missing" ? (
           "La CLI docker non è installata su questo computer: nemmeno un host remoto può essere contattato senza."

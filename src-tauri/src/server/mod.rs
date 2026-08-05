@@ -163,6 +163,7 @@ pub async fn start(
         .route("/api/config/remote-control", post(set_remote_control))
         .route("/api/ai/config", post(ai_config_set))
         .route("/api/system/open-accessibility", post(open_accessibility))
+        .route("/api/system/open-local-network", post(open_local_network))
         .route("/api/system/color-meter", post(open_color_meter))
         .route("/api/system/open-url", post(open_url))
         .layer(local_layer.clone());
@@ -300,6 +301,7 @@ pub async fn start(
         )
         .route("/api/ai/status", get(ai_status))
         .route("/api/system/accessibility", get(accessibility_status))
+        .route("/api/system/local-network", get(local_network_status))
         .route("/ws", get(ws::ws_handler));
 
     let api = local_only
@@ -1910,6 +1912,17 @@ async fn accessibility_status() -> Json<serde_json::Value> {
 
 async fn open_accessibility() -> Response {
     match crate::adapters::accessibility::open_settings() {
+        Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
+        Err(message) => internal_error(message),
+    }
+}
+
+async fn local_network_status() -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": crate::adapters::localnetwork::status() }))
+}
+
+async fn open_local_network() -> Response {
+    match crate::adapters::localnetwork::open_settings() {
         Ok(()) => Json(json!({ "ok": true, "data": { "opened": true } })).into_response(),
         Err(message) => internal_error(message),
     }

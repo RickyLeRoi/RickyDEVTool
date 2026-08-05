@@ -622,11 +622,22 @@ async fn watch_remote(service: &Arc<AiService>, base: &str, key: Option<&str>) -
             s.base_url = base.to_string();
             s.port = port_of(base);
             s.models = Vec::new();
-            s.message = Some(format!(
-                "nessun endpoint OpenAI-compatibile su {base}: controlla che il servizio sia \
-                 acceso, che sia in ascolto su tutte le interfacce (non solo su 127.0.0.1), e \
-                 che la chiave API sia quella giusta se la richiede"
-            ));
+            // 20260805 ++ RG #ReteLocale se manca il permesso macOS ogni indirizzo in LAN
+            // risulta irraggiungibile: dirlo, invece di far sospettare il servizio o la chiave.
+            let stato = crate::adapters::localnetwork::status();
+            s.message = Some(if stato.supported && !stato.granted {
+                format!(
+                    "{base} irraggiungibile: manca il permesso Rete locale di macOS. \
+                     Concedilo in Impostazioni di Sistema → Privacy e sicurezza → Rete locale, \
+                     poi riavvia RickyDEVTool"
+                )
+            } else {
+                format!(
+                    "nessun endpoint OpenAI-compatibile su {base}: controlla che il servizio sia \
+                     acceso, che sia in ascolto su tutte le interfacce (non solo su 127.0.0.1), e \
+                     che la chiave API sia quella giusta se la richiede"
+                )
+            });
             s.started_at = None;
         });
         return Outcome::Crashed;
@@ -746,7 +757,15 @@ async fn probe(client: &reqwest::Client, base: &str, key: Option<&str>) -> Optio
     if let Some(key) = auth_key(key) {
         request = request.bearer_auth(key);
     }
-    let response = request.send().await.ok()?;
+    // 20260805 ++ RG #RickyAI l'errore di trasporto va a log: senza, un blocco di sistema e un
+    // servizio spento sono indistinguibili e il messaggio all'utente tira a indovinare.
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::debug!(%url, errore = %e, "sonda endpoint fallita");
+            return None;
+        }
+    };
     if !response.status().is_success() {
         return None;
     }

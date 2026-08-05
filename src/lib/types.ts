@@ -461,6 +461,11 @@ export interface AccessibilityStatus {
   trusted: boolean;
 }
 
+export interface LocalNetworkStatus {
+  supported: boolean;
+  granted: boolean;
+}
+
 export interface TempReading {
   label: string;
   celsius: number;

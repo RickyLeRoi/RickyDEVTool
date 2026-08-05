@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
+import { LocalNetworkBanner } from "../../components/LocalNetworkBanner";
 import type { AiMode, AiStatus } from "../../lib/types";
 
 const STRATEGIES: { id: string; label: string; hint: string }[] = [
@@ -179,6 +180,7 @@ export function AiSettings() {
 
           {remote ? (
             <>
+              <LocalNetworkBanner what="RickyAI" />
               <label className="form-row">
                 <span>Indirizzo del servizio</span>
                 <input

@@ -65,6 +65,14 @@ pub fn run() {
             let _ = window.set_focus();
 
             tray::setup(app.handle(), info)?;
+
+            // 20260805 ++ RG #ReteLocale
+            #[cfg(target_os = "macos")]
+            {
+                let granted = adapters::localnetwork::status().granted;
+                tracing::info!(granted, "permesso rete locale");
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -19,6 +19,10 @@
     "active": true,
     "targets": ["app", "dmg", "nsis"],
     "createUpdaterArtifacts": true,
+    "macOS": {
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"
