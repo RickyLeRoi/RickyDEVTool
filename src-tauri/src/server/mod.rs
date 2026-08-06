@@ -49,6 +49,74 @@ fn write_permitted(is_loopback: bool, remote_control_enabled: bool) -> bool {
     is_loopback || remote_control_enabled
 }
 
+// 20260806 RG "peer di loopback" non basta a dire "richiesta locale": col DNS rebinding un
+// sito ostile fa risolvere il proprio dominio a 127.0.0.1 e le sue fetch arrivano qui come
+// loopback e same-origin. L'unica cosa che il browser non può falsificare è l'Host, quindi
+// accettiamo solo gli host da cui la console è davvero raggiungibile.
+fn host_name(raw: &str) -> String {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or_default().to_ascii_lowercase();
+    }
+    if raw.matches(':').count() > 1 {
+        return raw.to_ascii_lowercase();
+    }
+    raw.rsplit_once(':').map_or(raw, |(h, _)| h).to_ascii_lowercase()
+}
+
+fn host_allowed(raw_host: &str, lan_enabled: bool, lan_ips: &[String]) -> bool {
+    let host = host_name(raw_host);
+    if host.is_empty() {
+        return false;
+    }
+    if host == "localhost" {
+        return true;
+    }
+    let Ok(ip) = host.parse::<IpAddr>() else {
+        return false;
+    };
+    if ip.is_loopback() {
+        return true;
+    }
+    lan_enabled && lan_ips.iter().any(|l| l.parse::<IpAddr>().is_ok_and(|l| l == ip))
+}
+
+fn request_host(request: &Request<Body>) -> String {
+    request
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(|h| h.to_string())
+        // in HTTP/2 l'autorità sta nella URI, non nell'header
+        .or_else(|| request.uri().host().map(|h| h.to_string()))
+        .unwrap_or_default()
+}
+
+async fn require_known_host(
+    State(state): State<ServerState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let raw = request_host(&request);
+
+    // la lista delle interfacce si legge solo quando serve: il caso locale non la tocca
+    let allowed = host_allowed(&raw, false, &[])
+        || (state.config.get().lan_enabled && host_allowed(&raw, true, &netinfo::lan_ips()));
+
+    if allowed {
+        return next.run(request).await;
+    }
+    tracing::warn!(host = %raw, "richiesta rifiutata: host non consentito");
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "ok": false,
+            "error": { "code": "HOST_FORBIDDEN", "message": "Host non consentito", "retryable": false }
+        })),
+    )
+        .into_response()
+}
+
 async fn require_loopback(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request<Body>,
@@ -317,6 +385,9 @@ pub async fn start(
     if cfg!(debug_assertions) {
         app = app.layer(tower_http::cors::CorsLayer::very_permissive());
     }
+
+    // 20260806 RG deve restare il layer più esterno: prima della CORS, dell'auth e degli asset.
+    let app = app.layer(middleware::from_fn_with_state(state.clone(), require_known_host));
 
     let lan_enabled = cfg.lan_enabled;
     tracing::info!(%bind_ip, port, lan_enabled, "server in ascolto");
@@ -2859,6 +2930,122 @@ mod tests {
 
         let read = gruppo("let read = Router::new()", "let api = ");
         assert!(read.contains("\"/api/ai/status\""), "lo stato deve restare leggibile");
+    }
+
+    #[test]
+    fn host_name_toglie_la_porta() {
+        assert_eq!(host_name("127.0.0.1:6969"), "127.0.0.1");
+        assert_eq!(host_name("localhost"), "localhost");
+        assert_eq!(host_name("LocalHost:6969"), "localhost");
+        assert_eq!(host_name("[::1]:6969"), "::1");
+        assert_eq!(host_name("::1"), "::1");
+        assert_eq!(host_name("192.168.1.50:6969"), "192.168.1.50");
+    }
+
+    #[test]
+    fn host_allowed_ferma_il_dns_rebinding() {
+        let lan = vec!["192.168.1.50".to_string()];
+
+        assert!(host_allowed("127.0.0.1:6969", false, &[]), "il desktop parla con 127.0.0.1");
+        assert!(host_allowed("localhost:6969", false, &[]), "e con localhost");
+        assert!(host_allowed("[::1]:6969", false, &[]), "loopback IPv6");
+
+        assert!(!host_allowed("evil.com:6969", true, &lan), "il dominio ostile del rebinding");
+        assert!(!host_allowed("", true, &lan), "richiesta senza Host");
+        assert!(!host_allowed("rickydev.local:6969", true, &lan), "solo IP e localhost");
+
+        assert!(host_allowed("192.168.1.50:6969", true, &lan), "il telefono in LAN");
+        assert!(!host_allowed("192.168.1.50:6969", false, &lan), "LAN spenta: solo locale");
+        assert!(!host_allowed("192.168.1.99:6969", true, &lan), "IP che non è nostro");
+    }
+
+    #[test]
+    fn request_host_legge_header_e_uri() {
+        let con_header = Request::builder()
+            .uri("/api/health")
+            .header(header::HOST, "evil.com:6969")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(request_host(&con_header), "evil.com:6969");
+        assert!(
+            !host_allowed(&request_host(&con_header), true, &["192.168.1.50".to_string()]),
+            "il DNS rebinding non deve arrivare all'auth_middleware"
+        );
+
+        let senza_header = Request::builder()
+            .uri("http://127.0.0.1:6969/api/health")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(request_host(&senza_header), "127.0.0.1", "ripiego sull'autorità della URI");
+
+        let nudo = Request::builder().uri("/api/health").body(Body::empty()).unwrap();
+        assert_eq!(request_host(&nudo), "", "niente Host, niente accesso");
+        assert!(!host_allowed(&request_host(&nudo), false, &[]));
+    }
+
+    #[tokio::test]
+    async fn il_guardiano_dellhost_copre_anche_gli_asset_statici() {
+        use tower::ServiceExt;
+
+        // stessa composizione di start(): api con l'auth dentro, fallback per la SPA,
+        // guardia dell'host applicata per ultima sull'intera app.
+        let api = Router::new()
+            .route("/api/health", get(|| async { "ok" }))
+            .layer(middleware::from_fn(|r: Request<Body>, n: Next| async move { n.run(r).await }));
+        let app: Router = Router::new()
+            .merge(api)
+            .fallback(|| async { "index.html" })
+            .layer(middleware::from_fn(|r: Request<Body>, n: Next| async move {
+                if host_allowed(&request_host(&r), false, &[]) {
+                    n.run(r).await
+                } else {
+                    StatusCode::FORBIDDEN.into_response()
+                }
+            }));
+
+        let chiama = |path: &'static str, host: &'static str| {
+            let app = app.clone();
+            async move {
+                let req = Request::builder()
+                    .uri(path)
+                    .header(header::HOST, host)
+                    .body(Body::empty())
+                    .unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }
+        };
+
+        assert_eq!(chiama("/api/health", "127.0.0.1:6969").await, StatusCode::OK);
+        assert_eq!(chiama("/", "127.0.0.1:6969").await, StatusCode::OK);
+        assert_eq!(
+            chiama("/api/health", "evil.com:6969").await,
+            StatusCode::FORBIDDEN,
+            "le API non devono rispondere a un host sconosciuto"
+        );
+        assert_eq!(
+            chiama("/", "evil.com:6969").await,
+            StatusCode::FORBIDDEN,
+            "nemmeno la SPA: servirla darebbe all'attaccante una origin same-site"
+        );
+    }
+
+    #[test]
+    fn il_guardiano_dellhost_e_il_layer_piu_esterno() {
+        let file = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
+        // solo il codice vero: dentro mod tests le stesse stringhe compaiono come letterali
+        let sorgente = &file[..file.find("#[cfg(test)]").expect("modulo di test")];
+        let guardia = sorgente
+            .find("app.layer(middleware::from_fn_with_state(state.clone(), require_known_host))")
+            .expect("il layer require_known_host deve essere applicato in start()");
+        let cors = sorgente.find("CorsLayer::very_permissive").expect("layer CORS");
+        let auth = sorgente
+            .find("layer(middleware::from_fn_with_state(state.clone(), auth_middleware))")
+            .expect("layer di auth");
+        assert!(
+            guardia > cors && guardia > auth,
+            "in axum l'ultimo layer applicato è il più esterno: require_known_host deve venire \
+             dopo CORS e auth_middleware, o l'anti-rebinding viene scavalcato"
+        );
     }
 
     #[test]
