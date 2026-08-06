@@ -353,6 +353,15 @@ impl DropService {
             .ok_or("percorso file non valido")?;
 
         if let Some(hub) = self.remote_hub(to) {
+            // 20260806 RG la dimensione si legge dai metadati: leggere il file e *poi*
+            // rifiutarlo vorrebbe dire allocarlo comunque tutto, come faceva drop_send.
+            let declared = tokio::fs::metadata(source).await.map_err(|e| e.to_string())?.len();
+            if declared > MAX_PROXY_BYTES as u64 {
+                return Err(format!(
+                    "file troppo grande per l'invio a un altro computer (max {}MB)",
+                    MAX_PROXY_BYTES / 1024 / 1024
+                ));
+            }
             let bytes = tokio::fs::read(source).await.map_err(|e| e.to_string())?;
             if bytes.len() > MAX_PROXY_BYTES {
                 return Err(format!(

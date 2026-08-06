@@ -349,6 +349,13 @@ export interface CompareResult {
   truncated: boolean;
 }
 
+export interface PairedDevice {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastSeen: number | null;
+}
+
 export interface DropPeer {
   deviceId: string;
   name: string;

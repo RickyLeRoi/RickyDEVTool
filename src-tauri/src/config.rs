@@ -32,6 +32,11 @@ pub struct AppConfig {
     // e abilita l'invio hub-to-hub. Vuoto = funzione spenta, non "aperta a tutti".
     #[serde(default)]
     pub drop_hub_code: String,
+    // 20260806 ++ RG #Pairing una sessione per device abbinato. Il cookie porta il `id` di
+    // questa struct, non più il pair_token: così il token serve solo al primo scambio e una
+    // sessione si può revocare senza buttare fuori tutti gli altri.
+    #[serde(default)]
+    pub pair_sessions: Vec<PairSession>,
     pub launch_bundles: Vec<crate::services::launch::LaunchBundle>,
     #[serde(default)]
     pub docker_host: Option<String>,
@@ -52,6 +57,14 @@ pub struct AppConfig {
     pub ai_keys: std::collections::BTreeMap<String, String>,
     pub ai_strategy: String,
     pub ai_system_prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairSession {
+    pub id: String,
+    pub name: String,
+    pub created_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +113,7 @@ impl Default for AppConfig {
             drop_hub_id: String::new(),
             drop_hub_name: String::new(),
             drop_hub_code: String::new(),
+            pair_sessions: Vec::new(),
             launch_bundles: Vec::new(),
             docker_host: None,
             snippets: Vec::new(),
@@ -208,6 +222,15 @@ fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+// 20260806 RG confronto a tempo costante: qui passano token di pairing e id di sessione, e
+// un `==` su stringhe esce al primo byte diverso.
+pub fn secret_eq(a: &str, b: &str) -> bool {
+    if a.is_empty() || a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 pub(crate) fn generate_token() -> String {

@@ -40,6 +40,7 @@ pub struct ServerState {
     pub metrics: Arc<crate::services::metrics::MetricsService>,
     pub clipboard: Arc<crate::services::clipboard::ClipboardHistory>,
     pub ai: Arc<crate::services::rickyai::AiService>,
+    pub sessions: Arc<SessionActivity>,
 }
 
 fn write_allowed(state: &ServerState, peer: SocketAddr) -> bool {
@@ -210,6 +211,7 @@ pub async fn start(
         metrics,
         clipboard,
         ai,
+        sessions: Arc::new(SessionActivity::default()),
     };
 
     let local_layer = middleware::from_fn(require_loopback);
@@ -230,6 +232,9 @@ pub async fn start(
         .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
         .route("/api/config/hub-code", get(hub_code_get).merge(post(hub_code_set)))
+        .route("/api/pair/sessions", get(pair_sessions_list))
+        .route("/api/pair/sessions/{id}", axum::routing::delete(pair_session_revoke))
+        .route("/api/pair/rotate", post(pair_token_rotate))
         .route("/api/ai/config", post(ai_config_set))
         .route("/api/system/open-accessibility", post(open_accessibility))
         .route("/api/system/open-local-network", post(open_local_network))
@@ -432,9 +437,13 @@ async fn auth_middleware(
             }
         }
     }
-    let token = state.config.get().pair_token;
-    if cookie_value(request.headers(), PAIR_COOKIE).as_deref() == Some(token.as_str()) {
-        return next.run(request).await;
+    // 20260806 RG il cookie porta un id di sessione, non il pair_token: quest'ultimo autorizza
+    // solo /api/pair. Confronto a tempo costante contro le sessioni vive.
+    if let Some(cookie) = cookie_value(request.headers(), PAIR_COOKIE) {
+        if session_valid(&state.config.get().pair_sessions, &cookie) {
+            state.sessions.touch(&cookie);
+            return next.run(request).await;
+        }
     }
     (
         StatusCode::UNAUTHORIZED,
@@ -448,6 +457,34 @@ async fn auth_middleware(
         })),
     )
         .into_response()
+}
+
+fn session_valid(sessions: &[crate::config::PairSession], cookie: &str) -> bool {
+    sessions.iter().any(|s| crate::config::secret_eq(&s.id, cookie))
+}
+
+// 20260806 ++ RG #Pairing "ultimo accesso" sta solo in RAM: scriverlo in config a ogni
+// richiesta significherebbe riscrivere config.json a ogni poll del telefono.
+#[derive(Default)]
+pub struct SessionActivity {
+    seen: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+}
+
+impl SessionActivity {
+    pub fn touch(&self, session_id: &str) {
+        self.seen
+            .lock()
+            .expect("sessions lock")
+            .insert(session_id.to_string(), crate::events::now_ms());
+    }
+
+    pub fn last_seen(&self, session_id: &str) -> Option<u64> {
+        self.seen.lock().expect("sessions lock").get(session_id).copied()
+    }
+
+    pub fn forget(&self, session_id: &str) {
+        self.seen.lock().expect("sessions lock").remove(session_id);
+    }
 }
 
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -504,13 +541,19 @@ async fn lan_qr(State(state): State<ServerState>) -> Response {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PairBody {
     token: String,
+    #[serde(default)]
+    device_name: Option<String>,
 }
+
+const MAX_PAIR_SESSIONS: usize = 32;
 
 async fn pair(State(state): State<ServerState>, Json(body): Json<PairBody>) -> Response {
     let cfg = state.config.get();
-    if body.token != cfg.pair_token {
+    if !crate::config::secret_eq(&cfg.pair_token, &body.token) {
+        tracing::warn!("tentativo di pairing con token non valido");
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
@@ -520,15 +563,87 @@ async fn pair(State(state): State<ServerState>, Json(body): Json<PairBody>) -> R
         )
             .into_response();
     }
+
+    // 20260806 ++ RG #Pairing il token vale solo per questo scambio: quello che il device si
+    // porta a casa è un id di sessione suo, revocabile senza toccare gli altri.
+    let session = crate::config::PairSession {
+        id: crate::config::generate_token(),
+        name: clean_device_name(body.device_name.as_deref()),
+        created_at: crate::events::now_ms(),
+    };
     let cookie = format!(
         "{PAIR_COOKIE}={}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly",
-        cfg.pair_token
+        session.id
     );
+    state.config.update(|c| {
+        c.pair_sessions.push(session.clone());
+        // tetto anti-accumulo: le sessioni non scadono, e senza limite un device che si
+        // riabbina a ogni svuotamento del browser le farebbe crescere per sempre
+        if c.pair_sessions.len() > MAX_PAIR_SESSIONS {
+            let excess = c.pair_sessions.len() - MAX_PAIR_SESSIONS;
+            c.pair_sessions.drain(..excess);
+        }
+    });
+    tracing::info!(device = %session.name, "nuovo dispositivo abbinato");
     (
         [(header::SET_COOKIE, cookie)],
         Json(json!({ "ok": true, "data": { "paired": true } })),
     )
         .into_response()
+}
+
+fn clean_device_name(raw: Option<&str>) -> String {
+    let cleaned: String = raw
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(40)
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "Dispositivo".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+async fn pair_sessions_list(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    let sessions: Vec<serde_json::Value> = state
+        .config
+        .get()
+        .pair_sessions
+        .iter()
+        .map(|s| {
+            json!({
+                "id": s.id,
+                "name": s.name,
+                "createdAt": s.created_at,
+                "lastSeen": state.sessions.last_seen(&s.id),
+            })
+        })
+        .collect();
+    Json(json!({ "ok": true, "data": { "sessions": sessions } }))
+}
+
+async fn pair_session_revoke(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> Response {
+    let before = state.config.get().pair_sessions.len();
+    state.config.update(|c| c.pair_sessions.retain(|s| s.id != id));
+    state.sessions.forget(&id);
+    let removed = before != state.config.get().pair_sessions.len();
+    tracing::info!(removed, "revoca sessione di pairing");
+    Json(json!({ "ok": true, "data": { "revoked": removed } })).into_response()
+}
+
+// 20260806 ++ RG #Pairing ruotare il token invalida i QR vecchi ma non scollega nessuno:
+// le sessioni già emesse sono indipendenti dal token.
+async fn pair_token_rotate(State(state): State<ServerState>) -> Response {
+    let token = crate::config::generate_token();
+    state.config.update(|c| c.pair_token = token.clone());
+    tracing::info!("token di pairing rigenerato");
+    Json(json!({ "ok": true, "data": { "rotated": true } })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -539,12 +654,30 @@ struct LogBody {
     stack: Option<String>,
 }
 
+const MAX_LOG_FIELD: usize = 2000;
+
+// 20260806 RG quello che arriva qui lo scrive un client, e finisce in un file di log che
+// leggeremo per capire un guasto: senza limite lo si riempie fino a saturare il disco, e coi
+// caratteri di controllo ci si scrivono righe finte che sembrano nostre.
+fn clean_log(s: &str) -> String {
+    let mut out: String = s
+        .chars()
+        .filter(|c| !c.is_control() || *c == ' ')
+        .take(MAX_LOG_FIELD)
+        .collect();
+    if s.chars().filter(|c| !c.is_control() || *c == ' ').count() > MAX_LOG_FIELD {
+        out.push('…');
+    }
+    out
+}
+
 async fn client_log(Json(body): Json<LogBody>) -> Json<serde_json::Value> {
-    let stack = body.stack.unwrap_or_default();
+    let message = clean_log(&body.message);
+    let stack = clean_log(body.stack.as_deref().unwrap_or_default());
     match body.level.as_deref() {
-        Some("error") => tracing::error!(target: "frontend", message = %body.message, %stack),
-        Some("warn") => tracing::warn!(target: "frontend", message = %body.message, %stack),
-        _ => tracing::info!(target: "frontend", message = %body.message),
+        Some("error") => tracing::error!(target: "frontend", %message, %stack),
+        Some("warn") => tracing::warn!(target: "frontend", %message, %stack),
+        _ => tracing::info!(target: "frontend", %message),
     }
     Json(json!({ "ok": true, "data": null }))
 }
@@ -2509,6 +2642,43 @@ async fn hub_code_set(
 
 const MAX_PROXY_BYTES: usize = crate::services::drop::MAX_PROXY_BYTES;
 
+fn proxy_too_big() -> String {
+    format!(
+        "file troppo grande per l'invio a un altro computer (max {}MB)",
+        MAX_PROXY_BYTES / 1024 / 1024
+    )
+}
+
+// 20260806 RG accumula solo fin dove è lecito: rifiuta il chunk *prima* di appenderlo, così
+// la memoria occupata non supera mai il tetto nemmeno di un chunk.
+struct CappedBuffer {
+    buf: Vec<u8>,
+    max: usize,
+}
+
+impl CappedBuffer {
+    fn new(max: usize) -> Self {
+        Self { buf: Vec::new(), max }
+    }
+
+    fn push(&mut self, chunk: &[u8]) -> Result<(), String> {
+        if self.buf.len() + chunk.len() > self.max {
+            return Err(proxy_too_big());
+        }
+        self.buf.extend_from_slice(chunk);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
 async fn drop_send(
     State(state): State<ServerState>,
     mut multipart: axum::extract::Multipart,
@@ -2536,17 +2706,23 @@ async fn drop_send(
                     .unwrap_or_else(|| "file".to_string());
 
                 if let Some(hub) = state.drop.remote_hub(&to) {
-                    let bytes = match field.bytes().await {
-                        Ok(b) => b,
-                        Err(e) => return internal_error(format!("upload interrotto: {e}")),
-                    };
-                    if bytes.len() > MAX_PROXY_BYTES {
-                        return internal_error(format!(
-                            "file troppo grande per l'invio a un altro computer (max {}MB)",
-                            MAX_PROXY_BYTES / 1024 / 1024
-                        ));
+                    // 20260806 RG il cap si applica *mentre* si legge: prima si allocava
+                    // l'intero campo in una volta (il limite di rotta è 4 GB) e solo dopo lo
+                    // si confrontava con MAX_PROXY_BYTES, cioè finiva la RAM prima di dire di no.
+                    let mut buf = CappedBuffer::new(MAX_PROXY_BYTES);
+                    let mut field = field;
+                    loop {
+                        match field.chunk().await {
+                            Ok(Some(chunk)) => {
+                                if let Err(message) = buf.push(&chunk) {
+                                    return internal_error(message);
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(e) => return internal_error(format!("upload interrotto: {e}")),
+                        }
                     }
-                    return match state.drop.proxy_send_file(&hub, &from_name, &file_name, bytes.to_vec()).await {
+                    return match state.drop.proxy_send_file(&hub, &from_name, &file_name, buf.into_inner()).await {
                         Ok(size) => Json(json!({
                             "ok": true,
                             "data": { "transferId": format!("proxy-{}", crate::events::now_ms()), "sizeBytes": size }
@@ -3018,7 +3194,7 @@ mod tests {
     #[test]
     fn il_codice_hub_si_legge_solo_dal_desktop() {
         let file = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
-        let sorgente = &file[..file.find("#[cfg(test)]").expect("modulo di test")];
+        let sorgente = &file[..file.find("#[cfg(test)]\nmod tests {").expect("modulo di test")];
         let inizio = sorgente.find("let local_only = Router::new()").expect("gruppo local_only");
         let fine = sorgente[inizio..].find("let write = ").expect("fine del gruppo") + inizio;
         assert!(
@@ -3129,7 +3305,7 @@ mod tests {
     fn il_guardiano_dellhost_e_il_layer_piu_esterno() {
         let file = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
         // solo il codice vero: dentro mod tests le stesse stringhe compaiono come letterali
-        let sorgente = &file[..file.find("#[cfg(test)]").expect("modulo di test")];
+        let sorgente = &file[..file.find("#[cfg(test)]\nmod tests {").expect("modulo di test")];
         let guardia = sorgente
             .find("app.layer(middleware::from_fn_with_state(state.clone(), require_known_host))")
             .expect("il layer require_known_host deve essere applicato in start()");
@@ -3142,6 +3318,162 @@ mod tests {
             "in axum l'ultimo layer applicato è il più esterno: require_known_host deve venire \
              dopo CORS e auth_middleware, o l'anti-rebinding viene scavalcato"
         );
+    }
+
+    fn sessione(id: &str) -> crate::config::PairSession {
+        crate::config::PairSession {
+            id: id.to_string(),
+            name: "iPhone".to_string(),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn il_cookie_vale_solo_se_e_una_sessione_emessa() {
+        let sessioni = vec![sessione("aaaa1111"), sessione("bbbb2222")];
+
+        assert!(session_valid(&sessioni, "aaaa1111"));
+        assert!(session_valid(&sessioni, "bbbb2222"));
+        assert!(!session_valid(&sessioni, "cccc3333"), "sessione mai emessa");
+        assert!(!session_valid(&sessioni, ""), "cookie vuoto");
+        assert!(!session_valid(&sessioni, "aaaa"), "prefisso di una sessione");
+        assert!(!session_valid(&sessioni, "aaaa1111x"), "sessione più lunga");
+        assert!(!session_valid(&[], "aaaa1111"), "nessuna sessione, nessun accesso");
+    }
+
+    #[test]
+    fn il_token_di_pairing_non_e_piu_un_cookie_valido() {
+        // era il finding: il cookie *conteneva* il pair_token, quindi chi lo intercettava
+        // aveva accesso per sempre. Ora il token autorizza solo /api/pair.
+        let token = crate::config::generate_token();
+        let sessioni = vec![sessione(&crate::config::generate_token())];
+        assert!(
+            !session_valid(&sessioni, &token),
+            "il token di pairing non deve autorizzare da solo una richiesta"
+        );
+    }
+
+    #[test]
+    fn revocare_una_sessione_non_tocca_le_altre() {
+        let mut sessioni = vec![sessione("telefono1"), sessione("tablet22")];
+        sessioni.retain(|s| s.id != "telefono1");
+
+        assert!(!session_valid(&sessioni, "telefono1"), "revocata");
+        assert!(session_valid(&sessioni, "tablet22"), "l'altro device resta abbinato");
+    }
+
+    #[test]
+    fn secret_eq_confronta_tutta_la_stringa() {
+        use crate::config::secret_eq;
+        assert!(secret_eq("abc123", "abc123"));
+        assert!(!secret_eq("abc123", "abc124"));
+        assert!(!secret_eq("abc123", "abc12"), "più corta");
+        assert!(!secret_eq("abc123", "abc1234"), "più lunga");
+        assert!(!secret_eq("", ""), "il vuoto non è un segreto valido");
+        assert!(!secret_eq("", "x"));
+    }
+
+    #[test]
+    fn clean_device_name_non_si_fa_iniettare_nei_log() {
+        assert_eq!(clean_device_name(Some("iPhone di Ricky")), "iPhone di Ricky");
+        assert_eq!(clean_device_name(Some("  Tablet  ")), "Tablet");
+        assert_eq!(clean_device_name(None), "Dispositivo");
+        assert_eq!(clean_device_name(Some("   ")), "Dispositivo");
+        assert_eq!(clean_device_name(Some("PC\nERROR finto")), "PCERROR finto");
+        assert_eq!(clean_device_name(Some(&"z".repeat(200))), "z".repeat(40));
+    }
+
+    #[test]
+    fn la_gestione_delle_sessioni_e_solo_dal_desktop() {
+        let file = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
+        let sorgente = &file[..file.find("#[cfg(test)]\nmod tests {").expect("modulo di test")];
+        let inizio = sorgente.find("let local_only = Router::new()").expect("gruppo local_only");
+        let fine = sorgente[inizio..].find("let write = ").expect("fine del gruppo") + inizio;
+        let gruppo = &sorgente[inizio..fine];
+
+        for rotta in ["\"/api/pair/sessions\"", "\"/api/pair/sessions/{id}\"", "\"/api/pair/rotate\""] {
+            assert!(
+                gruppo.contains(rotta),
+                "{rotta} decide chi ha accesso all'app: deve stare nel gruppo solo-desktop, \
+                 o un telefono abbinato può revocare gli altri o elencare le sessioni"
+            );
+        }
+    }
+
+    #[test]
+    fn capped_buffer_rifiuta_prima_di_allocare() {
+        let mut buf = CappedBuffer::new(10);
+        assert!(buf.push(&[0u8; 6]).is_ok());
+        assert!(buf.push(&[0u8; 4]).is_ok(), "arrivare esatti al tetto è lecito");
+        assert_eq!(buf.len(), 10);
+
+        let mut buf = CappedBuffer::new(10);
+        buf.push(&[0u8; 8]).expect("sotto il tetto");
+        let esito = buf.push(&[0u8; 5]);
+        assert!(esito.is_err(), "il chunk che sfonda va rifiutato");
+        assert!(esito.unwrap_err().contains("troppo grande"));
+        assert_eq!(
+            buf.len(),
+            8,
+            "ed è il punto del finding: il chunk non deve essere appeso prima del controllo, \
+             o la memoria supera comunque il tetto"
+        );
+
+        // un unico chunk enorme viene fermato senza che nulla venga allocato nel buffer
+        let mut buf = CappedBuffer::new(10);
+        assert!(buf.push(&[0u8; 4096]).is_err());
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn il_ramo_proxy_non_bufferizza_piu_tutto_il_body() {
+        let file = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
+        let sorgente = &file[..file.find("#[cfg(test)]\nmod tests {").expect("modulo di test")];
+        let inizio = sorgente.find("async fn drop_send(").expect("drop_send");
+        let fine = sorgente[inizio..].find("\nasync fn ").map_or(sorgente.len(), |i| i + inizio);
+        let corpo = &sorgente[inizio..fine];
+
+        assert!(
+            !corpo.contains(".bytes().await"),
+            "leggere il campo in una volta carica l'intero body in RAM prima di poterlo \
+             rifiutare: il ramo proxy deve leggere a chunk dentro un CappedBuffer"
+        );
+        assert!(corpo.contains("CappedBuffer::new(MAX_PROXY_BYTES)"));
+    }
+
+    #[test]
+    fn clean_log_toglie_i_controlli_e_tronca() {
+        // il caso vero: una riga finta iniettata con un a capo
+        let forgiato = "login fallito\nERROR utente admin cancellato dal sistema";
+        let pulito = clean_log(forgiato);
+        assert!(!pulito.contains('\n'), "niente a capo: una riga resta una riga");
+        assert!(!pulito.contains('\r'));
+        assert_eq!(
+            pulito,
+            "login fallitoERROR utente admin cancellato dal sistema",
+            "il testo resta leggibile, solo appiattito"
+        );
+
+        assert_eq!(clean_log("a\tb\u{7}c"), "abc", "tab e bell sono di controllo");
+        assert_eq!(clean_log("spazi   normali"), "spazi   normali", "lo spazio resta");
+        assert_eq!(clean_log(""), "");
+
+        let lungo = "x".repeat(MAX_LOG_FIELD * 3);
+        let troncato = clean_log(&lungo);
+        assert_eq!(troncato.chars().count(), MAX_LOG_FIELD + 1, "tronca e segnala col puntino");
+        assert!(troncato.ends_with('…'));
+
+        let esatto = "y".repeat(MAX_LOG_FIELD);
+        assert_eq!(clean_log(&esatto), esatto, "al limite non si segnala nulla");
+    }
+
+    #[test]
+    fn clean_log_non_spezza_i_caratteri_multibyte() {
+        // take() conta caratteri, non byte: troncare a metà di una é darebbe una String invalida
+        let accentato = "à".repeat(MAX_LOG_FIELD * 2);
+        let troncato = clean_log(&accentato);
+        assert_eq!(troncato.chars().count(), MAX_LOG_FIELD + 1);
+        assert!(troncato.starts_with('à'));
     }
 
     #[test]

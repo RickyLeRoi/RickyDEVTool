@@ -68,6 +68,11 @@ impl TaskRegistry {
         list
     }
 
+    pub fn is_running(&self, id: &str) -> bool {
+        let tasks = self.tasks.lock().expect("task lock");
+        tasks.get(id).is_some_and(|h| h.info.state == TaskState::Running)
+    }
+
     pub fn log(&self, id: &str) -> Option<Vec<LogLine>> {
         let buffer = {
             let tasks = self.tasks.lock().expect("task lock");
@@ -204,7 +209,7 @@ impl TaskRegistry {
         Ok(info)
     }
 
-    pub fn stop(&self, id: &str) -> Result<(), String> {
+    pub fn stop(self: &Arc<Self>, id: &str) -> Result<(), String> {
         let tasks = self.tasks.lock().expect("task lock");
         let handle = tasks.get(id).ok_or("task non trovato")?;
         if handle.info.state != TaskState::Running {
@@ -214,9 +219,17 @@ impl TaskRegistry {
         {
             let pgid = handle.pgid;
             unsafe { libc::killpg(pgid, libc::SIGTERM) };
+            // 20260806 RG il pgid è il pid del figlio: se il SIGTERM basta e il SO riassegna
+            // quel numero entro i 3s, un SIGKILL alla cieca ammazzerebbe processi estranei.
+            // Si forza solo se il task risulta ancora vivo, come già fa adapters/kill.rs.
+            let registry = Arc::clone(self);
+            let task_id = id.to_string();
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                unsafe { libc::killpg(pgid, libc::SIGKILL) };
+                if registry.is_running(&task_id) {
+                    tracing::warn!(task = %task_id, "SIGTERM ignorato, forzo la chiusura");
+                    unsafe { libc::killpg(pgid, libc::SIGKILL) };
+                }
             });
         }
         #[cfg(not(unix))]
@@ -350,5 +363,80 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         let state = registry.list().into_iter().find(|t| t.id == info.id).unwrap();
         assert_eq!(state.state, TaskState::Failed);
+    }
+
+    // 20260806 RG il danno del SIGKILL cieco è "ammazzare processi di qualcun altro": non lo
+    // si può osservare in un test senza occupare di proposito un pgid, che sarebbe una gara
+    // e per giunta pericolosa. Si blocca allora la riga: la forzatura resta condizionata.
+    #[test]
+    #[cfg(unix)]
+    fn il_sigkill_resta_condizionato_allo_stato_del_task() {
+        let sorgente = std::fs::read_to_string("src/tasks.rs").expect("sorgente dei task");
+        let inizio = sorgente.find("pub fn stop(").expect("fn stop");
+        let fine = sorgente[inizio..].find("\n    pub fn clear_finished").expect("fine di stop") + inizio;
+        let corpo = &sorgente[inizio..fine];
+
+        let kill = corpo.find("libc::SIGKILL").expect("l'escalation a SIGKILL");
+        let guardia = corpo.find("is_running(&task_id)").expect(
+            "il SIGKILL differito deve essere protetto da is_running: senza, dopo 3s colpisce \
+             un pgid che il SO può aver riassegnato a processi estranei",
+        );
+        assert!(guardia < kill, "il controllo deve venire prima del SIGKILL, non dopo");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stop_non_forza_un_task_gia_uscito() {
+        // il guardiano dell'escalation è is_running: quando il SIGTERM basta, allo scadere
+        // dei 3s deve valere false, o il SIGKILL partirebbe verso un pgid che nel frattempo
+        // il SO può aver riassegnato a processi estranei.
+        let registry = Arc::new(TaskRegistry::new(EventBus::new()));
+        let dir = tempfile::tempdir().unwrap();
+        let info = registry
+            .spawn("sleep lungo", "sh", &["-c", "sleep 60"], dir.path().to_str().unwrap())
+            .expect("spawn");
+
+        assert!(registry.is_running(&info.id));
+        registry.stop(&info.id).expect("stop");
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+
+        assert!(
+            !registry.is_running(&info.id),
+            "il SIGTERM è bastato, quindi a 3s l'escalation non deve trovare nulla da forzare"
+        );
+        assert!(registry.stop(&info.id).is_err(), "un task finito non si ferma due volte");
+    }
+
+    // 20260806 RG lento per forza: aspetta i 3s dell'escalation. Sta fra gli --ignored come
+    // gli altri test che dipendono dai tempi del SO.
+    #[tokio::test]
+    #[cfg(unix)]
+    #[ignore]
+    async fn stop_forza_chi_ignora_il_sigterm() {
+        let registry = Arc::new(TaskRegistry::new(EventBus::new()));
+        let dir = tempfile::tempdir().unwrap();
+        let info = registry
+            .spawn(
+                "sordo al TERM",
+                "sh",
+                // il trap vale solo per la shell: killpg colpisce l'intero gruppo, quindi un
+                // `sleep 60` figlio morirebbe e la farebbe uscire. Il ciclo la tiene viva.
+                &["-c", "trap '' TERM; while :; do sleep 0.2; done"],
+                dir.path().to_str().unwrap(),
+            )
+            .expect("spawn");
+        // senza questa attesa il SIGTERM arriva prima che sh abbia installato il trap, e il
+        // processo muore col comportamento di default invece di ignorarlo
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        registry.stop(&info.id).expect("stop");
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        assert!(registry.is_running(&info.id), "ha ignorato il SIGTERM, è ancora vivo");
+
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+        assert!(
+            !registry.is_running(&info.id),
+            "passati i 3s l'escalation deve comunque forzarlo: il controllo non la disattiva"
+        );
     }
 }

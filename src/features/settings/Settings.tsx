@@ -7,7 +7,7 @@ import { AiSettings } from "./AiSettings";
 import { AntiIdlePanel } from "./AntiIdlePanel";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
-import type { LanInfo } from "../../lib/types";
+import type { LanInfo, PairedDevice } from "../../lib/types";
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: "auto", label: "Auto (sistema)" },
@@ -23,6 +23,14 @@ export function Settings() {
   const [hubCode, setHubCode] = useState<string | null>(null);
   const [hubCodeDraft, setHubCodeDraft] = useState("");
   const [hubCodeError, setHubCodeError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<PairedDevice[]>([]);
+  // il QR è un <img>: dopo una rotazione va rifatta la richiesta, non riletta la cache
+  const [qrSeq, setQrSeq] = useState(0);
+
+  const loadDevices = () =>
+    api<{ sessions: PairedDevice[] }>("/api/pair/sessions").then((r) => {
+      if (r.ok) setDevices(r.data.sessions);
+    });
 
   useEffect(() => {
     api<LanInfo>("/api/lan").then((r) => {
@@ -35,7 +43,18 @@ export function Settings() {
         setHubCodeDraft(r.data.code);
       }
     });
+    loadDevices();
   }, []);
+
+  const revoke = async (device: PairedDevice) => {
+    await api(`/api/pair/sessions/${device.id}`, { method: "DELETE" });
+    loadDevices();
+  };
+
+  const rotateToken = async () => {
+    await post("/api/pair/rotate", {});
+    setQrSeq((n) => n + 1);
+  };
 
   const saveHubCode = async (body: { code?: string }) => {
     setHubCodeError(null);
@@ -121,6 +140,37 @@ export function Settings() {
 
             <div className="setting-row">
               <div className="setting-text">
+                <div className="setting-title">Dispositivi abbinati</div>
+                <div className="hint">
+                  Ogni abbinamento è una sessione a sé: revocarne una non tocca le altre.
+                </div>
+              </div>
+            </div>
+            {devices.length === 0 ? (
+              <div className="empty">Nessun dispositivo abbinato.</div>
+            ) : (
+              <ul className="paired-devices">
+                {devices.map((d) => (
+                  <li key={d.id}>
+                    <div className="paired-device-text">
+                      <strong>{d.name}</strong>
+                      <span className="dim">
+                        abbinato il {new Date(d.createdAt).toLocaleDateString()}
+                        {d.lastSeen
+                          ? ` · visto ${new Date(d.lastSeen).toLocaleTimeString()}`
+                          : " · mai connesso da questo avvio"}
+                      </span>
+                    </div>
+                    <button className="ghost" onClick={() => revoke(d)}>
+                      Revoca
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="setting-row">
+              <div className="setting-text">
                 <div className="setting-title">Controllo remoto</div>
                 <div className="hint">
                   Consenti azioni (kill, run, git) dai device abbinati. Se spento, il telefono è
@@ -189,7 +239,7 @@ export function Settings() {
         >
           <img
             className="qr"
-            src={`${API_BASE}/api/lan/qr.svg`}
+            src={`${API_BASE}/api/lan/qr.svg?v=${qrSeq}`}
             alt="QR di abbinamento"
             width={220}
             height={220}
@@ -197,6 +247,15 @@ export function Settings() {
           <p className="hint">
             Scansiona dal telefono: contiene indirizzo e token di abbinamento. Il telefono resta
             in sola lettura finché non attivi il controllo remoto.
+          </p>
+          <div className="setting-actions">
+            <button className="ghost" onClick={rotateToken}>
+              Genera nuovo QR
+            </button>
+          </div>
+          <p className="hint">
+            Rigenerare il QR invalida quello vecchio (utile se ne è girato uno screenshot), ma{" "}
+            <strong>non scollega</strong> i dispositivi già abbinati: per quelli usa Revoca.
           </p>
         </Modal>
       )}

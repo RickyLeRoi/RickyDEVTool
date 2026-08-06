@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, post } from "../lib/api";
+import { getDeviceName } from "../lib/device";
 
 type GateState = "checking" | "ok" | "needs-pairing";
 
@@ -16,7 +17,8 @@ export function PairGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const match = window.location.hash.match(/#pair=([0-9a-f]+)/);
     if (match) {
-      post("/api/pair", { token: match[1] }).then(() => {
+      post("/api/pair", { token: match[1], deviceName: getDeviceName() }).then(() => {
+        // il token non deve restare nella barra degli indirizzi né nella cronologia
         history.replaceState(null, "", window.location.pathname);
         check();
       });
@@ -36,7 +38,10 @@ export function PairGate({ children }: { children: ReactNode }) {
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            const r = await post("/api/pair", { token: token.trim() });
+            const r = await post("/api/pair", {
+              token: token.trim(),
+              deviceName: getDeviceName(),
+            });
             if (r.ok) check();
             else setFailed(true);
           }}
