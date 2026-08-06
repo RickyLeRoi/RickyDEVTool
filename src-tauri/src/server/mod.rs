@@ -50,10 +50,8 @@ fn write_permitted(is_loopback: bool, remote_control_enabled: bool) -> bool {
     is_loopback || remote_control_enabled
 }
 
-// 20260806 RG "peer di loopback" non basta a dire "richiesta locale": col DNS rebinding un
-// sito ostile fa risolvere il proprio dominio a 127.0.0.1 e le sue fetch arrivano qui come
-// loopback e same-origin. L'unica cosa che il browser non può falsificare è l'Host, quindi
-// accettiamo solo gli host da cui la console è davvero raggiungibile.
+// 20260806 ++ RG #Security loopback non basta a dire "locale": col DNS rebinding un sito ostile
+// risolve il proprio dominio a 127.0.0.1. L'Host è l'unica cosa che il browser non falsifica.
 fn host_name(raw: &str) -> String {
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix('[') {
@@ -88,7 +86,7 @@ fn request_host(request: &Request<Body>) -> String {
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
         .map(|h| h.to_string())
-        // in HTTP/2 l'autorità sta nella URI, non nell'header
+        // 20260806 ++ RG #Security in HTTP/2 l'autorità sta nella URI, non nell'header.
         .or_else(|| request.uri().host().map(|h| h.to_string()))
         .unwrap_or_default()
 }
@@ -100,7 +98,6 @@ async fn require_known_host(
 ) -> Response {
     let raw = request_host(&request);
 
-    // la lista delle interfacce si legge solo quando serve: il caso locale non la tocca
     let allowed = host_allowed(&raw, false, &[])
         || (state.config.get().lan_enabled && host_allowed(&raw, true, &netinfo::lan_ips()));
 
@@ -392,7 +389,7 @@ pub async fn start(
         app = app.layer(tower_http::cors::CorsLayer::very_permissive());
     }
 
-    // 20260806 RG deve restare il layer più esterno: prima della CORS, dell'auth e degli asset.
+    // 20260806 ++ RG #Security deve restare il layer più esterno: prima di CORS, auth e asset.
     let app = app.layer(middleware::from_fn_with_state(state.clone(), require_known_host));
 
     let lan_enabled = cfg.lan_enabled;
@@ -421,9 +418,8 @@ async fn auth_middleware(
     if peer.ip().is_loopback() || request.uri().path() == "/api/pair" {
         return next.run(request).await;
     }
-    // 20260806 RG questa scorciatoia vale quanto vale il registro degli hub: da quando i
-    // beacon sono firmati col codice condiviso, ci finisce solo chi lo conosce. Senza codice
-    // il registro resta vuoto e la scorciatoia non scatta mai.
+    // 20260806 ++ RG #Security la scorciatoia vale quanto il registro degli hub: i beacon sono firmati
+    // col codice condiviso, e senza codice il registro resta vuoto.
     if matches!(request.uri().path(), "/api/drop/send" | "/api/drop/text") {
         if let Some(claimed) = request
             .headers()
@@ -437,8 +433,8 @@ async fn auth_middleware(
             }
         }
     }
-    // 20260806 RG il cookie porta un id di sessione, non il pair_token: quest'ultimo autorizza
-    // solo /api/pair. Confronto a tempo costante contro le sessioni vive.
+    // 20260806 ++ RG #Security il cookie porta un id di sessione, non il pair_token: quello autorizza
+    // solo /api/pair. Confronto a tempo costante.
     if let Some(cookie) = cookie_value(request.headers(), PAIR_COOKIE) {
         if session_valid(&state.config.get().pair_sessions, &cookie) {
             state.sessions.touch(&cookie);
@@ -463,8 +459,7 @@ fn session_valid(sessions: &[crate::config::PairSession], cookie: &str) -> bool 
     sessions.iter().any(|s| crate::config::secret_eq(&s.id, cookie))
 }
 
-// 20260806 ++ RG #Pairing "ultimo accesso" sta solo in RAM: scriverlo in config a ogni
-// richiesta significherebbe riscrivere config.json a ogni poll del telefono.
+// 20260806 ++ RG #Security "ultimo accesso" solo in RAM: in config riscriverebbe config.json a ogni poll.
 #[derive(Default)]
 pub struct SessionActivity {
     seen: std::sync::Mutex<std::collections::HashMap<String, u64>>,
@@ -564,8 +559,8 @@ async fn pair(State(state): State<ServerState>, Json(body): Json<PairBody>) -> R
             .into_response();
     }
 
-    // 20260806 ++ RG #Pairing il token vale solo per questo scambio: quello che il device si
-    // porta a casa è un id di sessione suo, revocabile senza toccare gli altri.
+    // 20260806 ++ RG #Security il token vale solo per questo scambio: il device si porta a casa un id
+    // di sessione suo, revocabile senza toccare gli altri.
     let session = crate::config::PairSession {
         id: crate::config::generate_token(),
         name: clean_device_name(body.device_name.as_deref()),
@@ -577,8 +572,8 @@ async fn pair(State(state): State<ServerState>, Json(body): Json<PairBody>) -> R
     );
     state.config.update(|c| {
         c.pair_sessions.push(session.clone());
-        // tetto anti-accumulo: le sessioni non scadono, e senza limite un device che si
-        // riabbina a ogni svuotamento del browser le farebbe crescere per sempre
+        // 20260806 ++ RG #Security le sessioni non scadono: senza tetto un device che si riabbina spesso
+        // le farebbe crescere per sempre.
         if c.pair_sessions.len() > MAX_PAIR_SESSIONS {
             let excess = c.pair_sessions.len() - MAX_PAIR_SESSIONS;
             c.pair_sessions.drain(..excess);
@@ -637,8 +632,7 @@ async fn pair_session_revoke(
     Json(json!({ "ok": true, "data": { "revoked": removed } })).into_response()
 }
 
-// 20260806 ++ RG #Pairing ruotare il token invalida i QR vecchi ma non scollega nessuno:
-// le sessioni già emesse sono indipendenti dal token.
+// 20260806 ++ RG #Security ruotare il token invalida i QR vecchi ma non scollega nessuno.
 async fn pair_token_rotate(State(state): State<ServerState>) -> Response {
     let token = crate::config::generate_token();
     state.config.update(|c| c.pair_token = token.clone());
@@ -656,9 +650,8 @@ struct LogBody {
 
 const MAX_LOG_FIELD: usize = 2000;
 
-// 20260806 RG quello che arriva qui lo scrive un client, e finisce in un file di log che
-// leggeremo per capire un guasto: senza limite lo si riempie fino a saturare il disco, e coi
-// caratteri di controllo ci si scrivono righe finte che sembrano nostre.
+// 20260806 ++ RG #Security lo scrive un client e finisce nei nostri log: senza tetto satura il
+// disco, e i caratteri di controllo ci scrivono righe finte.
 fn clean_log(s: &str) -> String {
     let mut out: String = s
         .chars()
@@ -2583,8 +2576,8 @@ async fn drop_peers(
     Json(json!({ "ok": true, "data": { "peers": peers } }))
 }
 
-// 20260806 ++ RG #Drop isDesktop dice al client se può sottoscrivere il canale dell'hub:
-// quel canale è del desktop, il telefono non deve vedere i drop arrivati da altri PC.
+// 20260806 ++ RG #Security isDesktop dice al client se può sottoscrivere il canale dell'hub: è del
+// desktop, il telefono non deve vedere i drop arrivati dagli altri PC.
 async fn drop_self(
     State(state): State<ServerState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -2599,13 +2592,12 @@ async fn drop_hubs(State(state): State<ServerState>) -> Json<serde_json::Value> 
     Json(json!({ "ok": true, "data": { "hubs": state.drop.remote_hubs() } }))
 }
 
-// 20260806 ++ RG #Drop il codice hub è un segreto: la GET sta nel gruppo solo-desktop
-// insieme alla POST, un device abbinato non deve poterlo leggere.
+// 20260806 ++ RG #Security il codice hub è un segreto: anche la GET sta nel gruppo solo-desktop.
 const MIN_HUB_CODE_LEN: usize = 8;
 
 #[derive(Deserialize)]
 struct HubCodeBody {
-    // assente = "generamene uno nuovo", stringa vuota = spegni l'invio tra PC
+    // 20260806 ++ RG #Security assente = generane uno nuovo, stringa vuota = spegni l'invio tra PC.
     code: Option<String>,
 }
 
@@ -2649,8 +2641,7 @@ fn proxy_too_big() -> String {
     )
 }
 
-// 20260806 RG accumula solo fin dove è lecito: rifiuta il chunk *prima* di appenderlo, così
-// la memoria occupata non supera mai il tetto nemmeno di un chunk.
+// 20260806 ++ RG #Security rifiuta il chunk *prima* di appenderlo: la memoria non supera mai il tetto.
 struct CappedBuffer {
     buf: Vec<u8>,
     max: usize,
@@ -2706,9 +2697,8 @@ async fn drop_send(
                     .unwrap_or_else(|| "file".to_string());
 
                 if let Some(hub) = state.drop.remote_hub(&to) {
-                    // 20260806 RG il cap si applica *mentre* si legge: prima si allocava
-                    // l'intero campo in una volta (il limite di rotta è 4 GB) e solo dopo lo
-                    // si confrontava con MAX_PROXY_BYTES, cioè finiva la RAM prima di dire di no.
+                    // 20260806 ++ RG #Security il cap si applica mentre si legge: prima si allocava l'intero campo
+                    // (il limite di rotta è 4 GB) e solo dopo lo si confrontava col tetto.
                     let mut buf = CappedBuffer::new(MAX_PROXY_BYTES);
                     let mut field = field;
                     loop {
@@ -3018,8 +3008,7 @@ async fn ai_config_set(
         },
         None => None,
     };
-    // 20260804 ++ RG #RickyAI passare a "remote" senza indirizzo non è un errore: è il primo passo,
-    // il campo dell'indirizzo compare solo dopo. Ci pensa il supervisore a dirlo nello stato.
+    // 20260804 RG passare a "remote" senza indirizzo non è un errore: il campo compare dopo.
     if let Some(keys) = &body.keys {
         for name in keys.keys() {
             if !PROVIDER_KEYS.iter().any(|(_, _, var)| var == name) {
@@ -3259,8 +3248,6 @@ mod tests {
     async fn il_guardiano_dellhost_copre_anche_gli_asset_statici() {
         use tower::ServiceExt;
 
-        // stessa composizione di start(): api con l'auth dentro, fallback per la SPA,
-        // guardia dell'host applicata per ultima sull'intera app.
         let api = Router::new()
             .route("/api/health", get(|| async { "ok" }))
             .layer(middleware::from_fn(|r: Request<Body>, n: Next| async move { n.run(r).await }));
@@ -3304,7 +3291,7 @@ mod tests {
     #[test]
     fn il_guardiano_dellhost_e_il_layer_piu_esterno() {
         let file = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
-        // solo il codice vero: dentro mod tests le stesse stringhe compaiono come letterali
+        // 20260806 ++ RG #Security solo il codice vero: dentro mod tests le stesse stringhe sono letterali.
         let sorgente = &file[..file.find("#[cfg(test)]\nmod tests {").expect("modulo di test")];
         let guardia = sorgente
             .find("app.layer(middleware::from_fn_with_state(state.clone(), require_known_host))")
@@ -3343,8 +3330,6 @@ mod tests {
 
     #[test]
     fn il_token_di_pairing_non_e_piu_un_cookie_valido() {
-        // era il finding: il cookie *conteneva* il pair_token, quindi chi lo intercettava
-        // aveva accesso per sempre. Ora il token autorizza solo /api/pair.
         let token = crate::config::generate_token();
         let sessioni = vec![sessione(&crate::config::generate_token())];
         assert!(
@@ -3419,7 +3404,6 @@ mod tests {
              o la memoria supera comunque il tetto"
         );
 
-        // un unico chunk enorme viene fermato senza che nulla venga allocato nel buffer
         let mut buf = CappedBuffer::new(10);
         assert!(buf.push(&[0u8; 4096]).is_err());
         assert_eq!(buf.len(), 0);
@@ -3443,7 +3427,6 @@ mod tests {
 
     #[test]
     fn clean_log_toglie_i_controlli_e_tronca() {
-        // il caso vero: una riga finta iniettata con un a capo
         let forgiato = "login fallito\nERROR utente admin cancellato dal sistema";
         let pulito = clean_log(forgiato);
         assert!(!pulito.contains('\n'), "niente a capo: una riga resta una riga");
@@ -3469,7 +3452,7 @@ mod tests {
 
     #[test]
     fn clean_log_non_spezza_i_caratteri_multibyte() {
-        // take() conta caratteri, non byte: troncare a metà di una é darebbe una String invalida
+        // 20260806 ++ RG #Security take() conta caratteri, non byte: troncare a metà di una é darebbe una String invalida.
         let accentato = "à".repeat(MAX_LOG_FIELD * 2);
         let troncato = clean_log(&accentato);
         assert_eq!(troncato.chars().count(), MAX_LOG_FIELD + 1);

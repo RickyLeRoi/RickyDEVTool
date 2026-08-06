@@ -1,6 +1,5 @@
-// 20260804 ++ RG #RickyAI due parti: il supervisore accende (o adotta) `of-free serve` su 127.0.0.1,
-// il proxy /api/ai/chat lo espone alla SPA. L'endpoint non ha autenticazione:
-// in LAN ci si arriva solo dal proxy, mai aprendo la sua porta.
+// 20260804 RG due parti: il supervisore accende (o adotta) `of-free serve` su 127.0.0.1, il proxy
+// /api/ai/chat lo espone alla SPA. L'endpoint non ha autenticazione: in LAN si passa dal proxy.
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -21,8 +20,8 @@ pub const STRATEGIES: &[&str] = &["balanced", "fast", "local"];
 
 pub const MODES: &[&str] = &["local", "remote"];
 
-// 20260804 ++ RG #RickyAI lista chiusa: solo queste variabili finiscono nell'environment di of-free,
-// così una chiave inventata nella config non diventa una variabile arbitraria.
+// 20260804 RG lista chiusa: solo queste variabili finiscono nell'environment di of-free, così una
+// chiave inventata nella config non diventa una variabile arbitraria.
 pub const PROVIDER_KEYS: &[(&str, &str, &str)] = &[
     ("groq", "Groq", "GROQ_API_KEY"),
     ("google", "Google AI Studio", "GEMINI_API_KEY"),
@@ -226,7 +225,7 @@ impl AiService {
             }),
             restart: Notify::new(),
             client: reqwest::Client::builder()
-                // 20260804 ++ RG #RickyAI un HTTP_PROXY di sistema non deve intercettare le chiamate a 127.0.0.1.
+                // 20260804 RG un HTTP_PROXY di sistema non deve intercettare le chiamate a 127.0.0.1.
                 .no_proxy()
                 .build()
                 .expect("client http"),
@@ -421,8 +420,7 @@ async fn supervise(service: Arc<AiService>) {
 
 async fn run_once(service: &Arc<AiService>, cfg: &AppConfig) -> Outcome {
     if is_remote(cfg) {
-        // 20260804 ++ RG #RickyAI senza indirizzo non è un errore di configurazione ma un passo
-        // ancora da fare: lo si dice così, non con "indirizzo non valido: ...".
+        // 20260804 RG senza indirizzo non è un errore di configurazione ma un passo ancora da fare.
         let Some(raw) = cfg.ai_remote_url.as_deref().filter(|u| !u.trim().is_empty()) else {
             service.set_state(
                 AiState::Failed,
@@ -622,8 +620,8 @@ async fn watch_remote(service: &Arc<AiService>, base: &str, key: Option<&str>) -
             s.base_url = base.to_string();
             s.port = port_of(base);
             s.models = Vec::new();
-            // 20260805 ++ RG #ReteLocale se manca il permesso macOS ogni indirizzo in LAN
-            // risulta irraggiungibile: dirlo, invece di far sospettare il servizio o la chiave.
+            // 20260805 RG senza il permesso macOS ogni indirizzo in LAN risulta irraggiungibile: dirlo,
+            // invece di far sospettare il servizio o la chiave.
             let stato = crate::adapters::localnetwork::status();
             s.message = Some(if stato.supported && !stato.granted {
                 format!(
@@ -751,14 +749,14 @@ pub struct Endpoint {
 }
 
 async fn probe(client: &reqwest::Client, base: &str, key: Option<&str>) -> Option<Endpoint> {
-    // 20260804 ++ RG #RickyAI /v1/models e non /health: quest'ultimo è solo di of-free, gli altri danno 404.
+    // 20260804 RG /v1/models e non /health: quest'ultimo è solo di of-free, gli altri danno 404.
     let url = format!("{base}/v1/models");
     let mut request = client.get(&url).timeout(PROBE_TIMEOUT);
     if let Some(key) = auth_key(key) {
         request = request.bearer_auth(key);
     }
-    // 20260805 ++ RG #RickyAI l'errore di trasporto va a log: senza, un blocco di sistema e un
-    // servizio spento sono indistinguibili e il messaggio all'utente tira a indovinare.
+    // 20260805 RG l'errore di trasporto va a log: senza, un blocco di sistema e un servizio spento
+    // sono indistinguibili.
     let response = match request.send().await {
         Ok(response) => response,
         Err(e) => {
@@ -771,7 +769,7 @@ async fn probe(client: &reqwest::Client, base: &str, key: Option<&str>) -> Optio
     }
     let body = response.json::<Value>().await.ok()?;
     let models = model_ids(&body);
-    // 20260804 ++ RG #RickyAI Ollama senza modelli scaricati risponde 200 con `data: []`: non è pronto.
+    // 20260804 RG Ollama senza modelli scaricati risponde 200 con `data: []`: non è pronto.
     if models.is_empty() {
         return None;
     }
@@ -829,7 +827,7 @@ pub fn serve_args(cfg: &AppConfig, port: u16) -> Vec<String> {
     let mut args = Vec::new();
     args.push("serve".to_string());
     args.push("--host".to_string());
-    // 20260804 ++ RG #RickyAI mai 0.0.0.0: l'endpoint non ha autenticazione.
+    // 20260804 RG mai 0.0.0.0: l'endpoint non ha autenticazione.
     args.push("127.0.0.1".to_string());
     args.push("--port".to_string());
     args.push(port.to_string());
@@ -875,13 +873,13 @@ fn spawn_serve(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
-    // 20260804 ++ RG #RickyAI process group proprio: un solo segnale termina python e i suoi figli.
+    // 20260804 RG process group proprio: un solo segnale termina python e i suoi figli.
     command.process_group(0);
     command.spawn()
 }
 
-// 20260804 ++ RG #RickyAI non la home: of-free si ferma al primo `.env` che trova partendo dalla cwd,
-// e un ~/.env di altro contenuto gli nasconderebbe ~/.onfeather/.env.
+// 20260804 RG non la home: of-free si ferma al primo `.env` che trova partendo dalla cwd, e un
+// ~/.env di altro contenuto gli nasconderebbe ~/.onfeather/.env.
 fn working_dir() -> std::path::PathBuf {
     crate::config::data_dir()
 }
@@ -964,8 +962,8 @@ pub fn effective_model(requested: Option<&str>, status: &AiStatus) -> String {
     if status.of_free {
         return requested.to_string();
     }
-    // 20260804 ++ RG #RickyAI `auto` e `private` esistono solo dentro of-free: altrove sono modelli
-    // inesistenti, quindi si ripiega sul primo della lista.
+    // 20260804 RG `auto` e `private` esistono solo dentro of-free: altrove sono modelli inesistenti,
+    // quindi si ripiega sul primo della lista.
     if matches!(requested, "auto" | "private" | "local") {
         return status
             .models
@@ -979,7 +977,7 @@ pub fn effective_model(requested: Option<&str>, status: &AiStatus) -> String {
 pub fn build_payload(request: &ChatRequest, system_prompt: &str, model: &str) -> Value {
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len() + 1);
     let system = system_prompt.trim();
-    // 20260804 ++ RG #RickyAI solo se la conversazione non porta già il suo system: due si contraddicono.
+    // 20260804 RG solo se la conversazione non porta già il suo system: due si contraddicono.
     if !system.is_empty() && request.messages.first().map(|m| m.role.as_str()) != Some("system") {
         messages.push(json!({ "role": "system", "content": system }));
     }
@@ -990,7 +988,7 @@ pub fn build_payload(request: &ChatRequest, system_prompt: &str, model: &str) ->
     let mut payload = json!({
         "model": model,
         "messages": messages,
-        // 20260804 ++ RG #RickyAI of-free rifiuta `stream: true` con un 400: qui non deve poterci finire.
+        // 20260804 RG of-free rifiuta `stream: true` con un 400: qui non deve poterci finire.
         "stream": false,
     });
     if let Some(temperature) = request.temperature {
@@ -1105,8 +1103,8 @@ pub fn extract_content(body: &Value) -> Option<String> {
     let content = body.pointer("/choices/0/message/content")?;
     let text = match content {
         Value::String(s) => s.clone(),
-        // 20260804 ++ RG #RickyAI alcuni provider rispondono a blocchi `[{type:"text", …}]` invece che
-        // con una stringa: senza questo ramo la chat resta muta.
+        // 20260804 RG alcuni provider rispondono a blocchi `[{type:"text", …}]` invece che con una
+        // stringa: senza questo ramo la chat resta muta.
         Value::Array(parts) => parts
             .iter()
             .filter_map(|part| part.get("text").and_then(Value::as_str))

@@ -9,7 +9,7 @@ use crate::events::{now_ms, EventBus};
 
 const PEER_TTL_MS: u64 = 45_000;
 const TRANSFER_TTL_MS: u64 = 3_600_000;
-// 20260806 ++ RG #Drop la rivendicazione di un deviceId sopravvive alla presenza: se scadesse
+// 20260806 ++ RG #Security la rivendicazione di un deviceId sopravvive alla presenza: se scadesse
 // coi 45s dei peer, basterebbe aspettare che il telefono chiuda l'app per prenderne il canale.
 const CLAIM_TTL_MS: u64 = 24 * 3_600_000;
 const MAX_TEXT_LEN: usize = 64 * 1024;
@@ -31,7 +31,6 @@ struct Transfer {
     path: PathBuf,
     saved_path: Option<String>,
     created_at: u64,
-    // a chi era destinato: serve a impedire che un altro device abbinato lo scarichi
     to_device: String,
 }
 
@@ -51,8 +50,8 @@ pub struct DropService {
     received_dir: PathBuf,
 }
 
-// 20260806 ++ RG #Drop il deviceId è pubblico (sta nell'elenco dei peer e serve come "to"):
-// a decidere chi può *ricevere* su un canale è questo segreto, che non lascia mai il device.
+// 20260806 ++ RG #Security il deviceId è pubblico: a decidere chi può ricevere su un canale è
+// questo segreto, che non lascia mai il device.
 fn secret_matches(expected: &str, given: &str) -> bool {
     if expected.is_empty() || expected.len() != given.len() {
         return false;
@@ -123,7 +122,7 @@ impl DropService {
                 .unwrap_or_else(crate::config::data_dir)
                 .join("RickyDEVTool"),
         );
-        // 20260806 RG new() svuota transfer_dir: due istanze che condividono la cartella si
+        // 20260806 ++ RG #Security new() svuota transfer_dir: due istanze che condividono la cartella si
         // cancellano i file a vicenda, e i test non devono scrivere nei Download veri.
         #[cfg(test)]
         let (transfer_dir, received_dir) = {
@@ -164,9 +163,8 @@ impl DropService {
         self.hub_registry.clear();
     }
 
-    // 20260806 ++ RG #Drop primo che arriva si prende il deviceId: chi lo rivendica dopo con
-    // un segreto diverso viene respinto, altrimenti basterebbe leggere /api/drop/peers e
-    // ripresentarsi con l'id della vittima per dirottarne il canale.
+    // 20260806 ++ RG #Security primo che arriva si prende il deviceId: senza questo basterebbe leggere
+    // /api/drop/peers e ripresentarsi con l'id della vittima per dirottarne il canale.
     pub fn hello(
         &self,
         device_id: &str,
@@ -214,7 +212,6 @@ impl DropService {
         Ok(self.peers_except(device_id))
     }
 
-    // chi presenta il segreto giusto è il proprietario del canale drop:{device_id}
     pub fn owns_channel(&self, device_id: &str, secret: &str) -> bool {
         let now = now_ms();
         let claims = self.claims.lock().expect("claims lock");
@@ -267,8 +264,8 @@ impl DropService {
             .peer_is_desktop(to_device)
             .ok_or("destinatario non più connesso")?;
         let name = sanitize_name(file_name);
-        // 20260806 ++ RG #Drop id opaco, non un contatore: era enumerabile (d1, d2, d3…) e
-        // /api/drop/download lo serviva a chiunque lo indovinasse.
+        // 20260806 ++ RG #Security id opaco, non un contatore: era enumerabile (d1, d2, d3…) e il download
+        // lo serviva a chiunque lo indovinasse.
         let id = format!("d-{}", random_hex(16));
         let path = if is_desktop {
             let _ = std::fs::create_dir_all(&self.received_dir);
@@ -353,8 +350,8 @@ impl DropService {
             .ok_or("percorso file non valido")?;
 
         if let Some(hub) = self.remote_hub(to) {
-            // 20260806 RG la dimensione si legge dai metadati: leggere il file e *poi*
-            // rifiutarlo vorrebbe dire allocarlo comunque tutto, come faceva drop_send.
+            // 20260806 ++ RG #Security la dimensione si legge dai metadati: leggere il file e poi rifiutarlo
+            // vorrebbe dire allocarlo comunque tutto.
             let declared = tokio::fs::metadata(source).await.map_err(|e| e.to_string())?.len();
             if declared > MAX_PROXY_BYTES as u64 {
                 return Err(format!(
@@ -431,9 +428,8 @@ impl DropService {
         Ok(())
     }
 
-    // 20260806 ++ RG #Drop l'id casuale è già una capability, ma il file resta legato al
-    // destinatario: chi scarica deve provare di possedere il canale a cui era indirizzato.
-    // Il desktop (loopback) può sempre riprendersi i propri.
+    // 20260806 ++ RG #Security l'id casuale è già una capability, ma il file resta legato al
+    // destinatario: chi scarica deve possedere il canale a cui era indirizzato. Il desktop no.
     pub fn transfer_file(
         &self,
         id: &str,
@@ -580,7 +576,6 @@ mod tests {
         let service = test_service();
         service.hello("vittima", SEGRETO_A, "iPhone", false).expect("primo hello");
 
-        // l'attaccante legge il deviceId da /api/drop/peers e prova a ripresentarsi come lui
         let esito = service.hello("vittima", SEGRETO_B, "iPhone", false);
         assert!(esito.is_err(), "il deviceId altrui non si può rivendicare");
 
@@ -588,7 +583,6 @@ mod tests {
         assert!(!service.owns_channel("vittima", SEGRETO_B));
         assert!(!service.owns_channel("vittima", ""));
 
-        // il legittimo proprietario continua a rinnovare la presenza
         assert!(service.hello("vittima", SEGRETO_A, "iPhone", false).is_ok());
     }
 
@@ -649,7 +643,6 @@ mod tests {
 
         assert_ne!(primo, secondo);
         assert!(primo.starts_with("d-") && primo.len() == 34, "16 byte esadecimali: {primo}");
-        // il vecchio schema era d1, d2, d3…: da un id non si deve poter dedurre il successivo
         assert!(!primo.chars().skip(2).all(|c| c.is_ascii_digit()));
     }
 

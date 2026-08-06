@@ -2,12 +2,9 @@ const ID_KEY = "rdt-device-id";
 const NAME_KEY = "rdt-device-name";
 const SECRET_KEY = "rdt-device-secret";
 
-// 20260806 ++ RG #Drop il deviceId è pubblico (compare nell'elenco dei peer): a dimostrare che
-// il canale drop: è nostro è il segreto, che non esce mai dal device. Serve entropia vera,
-// non Math.random come per l'id.
-//
-// I due nascono insieme: il server lega l'id al segreto che l'ha rivendicato per primo, quindi
-// tenerne uno senza l'altro significherebbe farsi rifiutare finché la rivendicazione non scade.
+// 20260806 ++ RG #Security il deviceId è pubblico: a dimostrare che il canale drop: è nostro è il
+// segreto, che non esce mai dal device — serve entropia vera, non Math.random. I due nascono
+// insieme: il server lega l'id al segreto che l'ha rivendicato per primo.
 function identity(): { id: string; secret: string } {
   const id = localStorage.getItem(ID_KEY);
   const secret = localStorage.getItem(SECRET_KEY);

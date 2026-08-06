@@ -21,8 +21,8 @@ struct Beacon {
     hub_id: String,
     name: String,
     http_port: u16,
-    // 20260806 ++ RG #Drop HMAC-SHA256 del beacon col codice hub condiviso. Senza di lui
-    // chiunque in LAN si registrava come hub e saltava il pairing su /api/drop/send.
+    // 20260806 ++ RG #Security HMAC-SHA256 del beacon col codice hub condiviso: senza, chiunque in
+    // LAN si registrava come hub e saltava il pairing su /api/drop/send.
     #[serde(default)]
     sig: String,
 }
@@ -43,8 +43,8 @@ fn beacon_signature(hub_id: &str, name: &str, http_port: u16, code: &str) -> Str
         .collect()
 }
 
-// 20260806 ++ RG #Drop il codice è normalizzato prima dell'uso: l'utente lo ridigita a mano
-// sull'altro PC, spazi e maiuscole non devono farlo fallire.
+// 20260806 ++ RG #Security il codice si ridigita a mano sull'altro PC: spazi e maiuscole non
+// devono farlo fallire.
 pub fn normalize_hub_code(code: &str) -> String {
     code.chars()
         .filter(|c| c.is_ascii_alphanumeric())
@@ -57,7 +57,6 @@ fn signature_valid(beacon: &Beacon, code: &str) -> bool {
         return false;
     }
     let expected = beacon_signature(&beacon.hub_id, &beacon.name, beacon.http_port, code);
-    // confronto a tempo costante: le due firme hanno sempre la stessa lunghezza
     if expected.len() != beacon.sig.len() {
         return false;
     }
@@ -104,8 +103,8 @@ impl HubRegistry {
         self.hubs.lock().expect("hubs lock").insert(hub.hub_id.clone(), hub);
     }
 
-    // 20260806 ++ RG #Drop cambiare il codice invalida gli hub già scoperti: erano stati
-    // verificati con la chiave vecchia, si devono riannunciare con quella nuova.
+    // 20260806 ++ RG #Security cambiare il codice invalida gli hub già scoperti: erano verificati
+    // con la chiave vecchia.
     pub fn clear(&self) {
         self.hubs.lock().expect("hubs lock").clear();
     }
@@ -153,8 +152,8 @@ fn reusable_udp_socket(port: u16) -> std::io::Result<UdpSocket> {
     UdpSocket::from_std(socket.into())
 }
 
-// 20260806 ++ RG #Drop nome e codice si rileggono a ogni giro: cambiarli dalle Impostazioni
-// deve avere effetto senza riavviare l'app. Codice vuoto = nessun beacon, la funzione è spenta.
+// 20260806 ++ RG #Security nome e codice si rileggono a ogni giro, così cambiarli ha effetto
+// senza riavviare. Codice vuoto = nessun beacon, la funzione è spenta.
 async fn beacon_loop(hub_id: String, config: ConfigHandle, http_port: u16) -> std::io::Result<()> {
     let socket = reusable_udp_socket(0)?;
     socket.set_broadcast(true)?;
@@ -203,8 +202,6 @@ fn handle_packet(
     if beacon.app != MAGIC || beacon.hub_id == self_hub_id {
         return;
     }
-    // un hub entra nel registro solo se prova di conoscere il codice condiviso: da qui in poi
-    // auth_middleware si fida di lui per saltare il pairing sui drop hub-to-hub.
     if !signature_valid(&beacon, code) {
         tracing::debug!(hub = %beacon.hub_id, %from, "beacon hub scartato: firma assente o non valida");
         return;
@@ -269,8 +266,6 @@ mod tests {
         let registry = HubRegistry::new();
         let from: SocketAddr = "10.0.0.66:1234".parse().unwrap();
 
-        // com'era prima del fix: nessuna firma. È il caso dell'estraneo in LAN che si
-        // registra come hub e poi salta il pairing su /api/drop/send.
         let nudo = serde_json::to_vec(&Beacon {
             app: MAGIC.into(),
             hub_id: "hub-ostile".into(),
@@ -286,7 +281,6 @@ mod tests {
         handle_packet(&firma_sbagliata, from, "hub-self", CODICE, &registry);
         assert!(registry.list().is_empty(), "firma con un altro codice non vale");
 
-        // e nemmeno riusando una firma valida su un beacon manomesso
         let mut manomesso: Beacon =
             serde_json::from_slice(&beacon_firmato("hub-remoto", "PC Windows", 6970, CODICE))
                 .unwrap();
@@ -306,8 +300,7 @@ mod tests {
         let registry = HubRegistry::new();
         let from: SocketAddr = "10.0.0.5:1234".parse().unwrap();
 
-        // il codice vuoto non deve diventare "chiave vuota che valida tutto": la funzione
-        // hub-to-hub è semplicemente spenta.
+        // 20260806 ++ RG #Security il codice vuoto non deve diventare "chiave vuota che valida tutto".
         handle_packet(&beacon_firmato("hub-remoto", "PC", 6970, ""), from, "hub-self", "", &registry);
         assert!(registry.list().is_empty());
         handle_packet(&beacon_firmato("hub-remoto", "PC", 6970, CODICE), from, "hub-self", "", &registry);
@@ -320,7 +313,6 @@ mod tests {
         assert_eq!(normalize_hub_code(" k7f2 9m4x tq81 "), CODICE);
         assert_eq!(normalize_hub_code(""), "");
 
-        // due PC che scrivono lo stesso codice in modo diverso si devono comunque vedere
         let registry = HubRegistry::new();
         let from: SocketAddr = "10.0.0.5:1234".parse().unwrap();
         let beacon = beacon_firmato("hub-remoto", "PC", 6970, &normalize_hub_code("K7F2-9M4X-TQ81"));

@@ -25,18 +25,11 @@ fn docker_cmd(host: Option<&str>) -> tokio::process::Command {
 
 const CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
-// 20260806 ++ RG #Docker ogni invocazione è uno spawn di processo, e su host ssh:// anche un
-// round-trip SSH. Due cache tengono giù il conto:
-//  - la presenza della CLI cambia solo se si installa Docker: TTL lungo;
-//  - il `docker ps` è condiviso fra /api/docker e /api/docker/images.
-//
-// PS_TTL sta appena sotto i 5s di poll della UI: il pannello container continua a rinfrescarsi
-// al suo ritmo, mentre quello immagini — che poll a parte ma quasi in fase — riusa la stessa
-// lettura invece di farne una sua. Serve anche a fondere le richieste che arrivano *mentre*
-// una chiamata lenta è in corso, che prima si accodavano una per una fino al timeout.
-// Il prezzo è fino a PS_TTL di ritardo su un cambiamento avvenuto fuori dall'app; le azioni
-// fatte da qui invalidano esplicitamente, quindi la UI non mostra mai il proprio effetto in
-// ritardo.
+// 20260806 ++ RG #Security ogni invocazione è uno spawn di processo, e su host ssh:// anche un
+// round-trip SSH: due cache lo tengono giù. PS_TTL sta appena sotto i 5s di poll della UI, così i
+// pannelli container e immagini riusano la stessa lettura invece di farne una a testa, e le
+// richieste che arrivano mentre una chiamata lenta è in corso si fondono in quella. Le azioni
+// fatte da qui invalidano esplicitamente.
 const AVAILABLE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 const PS_TTL: std::time::Duration = std::time::Duration::from_millis(4000);
 
@@ -52,7 +45,6 @@ impl<T: Clone> TtlCache<T> {
 
     fn get(&self, key: &str, now: std::time::Instant) -> Option<T> {
         match &self.entry {
-            // chiave diversa = host Docker cambiato: la voce vecchia non vale più
             Some((k, at, v)) if k == key && now.duration_since(*at) < self.ttl => Some(v.clone()),
             _ => None,
         }
@@ -72,7 +64,7 @@ static AVAILABLE_CACHE: std::sync::LazyLock<tokio::sync::Mutex<TtlCache<bool>>> 
 static PS_CACHE: std::sync::LazyLock<tokio::sync::Mutex<TtlCache<DockerState>>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(TtlCache::new(PS_TTL)));
 
-// 20260806 ++ RG #Docker dopo un'azione la UI ricarica subito: il TTL non deve farle vedere
+// 20260806 ++ RG #Security dopo un'azione la UI ricarica subito: il TTL non deve mostrarle
 // il container ancora nello stato di prima.
 pub async fn invalidate_state() {
     PS_CACHE.lock().await.clear();
@@ -133,8 +125,8 @@ async fn docker_available() -> bool {
     fresh
 }
 
-// il lock è tenuto anche durante la chiamata: chi arriva mentre un `docker ps` lento è in
-// corso aspetta quello invece di aprirne un altro, ed è il caso che faceva accodare i processi
+// 20260806 ++ RG #Security il lock è tenuto anche durante la chiamata: chi arriva mentre un
+// `docker ps` lento è in corso aspetta quello invece di aprirne un altro.
 pub async fn state(host: Option<&str>) -> DockerState {
     let key = host.unwrap_or_default();
     let mut cache = PS_CACHE.lock().await;
@@ -261,8 +253,8 @@ pub struct Image {
     pub unused: bool,
 }
 
-// 20260806 ++ RG #Docker i riferimenti immagine dei container si ricavano dal `docker ps` che
-// state() ha già fatto: era una seconda invocazione identica alla prima.
+// 20260806 ++ RG #Security i riferimenti immagine si ricavano dal `docker ps` che state() ha già
+// fatto: era una seconda invocazione identica alla prima.
 async fn used_image_refs(host: Option<&str>) -> std::collections::HashSet<String> {
     state(host)
         .await
@@ -288,10 +280,8 @@ pub async fn images(host: Option<&str>) -> Vec<Image> {
     };
     let used = used_image_refs(host).await;
 
-    // 20260806 ++ RG #Docker `docker image inspect` serviva solo a risolvere i riferimenti in
-    // id canonici, e la stessa risposta sta già nell'elenco appena scaricato. Si interroga il
-    // daemon solo per quel che non si riesce a risolvere in casa (ref per digest, immagini
-    // non elencate): nel caso normale è zero invocazioni invece di una.
+    // 20260806 ++ RG #Security la risposta di `docker image inspect` sta già nell'elenco appena
+    // scaricato: si interroga il daemon solo per ciò che non si risolve in casa (ref per digest).
     let (mut used_ids, unresolved) = resolve_refs_locally(&images, &used);
     if !unresolved.is_empty() {
         used_ids.extend(used_image_ids(host, &unresolved).await);
@@ -425,7 +415,6 @@ pub async fn action(host: Option<&str>, id: &str, action: &str) -> Result<(), Do
     let mut cmd = docker_cmd(host);
     cmd.args([verb, id]);
     let output = run(cmd).await.map_err(DockerError::Failed)?;
-    // lo stato dei container è appena cambiato: la prossima lettura deve andare al daemon
     invalidate_state().await;
     if output.status.success() {
         Ok(())
@@ -627,15 +616,14 @@ mod tests {
         assert!(!image_in_use(&img("<none>", "<none>", "deadbeef0000"), &used));
     }
 
-    // 20260806 RG contract test: serve la CLI docker installata (non il daemon acceso).
-    // Misura la cosa che il finding chiedeva davvero, cioè che il processo non venga rilanciato.
+    // 20260806 ++ RG #Security contract test: serve la CLI docker installata, non il daemon acceso.
     #[tokio::test]
     #[ignore]
     async fn state_non_rilancia_docker_ps_entro_il_ttl() {
         use std::time::Instant;
 
         invalidate_state().await;
-        let _ = docker_available().await; // scalda la cache della CLI, che ha un TTL suo
+        let _ = docker_available().await;
 
         let t = Instant::now();
         let _ = state(None).await;
@@ -698,7 +686,7 @@ mod tests {
         };
         let images = vec![
             img("nginx", "latest", "aaaa111122223333"),
-            img("nginx", "1.25", "aaaa111122223333"), // stessa immagine, secondo tag
+            img("nginx", "1.25", "aaaa111122223333"),
             img("redis", "6", "bbbb444455556666"),
             img("<none>", "<none>", "cccc777788889999"),
         ];
@@ -717,13 +705,11 @@ mod tests {
         assert!(ids.contains("bbbb444455556666"), "risolto per tag non-latest");
         assert!(ids.contains("cccc777788889999"), "risolto per id");
 
-        // un `redis` nudo vale redis:latest, che qui non c'è: va chiesto al daemon
         let nudo: std::collections::HashSet<String> = ["redis".to_string()].into_iter().collect();
         let (ids, unresolved) = resolve_refs_locally(&images, &nudo);
         assert!(ids.is_empty());
         assert_eq!(unresolved, vec!["redis".to_string()]);
 
-        // ed è il motivo per cui il fallback resta: un ref per digest non sta nell'elenco
         let per_digest: std::collections::HashSet<String> =
             ["repo/app@sha256:0123456789abcdef".to_string()].into_iter().collect();
         let (ids, unresolved) = resolve_refs_locally(&images, &per_digest);
@@ -733,8 +719,6 @@ mod tests {
 
     #[test]
     fn risolvere_un_tag_marca_usati_tutti_i_tag_della_stessa_immagine() {
-        // è il motivo per cui la risoluzione ref -> id esiste: il container usa nginx:latest,
-        // ma anche la riga nginx:1.25 è la stessa immagine e non va data per inutilizzata
         let img = |repo: &str, tag: &str, id: &str| Image {
             id: id.into(),
             repository: repo.into(),

@@ -4,8 +4,8 @@ import { getDeviceSecret } from "../../lib/device";
 import { fmtBytes } from "../../lib/format";
 import { useDropStore } from "../../stores/dropStore";
 
-// 20260806 ++ RG #Drop il segreto del device viaggia in un header, non nella URL: un <a href>
-// finirebbe nella cronologia e nei log. Quindi scarichiamo via fetch e salviamo il blob.
+// 20260806 ++ RG #Security il segreto del device viaggia in un header, non nella URL: un <a href>
+// finirebbe nella cronologia e nei log. Quindi fetch + blob.
 async function scarica(transferId: string, name: string): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/api/drop/download/${transferId}`, {

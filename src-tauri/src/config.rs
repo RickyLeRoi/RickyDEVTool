@@ -28,13 +28,12 @@ pub struct AppConfig {
     pub push_min_severity: String,
     pub drop_hub_id: String,
     pub drop_hub_name: String,
-    // 20260806 ++ RG #Drop segreto condiviso fra i PC dell'utente: firma i beacon di discovery
-    // e abilita l'invio hub-to-hub. Vuoto = funzione spenta, non "aperta a tutti".
+    // 20260806 ++ RG #Security segreto condiviso fra i PC dell'utente: firma i beacon di discovery e
+    // abilita l'invio hub-to-hub. Vuoto = funzione spenta, non "aperta a tutti".
     #[serde(default)]
     pub drop_hub_code: String,
-    // 20260806 ++ RG #Pairing una sessione per device abbinato. Il cookie porta il `id` di
-    // questa struct, non più il pair_token: così il token serve solo al primo scambio e una
-    // sessione si può revocare senza buttare fuori tutti gli altri.
+    // 20260806 ++ RG #Security una sessione per device abbinato: il cookie porta l'id di questa struct
+    // e non più il pair_token, così una sessione si revoca senza buttare fuori le altre.
     #[serde(default)]
     pub pair_sessions: Vec<PairSession>,
     pub launch_bundles: Vec<crate::services::launch::LaunchBundle>,
@@ -46,7 +45,7 @@ pub struct AppConfig {
     pub ssh_hosts: Vec<crate::services::ssh::SshHost>,
     #[serde(default)]
     pub alert_thresholds: AlertThresholds,
-    // 20260804 ++ RG #RickyAI niente `#[serde(default)]` su questi campi: scavalca il Default della
+    // 20260804 RG niente `#[serde(default)]` su questi campi: scavalca il Default della
     // struct e ricade su quello del tipo, cioè RickyAI spenta su ogni config già esistente.
     pub ai_enabled: bool,
     pub ai_mode: String,
@@ -120,8 +119,6 @@ impl Default for AppConfig {
             ssh_hosts: Vec::new(),
             alert_thresholds: AlertThresholds::default(),
             ai_enabled: false,
-            // 20260804 ++ RG #RickyAI si parte dal servizio in rete: è il caso comune, il locale
-            // richiede of-free installato sulla macchina.
             ai_mode: "remote".to_string(),
             ai_remote_url: None,
             ai_remote_key: None,
@@ -224,8 +221,8 @@ fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-// 20260806 RG confronto a tempo costante: qui passano token di pairing e id di sessione, e
-// un `==` su stringhe esce al primo byte diverso.
+// 20260806 ++ RG #Security confronto a tempo costante: qui passano token di pairing e id di
+// sessione, e un `==` su stringhe esce al primo byte diverso.
 pub fn secret_eq(a: &str, b: &str) -> bool {
     if a.is_empty() || a.len() != b.len() {
         return false;
@@ -239,8 +236,8 @@ pub(crate) fn generate_token() -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// 20260806 ++ RG #Drop il codice hub va letto a voce e ridigitato sull'altro PC: alfabeto
-// senza caratteri ambigui (niente 0/O, 1/I/L) e gruppi da 4. 12 caratteri = ~60 bit.
+// 20260806 ++ RG #Security il codice si legge a voce e si ridigita: alfabeto senza caratteri
+// ambigui (niente 0/O, 1/I/L) e gruppi da 4. 12 caratteri = ~60 bit.
 pub fn generate_hub_code() -> String {
     const ALPHABET: &[u8] = b"23456789abcdefghjkmnpqrstuvwxyz";
     let mut buf = [0u8; 12];

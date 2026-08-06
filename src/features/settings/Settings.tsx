@@ -24,7 +24,7 @@ export function Settings() {
   const [hubCodeDraft, setHubCodeDraft] = useState("");
   const [hubCodeError, setHubCodeError] = useState<string | null>(null);
   const [devices, setDevices] = useState<PairedDevice[]>([]);
-  // il QR è un <img>: dopo una rotazione va rifatta la richiesta, non riletta la cache
+  // 20260806 ++ RG #Security il QR è un <img>: dopo una rotazione va rifatta la richiesta, non letta la cache.
   const [qrSeq, setQrSeq] = useState(0);
 
   const loadDevices = () =>

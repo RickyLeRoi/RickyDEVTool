@@ -24,8 +24,7 @@ export function usePresence() {
       addIncoming(data);
     };
 
-    // 20260806 ++ RG #Drop il canale dell'hub raccoglie i drop dagli altri PC ed è del
-    // desktop: dal telefono il server lo nega, quindi non lo sottoscriviamo nemmeno.
+    // 20260806 ++ RG #Security il canale dell'hub è del desktop: dal telefono il server lo nega.
     api<{ hubId: string; isDesktop: boolean }>("/api/drop/self").then((r) => {
       if (!stopped && r.ok && r.data.isDesktop) {
         unsubHub = ws.subscribe(`drop:${r.data.hubId}`, (event) => {
@@ -34,9 +33,8 @@ export function usePresence() {
       }
     });
 
-    // il canale personale si sottoscrive dopo il primo hello: prima il server non conosce
-    // ancora la rivendicazione e negherebbe. Gli hello successivi la riaffermano, così un
-    // riavvio del server non lascia il device muto.
+    // 20260806 ++ RG #Security il canale personale si sottoscrive dopo il primo hello: prima il
+    // server non conosce la rivendicazione e negherebbe.
     let unsubMine: (() => void) | null = null;
     const hello = async () => {
       const r = await post<{ peers: DropPeer[] }>("/api/drop/hello", {

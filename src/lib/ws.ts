@@ -6,8 +6,8 @@ type Handler = (event: WsEvent) => void;
 class WsClient {
   private socket: WebSocket | null = null;
   private handlers = new Map<string, Set<Handler>>();
-  // 20260806 ++ RG #Drop l'auth va ricordata per topic: alla riconnessione il server rifà
-  // il controllo da zero e senza segreto le sottoscrizioni drop: verrebbero negate.
+  // 20260806 ++ RG #Security l'auth va ricordata per topic: alla riconnessione il server rifà il
+  // controllo da zero e senza segreto le sottoscrizioni drop: verrebbero negate.
   private auth = new Map<string, string>();
   private backoffMs = 500;
   private closed = false;
@@ -50,8 +50,8 @@ class WsClient {
     socket.onerror = () => socket.close();
   }
 
-  // 20260806 ++ RG #Drop le rivendicazioni dei canali drop: vivono in memoria nel server:
-  // se riparte, la sottoscrizione va riaffermata o il device smette di ricevere.
+  // 20260806 ++ RG #Security le rivendicazioni dei canali drop: vivono in RAM nel server: se
+  // riparte, la sottoscrizione va riaffermata o il device smette di ricevere.
   resubscribe(topic: string) {
     if (this.handlers.has(topic) && this.socket?.readyState === WebSocket.OPEN) {
       this.sendSubscribe(this.socket, topic);

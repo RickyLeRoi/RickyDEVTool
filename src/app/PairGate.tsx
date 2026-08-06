@@ -18,7 +18,7 @@ export function PairGate({ children }: { children: ReactNode }) {
     const match = window.location.hash.match(/#pair=([0-9a-f]+)/);
     if (match) {
       post("/api/pair", { token: match[1], deviceName: getDeviceName() }).then(() => {
-        // il token non deve restare nella barra degli indirizzi né nella cronologia
+        // 20260806 ++ RG #Security il token non deve restare nella barra degli indirizzi né in cronologia.
         history.replaceState(null, "", window.location.pathname);
         check();
       });

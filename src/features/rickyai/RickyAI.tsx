@@ -226,8 +226,7 @@ export function RickyAI() {
     await ask(thread.id, [...conversationFor(thread), { role: "user", content: text }]);
   };
 
-  // 20260804 ++ RG #RickyAI il messaggio dell'utente resta nel thread apposta: dopo un 429 si
-  // riprova quello, non lo si fa riscrivere.
+  // 20260804 RG il messaggio dell'utente resta nel thread apposta: dopo un 429 si riprova quello.
   const retry = () => {
     if (sending) return;
     const conversation = conversationFor(active);

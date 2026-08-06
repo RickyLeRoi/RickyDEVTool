@@ -4,7 +4,7 @@ import type { LocalNetworkStatus } from "../lib/types";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
 
-// 20260805 ++ RG #ReteLocale il popup di macOS si vede una volta sola.
+// 20260805 RG il popup di macOS si vede una volta sola.
 export function LocalNetworkBanner({ what }: { what: string }) {
   const [status, setStatus] = useState<LocalNetworkStatus | null>(null);
   const [recheckedStillOff, setRecheckedStillOff] = useState(false);

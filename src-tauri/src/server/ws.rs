@@ -13,7 +13,7 @@ use super::ServerState;
 enum ClientMessage {
     Subscribe {
         topic: String,
-        // segreto del device: obbligatorio per i canali drop:{deviceId}
+        // 20260806 ++ RG #Security segreto del device: obbligatorio per i canali drop:{deviceId}.
         #[serde(default)]
         auth: Option<String>,
     },
@@ -22,15 +22,10 @@ enum ClientMessage {
     },
 }
 
-// 20260806 ++ RG #Drop sottoscriversi è un permesso di lettura, non una preferenza: i drop
-// (file, testo, appunti di rete) sono per un destinatario preciso.
-//
-// Il topic "drop" nudo va negato a parte: handle_socket consegna un evento anche a chi ha
-// sottoscritto la sua *base*, quindi "drop" varrebbe come "drop:*".
-//
-// task:/tail: restano invece volutamente globali: gli stessi dati sono già leggibili da
-// qualunque device abbinato via GET /api/tasks e /api/tasks/{id}/log, restringere qui
-// darebbe l'illusione di un confine che il REST non ha.
+// 20260806 ++ RG #Security sottoscriversi è un permesso di lettura: i drop hanno un destinatario
+// preciso. Il topic "drop" nudo va negato a parte, perché handle_socket consegna anche a chi ha
+// sottoscritto la base e varrebbe come "drop:*". task:/tail: restano globali: gli stessi dati
+// sono già leggibili via REST da qualunque device abbinato.
 fn subscribe_allowed(
     drop: &crate::services::drop::DropService,
     topic: &str,
@@ -44,7 +39,6 @@ fn subscribe_allowed(
         return true;
     };
     if owner == drop.hub_id() {
-        // il canale dell'hub raccoglie i drop dagli altri PC: è del desktop
         return is_loopback;
     }
     drop.owns_channel(owner, auth.unwrap_or_default())
@@ -137,7 +131,6 @@ mod tests {
             subscribe_allowed(&drop, "drop:vittima", Some(SEGRETO), false),
             "il proprietario si sottoscrive al proprio canale"
         );
-        // il telefono ostile ha letto il deviceId da /api/drop/peers, ma non il segreto
         assert!(!subscribe_allowed(&drop, "drop:vittima", Some(ALTRO), false));
         assert!(!subscribe_allowed(&drop, "drop:vittima", None, false));
         assert!(
@@ -151,8 +144,6 @@ mod tests {
         let drop = servizio();
         drop.hello("vittima", SEGRETO, "iPhone", false).expect("hello");
 
-        // handle_socket consegna l'evento anche a chi ha sottoscritto la base del topic:
-        // senza questo divieto "drop" varrebbe come "drop:*" e aggirerebbe tutto il resto.
         assert!(!subscribe_allowed(&drop, "drop", Some(SEGRETO), false));
         assert!(!subscribe_allowed(&drop, "drop", None, true));
     }

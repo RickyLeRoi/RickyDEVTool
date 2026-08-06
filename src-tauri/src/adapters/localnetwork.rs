@@ -22,23 +22,20 @@ pub fn open_settings() -> Result<(), String> {
 mod imp {
     use std::net::UdpSocket;
 
-    // 20260805 ++ RG #ReteLocale macOS non espone un equivalente di AXIsProcessTrusted per la
-    // rete locale: l'unico modo di leggere il permesso è provare a usarlo.
+    // 20260805 RG macOS non espone un AXIsProcessTrusted per la rete locale: l'unico modo di
+    // leggere il permesso è provare a usarlo.
     const TRIGGER: &str = "224.0.0.251:5353";
 
     pub fn supported() -> bool {
         true
     }
 
-    // EHOSTUNREACH: è così che si presenta il diniego, e solo così. Un host spento dà timeout,
-    // un servizio chiuso dà ECONNREFUSED: nessuno dei due può essere scambiato per un diniego.
+    // 20260805 RG EHOSTUNREACH è come si presenta il diniego, e solo così: un host spento dà
+    // timeout, un servizio chiuso ECONNREFUSED.
     const EHOSTUNREACH: i32 = 65;
 
-    // Il dubbio si risolve sempre a favore del "concesso": un banner che non si può far sparire
-    // è peggio di un banner assente, e chi è offline ha comunque il servizio irraggiungibile.
+    // 20260805 RG nel dubbio si concede: un banner che non si può far sparire è peggio di uno assente.
     pub fn granted() -> bool {
-        // Senza un'interfaccia di rete attiva la sonda non dice niente sul permesso: qualunque
-        // invio fallirebbe comunque, quindi non c'è nulla da accusare.
         if crate::netinfo::lan_ips().is_empty() {
             return true;
         }
@@ -77,8 +74,8 @@ mod tests {
     #[test]
     fn fuori_da_macos_non_blocca_nulla() {
         let s = status();
-        // 20260805 ++ RG #ReteLocale dove il permesso non esiste `granted` deve restare true,
-        // altrimenti Windows e Linux si vedrebbero un banner che non possono risolvere.
+        // 20260805 RG dove il permesso non esiste `granted` resta true, o Windows e Linux si
+        // vedrebbero un banner che non possono risolvere.
         assert!(s.supported || s.granted);
     }
 }
