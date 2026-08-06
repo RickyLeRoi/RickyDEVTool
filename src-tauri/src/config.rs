@@ -28,6 +28,10 @@ pub struct AppConfig {
     pub push_min_severity: String,
     pub drop_hub_id: String,
     pub drop_hub_name: String,
+    // 20260806 ++ RG #Drop segreto condiviso fra i PC dell'utente: firma i beacon di discovery
+    // e abilita l'invio hub-to-hub. Vuoto = funzione spenta, non "aperta a tutti".
+    #[serde(default)]
+    pub drop_hub_code: String,
     pub launch_bundles: Vec<crate::services::launch::LaunchBundle>,
     #[serde(default)]
     pub docker_host: Option<String>,
@@ -95,6 +99,7 @@ impl Default for AppConfig {
             push_min_severity: "warning".to_string(),
             drop_hub_id: String::new(),
             drop_hub_name: String::new(),
+            drop_hub_code: String::new(),
             launch_bundles: Vec::new(),
             docker_host: None,
             snippets: Vec::new(),
@@ -205,10 +210,27 @@ fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn generate_token() -> String {
+pub(crate) fn generate_token() -> String {
     let mut buf = [0u8; 16];
     rand::rng().fill_bytes(&mut buf);
     buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// 20260806 ++ RG #Drop il codice hub va letto a voce e ridigitato sull'altro PC: alfabeto
+// senza caratteri ambigui (niente 0/O, 1/I/L) e gruppi da 4. 12 caratteri = ~60 bit.
+pub fn generate_hub_code() -> String {
+    const ALPHABET: &[u8] = b"23456789abcdefghjkmnpqrstuvwxyz";
+    let mut buf = [0u8; 12];
+    rand::rng().fill_bytes(&mut buf);
+    let chars: Vec<char> = buf
+        .iter()
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect();
+    chars
+        .chunks(4)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 #[cfg(test)]

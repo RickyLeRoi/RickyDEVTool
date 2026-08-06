@@ -1684,6 +1684,17 @@ button.ghost:hover {
   font-weight: 600;
   margin-bottom: 2px;
 }
+.setting-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.input-mono {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  letter-spacing: 0.06em;
+  min-width: 180px;
+}
 
 .qr-block {
   margin: 10px 0;

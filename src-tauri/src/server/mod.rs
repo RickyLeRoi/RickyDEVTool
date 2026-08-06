@@ -229,6 +229,7 @@ pub async fn start(
         .route("/api/drop/received/{name}", axum::routing::delete(drop_received_delete))
         .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
+        .route("/api/config/hub-code", get(hub_code_get).merge(post(hub_code_set)))
         .route("/api/ai/config", post(ai_config_set))
         .route("/api/system/open-accessibility", post(open_accessibility))
         .route("/api/system/open-local-network", post(open_local_network))
@@ -415,6 +416,9 @@ async fn auth_middleware(
     if peer.ip().is_loopback() || request.uri().path() == "/api/pair" {
         return next.run(request).await;
     }
+    // 20260806 RG questa scorciatoia vale quanto vale il registro degli hub: da quando i
+    // beacon sono firmati col codice condiviso, ci finisce solo chi lo conosce. Senza codice
+    // il registro resta vuoto e la scorciatoia non scatta mai.
     if matches!(request.uri().path(), "/api/drop/send" | "/api/drop/text") {
         if let Some(claimed) = request
             .headers()
@@ -2405,6 +2409,8 @@ async fn push_test(
 struct DropHelloBody {
     device_id: String,
     name: String,
+    #[serde(default)]
+    device_secret: String,
 }
 
 fn valid_device_id(id: &str) -> bool {
@@ -2419,10 +2425,15 @@ async fn drop_hello(
     if !valid_device_id(&body.device_id) {
         return internal_error("deviceId non valido".into());
     }
-    let peers = state
-        .drop
-        .hello(&body.device_id, &body.name, peer.ip().is_loopback());
-    Json(json!({ "ok": true, "data": { "peers": peers } })).into_response()
+    match state.drop.hello(
+        &body.device_id,
+        &body.device_secret,
+        &body.name,
+        peer.ip().is_loopback(),
+    ) {
+        Ok(peers) => Json(json!({ "ok": true, "data": { "peers": peers } })).into_response(),
+        Err(message) => internal_error(message),
+    }
 }
 
 #[derive(Deserialize)]
@@ -2439,12 +2450,61 @@ async fn drop_peers(
     Json(json!({ "ok": true, "data": { "peers": peers } }))
 }
 
-async fn drop_self(State(state): State<ServerState>) -> Json<serde_json::Value> {
-    Json(json!({ "ok": true, "data": { "hubId": state.drop.hub_id() } }))
+// 20260806 ++ RG #Drop isDesktop dice al client se può sottoscrivere il canale dell'hub:
+// quel canale è del desktop, il telefono non deve vedere i drop arrivati da altri PC.
+async fn drop_self(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Json<serde_json::Value> {
+    Json(json!({
+        "ok": true,
+        "data": { "hubId": state.drop.hub_id(), "isDesktop": peer.ip().is_loopback() }
+    }))
 }
 
 async fn drop_hubs(State(state): State<ServerState>) -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "data": { "hubs": state.drop.remote_hubs() } }))
+}
+
+// 20260806 ++ RG #Drop il codice hub è un segreto: la GET sta nel gruppo solo-desktop
+// insieme alla POST, un device abbinato non deve poterlo leggere.
+const MIN_HUB_CODE_LEN: usize = 8;
+
+#[derive(Deserialize)]
+struct HubCodeBody {
+    // assente = "generamene uno nuovo", stringa vuota = spegni l'invio tra PC
+    code: Option<String>,
+}
+
+async fn hub_code_get(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "data": { "code": state.config.get().drop_hub_code } }))
+}
+
+async fn hub_code_set(
+    State(state): State<ServerState>,
+    Json(body): Json<HubCodeBody>,
+) -> Response {
+    use crate::services::hubdiscovery::normalize_hub_code;
+
+    let code = match body.code {
+        None => crate::config::generate_hub_code(),
+        Some(raw) => {
+            let normalized = normalize_hub_code(&raw);
+            if normalized.is_empty() {
+                String::new()
+            } else if normalized.len() < MIN_HUB_CODE_LEN {
+                return internal_error(format!(
+                    "codice troppo corto: servono almeno {MIN_HUB_CODE_LEN} caratteri"
+                ));
+            } else {
+                raw.trim().to_string()
+            }
+        }
+    };
+    state.config.update(|c| c.drop_hub_code = code.clone());
+    state.drop.forget_hubs();
+    tracing::info!(attivo = !code.is_empty(), "codice hub aggiornato");
+    Json(json!({ "ok": true, "data": { "code": code } })).into_response()
 }
 
 const MAX_PROXY_BYTES: usize = crate::services::drop::MAX_PROXY_BYTES;
@@ -2559,16 +2619,39 @@ async fn drop_text(State(state): State<ServerState>, Json(body): Json<DropTextBo
     }
 }
 
-async fn drop_download(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
-    let Some((path, name)) = state.drop.transfer_file(&id) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "ok": false,
-                "error": { "code": "PATH_NOT_FOUND", "message": "trasferimento scaduto o inesistente", "retryable": false }
-            })),
-        )
-            .into_response();
+const DEVICE_SECRET_HEADER: &str = "x-rickydev-device-secret";
+
+async fn drop_download(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let secret = headers
+        .get(DEVICE_SECRET_HEADER)
+        .and_then(|v| v.to_str().ok());
+    let (path, name) = match state.drop.transfer_file(&id, secret, peer.ip().is_loopback()) {
+        Ok(found) => found,
+        Err(crate::services::drop::TransferError::Forbidden) => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "ok": false,
+                    "error": { "code": "NOT_RECIPIENT", "message": "questo trasferimento non è per questo dispositivo", "retryable": false }
+                })),
+            )
+                .into_response()
+        }
+        Err(crate::services::drop::TransferError::NotFound) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "ok": false,
+                    "error": { "code": "PATH_NOT_FOUND", "message": "trasferimento scaduto o inesistente", "retryable": false }
+                })),
+            )
+                .into_response()
+        }
     };
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
@@ -2930,6 +3013,19 @@ mod tests {
 
         let read = gruppo("let read = Router::new()", "let api = ");
         assert!(read.contains("\"/api/ai/status\""), "lo stato deve restare leggibile");
+    }
+
+    #[test]
+    fn il_codice_hub_si_legge_solo_dal_desktop() {
+        let file = std::fs::read_to_string("src/server/mod.rs").expect("sorgente del server");
+        let sorgente = &file[..file.find("#[cfg(test)]").expect("modulo di test")];
+        let inizio = sorgente.find("let local_only = Router::new()").expect("gruppo local_only");
+        let fine = sorgente[inizio..].find("let write = ").expect("fine del gruppo") + inizio;
+        assert!(
+            sorgente[inizio..fine].contains("\"/api/config/hub-code\""),
+            "il codice hub è un segreto condiviso: anche la GET deve stare nel gruppo \
+             solo-desktop, o un device abbinato può leggerlo e spacciarsi per un hub"
+        );
     }
 
     #[test]

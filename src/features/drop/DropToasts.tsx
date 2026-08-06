@@ -1,9 +1,35 @@
+import { useState } from "react";
 import { API_BASE, post } from "../../lib/api";
+import { getDeviceSecret } from "../../lib/device";
 import { fmtBytes } from "../../lib/format";
 import { useDropStore } from "../../stores/dropStore";
 
+// 20260806 ++ RG #Drop il segreto del device viaggia in un header, non nella URL: un <a href>
+// finirebbe nella cronologia e nei log. Quindi scarichiamo via fetch e salviamo il blob.
+async function scarica(transferId: string, name: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/drop/download/${transferId}`, {
+      headers: { "X-RickyDev-Device-Secret": getDeviceSecret() },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      return body?.error?.message ?? `download fallito (HTTP ${res.status})`;
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : "download fallito";
+  }
+}
+
 export function DropToasts() {
   const { incoming, dismiss } = useDropStore();
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   if (incoming.length === 0) return null;
 
@@ -43,14 +69,21 @@ export function DropToasts() {
                     </div>
                   </>
                 ) : (
-                  <a
-                    className="drop-toast-action"
-                    href={`${API_BASE}/api/drop/download/${d.transferId}`}
-                    download={d.name}
-                    onClick={() => dismiss(item.id)}
-                  >
-                    Scarica
-                  </a>
+                  <>
+                    {errors[item.id] && (
+                      <div className="banner banner-error">{errors[item.id]}</div>
+                    )}
+                    <button
+                      className="drop-toast-action"
+                      onClick={async () => {
+                        const error = await scarica(d.transferId, d.name);
+                        if (error) setErrors((e) => ({ ...e, [item.id]: error }));
+                        else dismiss(item.id);
+                      }}
+                    >
+                      Scarica
+                    </button>
+                  </>
                 )}
               </>
             ) : (

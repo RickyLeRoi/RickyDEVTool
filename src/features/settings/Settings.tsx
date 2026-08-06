@@ -20,13 +20,33 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
   const [theme, setTheme] = useState<Theme>(getTheme());
+  const [hubCode, setHubCode] = useState<string | null>(null);
+  const [hubCodeDraft, setHubCodeDraft] = useState("");
+  const [hubCodeError, setHubCodeError] = useState<string | null>(null);
 
   useEffect(() => {
     api<LanInfo>("/api/lan").then((r) => {
       if (r.ok) setLan(r.data);
       else setError(r.error.message);
     });
+    api<{ code: string }>("/api/config/hub-code").then((r) => {
+      if (r.ok) {
+        setHubCode(r.data.code);
+        setHubCodeDraft(r.data.code);
+      }
+    });
   }, []);
+
+  const saveHubCode = async (body: { code?: string }) => {
+    setHubCodeError(null);
+    const r = await post<{ code: string }>("/api/config/hub-code", body);
+    if (r.ok) {
+      setHubCode(r.data.code);
+      setHubCodeDraft(r.data.code);
+    } else {
+      setHubCodeError(r.error.message);
+    }
+  };
 
   const traySeq = useTrayIntentStore((s) => s.seq);
   useEffect(() => {
@@ -116,6 +136,49 @@ export function Settings() {
             </div>
           </>
         )}
+      </section>
+
+      <section>
+        <h3>Invio tra i tuoi computer (Drop)</h3>
+        <p className="hint">
+          Perché due computer si vedano e possano scambiarsi file, devono avere lo{" "}
+          <strong>stesso codice hub</strong>. Senza codice la funzione è spenta e gli altri PC
+          devono abbinarsi come un normale dispositivo LAN.
+        </p>
+        {hubCodeError && <div className="banner banner-error">{hubCodeError}</div>}
+        <div className="setting-row">
+          <div className="setting-text">
+            <div className="setting-title">Codice hub</div>
+            <div className="hint">
+              {hubCode
+                ? "Copialo e incollalo nelle Impostazioni dell'altro computer."
+                : "Nessun codice impostato: l'invio tra computer è disattivato."}
+            </div>
+          </div>
+          <input
+            className="input-mono"
+            value={hubCodeDraft}
+            placeholder="es. k7f2-9m4x-tq81"
+            onChange={(e) => setHubCodeDraft(e.target.value)}
+            spellCheck={false}
+          />
+        </div>
+        <div className="setting-actions">
+          <button
+            disabled={hubCodeDraft === (hubCode ?? "")}
+            onClick={() => saveHubCode({ code: hubCodeDraft })}
+          >
+            Salva
+          </button>
+          <button className="ghost" onClick={() => saveHubCode({})}>
+            Genera nuovo
+          </button>
+          {hubCode && (
+            <button className="ghost" onClick={() => saveHubCode({ code: "" })}>
+              Disattiva
+            </button>
+          )}
+        </div>
       </section>
 
       {showQr && (

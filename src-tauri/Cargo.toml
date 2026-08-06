@@ -42,6 +42,8 @@ tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 socket2 = { version = "0.5", features = ["all"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+hmac = "0.12"
+sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

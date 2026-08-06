@@ -1,13 +1,35 @@
 const ID_KEY = "rdt-device-id";
 const NAME_KEY = "rdt-device-name";
+const SECRET_KEY = "rdt-device-secret";
+
+// 20260806 ++ RG #Drop il deviceId è pubblico (compare nell'elenco dei peer): a dimostrare che
+// il canale drop: è nostro è il segreto, che non esce mai dal device. Serve entropia vera,
+// non Math.random come per l'id.
+//
+// I due nascono insieme: il server lega l'id al segreto che l'ha rivendicato per primo, quindi
+// tenerne uno senza l'altro significherebbe farsi rifiutare finché la rivendicazione non scade.
+function identity(): { id: string; secret: string } {
+  const id = localStorage.getItem(ID_KEY);
+  const secret = localStorage.getItem(SECRET_KEY);
+  if (id && secret) return { id, secret };
+
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const fresh = {
+    id: "dev-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
+    secret: Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(""),
+  };
+  localStorage.setItem(ID_KEY, fresh.id);
+  localStorage.setItem(SECRET_KEY, fresh.secret);
+  return fresh;
+}
 
 export function getDeviceId(): string {
-  let id = localStorage.getItem(ID_KEY);
-  if (!id) {
-    id = "dev-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-    localStorage.setItem(ID_KEY, id);
-  }
-  return id;
+  return identity().id;
+}
+
+export function getDeviceSecret(): string {
+  return identity().secret;
 }
 
 export function getDeviceName(): string {

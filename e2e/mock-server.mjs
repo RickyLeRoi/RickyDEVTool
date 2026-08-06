@@ -162,7 +162,9 @@ function handleApi(req, res, url) {
         },
       });
     case "/api/drop/self":
-      return sendJson(res, { ok: true, data: { hubId: "mock-hub" } });
+      return sendJson(res, { ok: true, data: { hubId: "mock-hub", isDesktop: true } });
+    case "/api/config/hub-code":
+      return sendJson(res, { ok: true, data: { code: "" } });
     case "/api/drop/hello":
       return sendJson(res, { ok: true, data: { peers: [] } });
     case "/api/clipboard/history":

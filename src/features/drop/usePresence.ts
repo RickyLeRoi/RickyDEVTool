@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
-import { getDeviceId, getDeviceName } from "../../lib/device";
+import { getDeviceId, getDeviceName, getDeviceSecret } from "../../lib/device";
 import { useDropStore } from "../../stores/dropStore";
 import type { DropIncoming, DropPeer } from "../../lib/types";
 
@@ -13,6 +13,7 @@ export function usePresence() {
 
   useEffect(() => {
     const deviceId = getDeviceId();
+    const deviceSecret = getDeviceSecret();
     let stopped = false;
     let unsubHub: (() => void) | null = null;
 
@@ -23,20 +24,37 @@ export function usePresence() {
       addIncoming(data);
     };
 
-    api<{ hubId: string }>("/api/drop/self").then((r) => {
-      if (!stopped && r.ok) {
+    // 20260806 ++ RG #Drop il canale dell'hub raccoglie i drop dagli altri PC ed è del
+    // desktop: dal telefono il server lo nega, quindi non lo sottoscriviamo nemmeno.
+    api<{ hubId: string; isDesktop: boolean }>("/api/drop/self").then((r) => {
+      if (!stopped && r.ok && r.data.isDesktop) {
         unsubHub = ws.subscribe(`drop:${r.data.hubId}`, (event) => {
           handleIncoming(event.payload as DropIncoming);
         });
       }
     });
 
+    // il canale personale si sottoscrive dopo il primo hello: prima il server non conosce
+    // ancora la rivendicazione e negherebbe. Gli hello successivi la riaffermano, così un
+    // riavvio del server non lascia il device muto.
+    let unsubMine: (() => void) | null = null;
     const hello = async () => {
       const r = await post<{ peers: DropPeer[] }>("/api/drop/hello", {
         deviceId,
+        deviceSecret,
         name: getDeviceName(),
       });
-      if (!stopped && r.ok) setPeers(r.data.peers);
+      if (stopped || !r.ok) return;
+      setPeers(r.data.peers);
+      if (unsubMine) {
+        ws.resubscribe(`drop:${deviceId}`);
+      } else {
+        unsubMine = ws.subscribe(
+          `drop:${deviceId}`,
+          (event) => handleIncoming(event.payload as DropIncoming),
+          deviceSecret,
+        );
+      }
     };
     hello();
     const timer = setInterval(hello, HELLO_INTERVAL_MS);
@@ -45,15 +63,12 @@ export function usePresence() {
       const all = (event.payload as { peers: DropPeer[] }).peers;
       setPeers(all.filter((p) => p.deviceId !== deviceId));
     });
-    const unsubMine = ws.subscribe(`drop:${deviceId}`, (event) => {
-      handleIncoming(event.payload as DropIncoming);
-    });
 
     return () => {
       stopped = true;
       clearInterval(timer);
       unsubPeers();
-      unsubMine();
+      unsubMine?.();
       unsubHub?.();
     };
   }, [setPeers, addIncoming]);
