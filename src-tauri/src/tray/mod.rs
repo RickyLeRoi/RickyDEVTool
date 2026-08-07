@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tauri::menu::{CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder};
 use tauri::tray::TrayIconEvent;
-use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri::{AppHandle, Emitter, Wry};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::config::ConfigHandle;
@@ -409,10 +409,7 @@ fn handle_menu_event(
 }
 
 fn focus_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    crate::window::show_main(app);
 }
 
 fn navigate(app: &AppHandle, id: &str) {

@@ -12,6 +12,7 @@ mod server;
 mod services;
 mod tasks;
 mod tray;
+mod window;
 
 use std::sync::{Arc, OnceLock};
 
@@ -35,7 +36,17 @@ pub fn run() {
     let pollers = Arc::new(PollerRegistry::new(bus.clone()));
     collectors::register_all(&pollers, &config);
 
-    let app = tauri::Builder::default()
+    let config_for_close = config.clone();
+
+    let builder = tauri::Builder::default();
+
+    // 20260807 ++ RG va registrato per primo: la seconda istanza esce prima che il server provi a legare la porta.
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        window::show_main(app);
+    }));
+
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -53,16 +64,17 @@ pub fn run() {
             } else {
                 format!("http://127.0.0.1:{}", info.port)
             };
-            let window =
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(window_url.parse()?))
-                    .title("RickyDEVTool")
-                    .inner_size(1100.0, 720.0)
-                    .min_inner_size(900.0, 600.0)
-                    .build()?;
+            WebviewWindowBuilder::new(
+                app,
+                window::MAIN_LABEL,
+                WebviewUrl::External(window_url.parse()?),
+            )
+            .title("RickyDEVTool")
+            .inner_size(1100.0, 720.0)
+            .min_inner_size(900.0, 600.0)
+            .build()?;
 
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
+            window::show_main(app.handle());
 
             tray::setup(app.handle(), info)?;
 
@@ -74,19 +86,24 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
+        // 20260807 ++ RG #CloseToTray la X nasconde nel tray o chiude davvero, a scelta dell'utente.
+        .on_window_event(move |window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+                if config_for_close.get().close_to_tray {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
             }
         })
         .build(tauri::generate_context!())
         .expect("errore in avvio dell'applicazione tauri");
 
-    app.run(|_handle, event| {
-        if let tauri::RunEvent::Exit = event {
-            services::rickyai::shutdown_all();
-        }
+    app.run(|_handle, event| match event {
+        // 20260807 ++ RG #WindowFocus click sull'icona nel Dock
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => window::show_main(_handle),
+        tauri::RunEvent::Exit => services::rickyai::shutdown_all(),
+        _ => {}
     });
 }
 

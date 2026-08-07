@@ -21,6 +21,7 @@ import { usePresence } from "./features/drop/usePresence";
 import { ws } from "./lib/ws";
 import { api } from "./lib/api";
 import { applyTheme } from "./lib/theme";
+import { hideToTray, isTauri } from "./lib/appWindow";
 import { useNavStore, type Page } from "./stores/navStore";
 import { useStatsStore } from "./stores/statsStore";
 import { useDisksStore } from "./stores/disksStore";
@@ -202,7 +203,18 @@ export default function App() {
       icon: "🌓",
       run: () => applyTheme(key, true),
     }));
-    return [...nav, ...quick, ...themes];
+    const windowCmds: Command[] = isTauri
+      ? [
+          {
+            id: "window:tray",
+            title: t("nav.minimizeToTray"),
+            hint: t("windowPanel.title"),
+            icon: "🔽",
+            run: () => void hideToTray(),
+          },
+        ]
+      : [];
+    return [...nav, ...quick, ...themes, ...windowCmds];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [go, taskCount, aiEnabled, t]);
 
@@ -240,6 +252,16 @@ export default function App() {
           {SECTIONS.filter((s) => s.position === "top" && isVisible(s)).map(railButton)}
           <div className="rail-spacer" />
           {SECTIONS.filter((s) => s.position === "bottom" && isVisible(s)).map(railButton)}
+          {isTauri && (
+            <button
+              className="rail-btn"
+              title={t("nav.minimizeToTray")}
+              onClick={() => void hideToTray()}
+            >
+              <span className="rail-icon">🔽</span>
+              <span className="rail-label">{t("nav.minimizeToTray")}</span>
+            </button>
+          )}
         </nav>
 
         <main className="main">

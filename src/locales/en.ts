@@ -44,6 +44,7 @@ export const en: Resources = {
     rickyai: "RickyAI",
     about: "About",
     settings: "Settings",
+    minimizeToTray: "Minimize to tray",
     devicesOnline_one: "{{count}} device online",
     devicesOnline_other: "{{count}} devices online",
     taskCount_one: "{{count}} task",
@@ -165,6 +166,18 @@ export const en: Resources = {
     openAccessibility: "Open Accessibility",
     recheck: "I enabled it, re-check",
     relaunch: "Restart RickyDEVTool",
+  },
+  windowPanel: {
+    title: "Window",
+    closeToTray: "The X minimizes to the tray",
+    closeToTrayOnHint:
+      "Closing the window leaves the app running in the tray: monitoring, tasks and phone access keep going. To quit for real use Quit from the tray menu.",
+    closeToTrayOffHint:
+      "Closing the window quits the app entirely: monitoring, running tasks and phone access all stop.",
+    minimize: "Minimize to tray now",
+    minimizeHint:
+      "Hides the window without closing anything. Bring it back from the tray menu or the app icon.",
+    minimizeAction: "Minimize to tray",
   },
   ai: {
     title: "RickyAI",

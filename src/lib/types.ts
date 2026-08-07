@@ -296,6 +296,7 @@ export interface LanInfo {
   lanEnabled: boolean;
   remoteControlEnabled: boolean;
   antiIdleEnabled: boolean;
+  closeToTray: boolean;
   remote: boolean;
 }
 

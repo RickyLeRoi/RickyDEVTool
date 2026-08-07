@@ -6,6 +6,8 @@ import { Toggle } from "../../components/Toggle";
 import { AlertSettings } from "./AlertSettings";
 import { AiSettings } from "./AiSettings";
 import { AntiIdlePanel } from "./AntiIdlePanel";
+import { WindowPanel } from "./WindowPanel";
+import { isTauri } from "../../lib/appWindow";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
 import { getLang, setLang, LANGS, type Lang } from "../../lib/i18n";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
@@ -127,6 +129,8 @@ export function Settings() {
       <AiSettings />
 
       <AntiIdlePanel />
+
+      {isTauri && <WindowPanel />}
 
       <section>
         <h3>{t("settings.lanSection")}</h3>

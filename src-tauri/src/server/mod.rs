@@ -228,6 +228,7 @@ pub async fn start(
         .route("/api/drop/received/{name}", axum::routing::delete(drop_received_delete))
         .route("/api/drop/open-folder", post(drop_open_folder))
         .route("/api/config/remote-control", post(set_remote_control))
+        .route("/api/config/close-to-tray", post(set_close_to_tray))
         .route("/api/config/hub-code", get(hub_code_get).merge(post(hub_code_set)))
         .route("/api/pair/sessions", get(pair_sessions_list))
         .route("/api/pair/sessions/{id}", axum::routing::delete(pair_session_revoke))
@@ -513,7 +514,7 @@ async fn lan_info(
         .collect();
     Json(json!({
         "ok": true,
-        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled, "antiIdleEnabled": cfg.anti_idle_enabled, "remote": !peer.ip().is_loopback() }
+        "data": { "urls": urls, "port": state.port, "lanEnabled": cfg.lan_enabled, "remoteControlEnabled": cfg.remote_control_enabled, "antiIdleEnabled": cfg.anti_idle_enabled, "closeToTray": cfg.close_to_tray, "remote": !peer.ip().is_loopback() }
     }))
 }
 
@@ -2105,6 +2106,16 @@ async fn set_anti_idle(
     state.config.update(|c| c.anti_idle_enabled = body.enabled);
     tracing::info!(enabled = body.enabled, "anti-idle aggiornato");
     Json(json!({ "ok": true, "data": { "antiIdleEnabled": body.enabled } })).into_response()
+}
+
+// 20260807 ++ RG #CloseToTray sta fra le locali: decide se la X spegne il tool
+async fn set_close_to_tray(
+    State(state): State<ServerState>,
+    Json(body): Json<RemoteControlBody>,
+) -> Response {
+    state.config.update(|c| c.close_to_tray = body.enabled);
+    tracing::info!(enabled = body.enabled, "chiusura nel tray aggiornata");
+    Json(json!({ "ok": true, "data": { "closeToTray": body.enabled } })).into_response()
 }
 
 async fn accessibility_status() -> Json<serde_json::Value> {

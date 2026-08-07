@@ -42,6 +42,7 @@ export const it = {
     rickyai: "RickyAI",
     about: "About",
     settings: "Impostazioni",
+    minimizeToTray: "Riduci nella traybar",
     devicesOnline_one: "{{count}} dispositivo online",
     devicesOnline_other: "{{count}} dispositivi online",
     taskCount_one: "{{count}} task",
@@ -163,6 +164,18 @@ export const it = {
     openAccessibility: "Apri Accessibilità",
     recheck: "Ho attivato, ricontrolla",
     relaunch: "Riavvia RickyDEVTool",
+  },
+  windowPanel: {
+    title: "Finestra",
+    closeToTray: "La X riduce nella traybar",
+    closeToTrayOnHint:
+      "Chiudendo la finestra l'app resta in funzione nella traybar: monitoraggio, task e accesso da smartphone continuano. Per uscire davvero usa Esci dal menu della traybar.",
+    closeToTrayOffHint:
+      "Chiudendo la finestra l'app si chiude del tutto: si fermano monitoraggio, task in corso e accesso da smartphone.",
+    minimize: "Riduci subito nella traybar",
+    minimizeHint:
+      "Nasconde la finestra senza chiudere niente. La riapri dal menu della traybar o dall'icona dell'app.",
+    minimizeAction: "Riduci nella traybar",
   },
   ai: {
     title: "RickyAI",
