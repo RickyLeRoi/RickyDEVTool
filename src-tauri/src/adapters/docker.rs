@@ -609,7 +609,11 @@ mod tests {
         use std::time::Instant;
 
         invalidate_state().await;
-        let _ = docker_available().await;
+        // 20260807 ++ RG #Security senza la CLI lo spawn non avviene e i tempi misurano solo rumore.
+        if !docker_available().await {
+            eprintln!("docker non installato: test saltato");
+            return;
+        }
 
         let t = Instant::now();
         let _ = state(None).await;
