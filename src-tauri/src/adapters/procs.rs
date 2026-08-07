@@ -171,23 +171,7 @@ pub fn classify_known_app(name: &str, exe_path: Option<&str>) -> Option<&'static
     let lower = name.to_lowercase();
     let path = exe_path.unwrap_or("").to_lowercase();
 
-    const RULES: &[(&str, &[&str])] = &[
-        ("node", &["node", "node.exe"]),
-        ("dotnet", &["dotnet", "dotnet.exe"]),
-        ("docker", &["dockerd", "com.docker.backend", "docker.exe", "docker desktop"]),
-        ("ssh", &["sshd", "ssh", "sshd.exe"]),
-        ("plex", &["plex media server"]),
-        ("samba", &["smbd", "nmbd"]),
-        ("iisexpress", &["iisexpress.exe"]),
-        ("visualstudio", &["devenv.exe"]),
-        ("postgres", &["postgres", "postgres.exe"]),
-        ("mysql", &["mysqld", "mysqld.exe"]),
-        ("redis", &["redis-server", "redis-server.exe"]),
-        ("nginx", &["nginx", "nginx.exe"]),
-        ("python", &["python", "python3", "python.exe"]),
-        ("java", &["java", "java.exe"]),
-    ];
-    for (id, names) in RULES {
+    for (id, names) in crate::constants::KNOWN_APP_RULES {
         if names.iter().any(|n| lower == *n || lower.starts_with(&format!("{n} "))) {
             return Some(id);
         }
@@ -210,18 +194,15 @@ pub(crate) fn is_system_process(
     _user: Option<&str>,
     uid: Option<u32>,
 ) -> bool {
-    const SYSTEM_PATHS: &[&str] = &["/System/", "/usr/libexec/", "/usr/sbin/", "/sbin/"];
-    const SYSTEM_NAMES: &[&str] = &[
-        "kernel_task", "launchd", "windowserver", "mds", "mds_stores", "mdworker",
-        "distnoted", "cfprefsd", "coreaudiod", "logd", "notifyd", "securityd",
-    ];
-    if matches!(uid, Some(u) if u < 500) {
+    use crate::constants::{MACOS_SYSTEM_NAMES, MACOS_SYSTEM_PATHS, MACOS_SYSTEM_UID_MAX};
+
+    if matches!(uid, Some(u) if u < MACOS_SYSTEM_UID_MAX) {
         return true;
     }
     let in_system_path = exe_path
-        .map(|p| SYSTEM_PATHS.iter().any(|prefix| p.starts_with(prefix)))
+        .map(|p| MACOS_SYSTEM_PATHS.iter().any(|prefix| p.starts_with(prefix)))
         .unwrap_or(false);
-    in_system_path && SYSTEM_NAMES.contains(&name.to_lowercase().as_str())
+    in_system_path && MACOS_SYSTEM_NAMES.contains(&name.to_lowercase().as_str())
 }
 
 #[cfg(target_os = "windows")]
@@ -231,18 +212,15 @@ pub(crate) fn is_system_process(
     user: Option<&str>,
     _uid: Option<u32>,
 ) -> bool {
-    const SYSTEM_USERS: &[&str] = &["system", "local service", "network service"];
-    const SYSTEM_NAMES: &[&str] = &[
-        "svchost.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe",
-        "smss.exe", "winlogon.exe", "dwm.exe", "registry", "memory compression",
-    ];
-    if matches!(user, Some(u) if SYSTEM_USERS.contains(&u.to_lowercase().as_str())) {
+    use crate::constants::{WINDOWS_SYSTEM_NAMES, WINDOWS_SYSTEM_PATH_PREFIX, WINDOWS_SYSTEM_USERS};
+
+    if matches!(user, Some(u) if WINDOWS_SYSTEM_USERS.contains(&u.to_lowercase().as_str())) {
         return true;
     }
     let in_system_path = exe_path
-        .map(|p| p.to_lowercase().starts_with("c:\\windows\\"))
+        .map(|p| p.to_lowercase().starts_with(WINDOWS_SYSTEM_PATH_PREFIX))
         .unwrap_or(false);
-    in_system_path && SYSTEM_NAMES.contains(&name.to_lowercase().as_str())
+    in_system_path && WINDOWS_SYSTEM_NAMES.contains(&name.to_lowercase().as_str())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

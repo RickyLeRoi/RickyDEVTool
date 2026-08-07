@@ -7,14 +7,14 @@ import { Color } from "../color/Color";
 import { Cron } from "../cron/Cron";
 import { Compare } from "../compare/Compare";
 import { ToolsPanel } from "../settings/ToolsPanel";
-
-const TAB_IDS = ["clipboard", "launch", "calc", "color", "cron", "compare", "tools"] as const;
+import { TOOL_TAB_IDS } from "../../lib/constants";
+import { DEFAULT_TOOL_TAB } from "../../lib/defaults";
 
 export function Tool() {
   const { t } = useTranslation();
-  const [tab, setTab] = usePageTab("tool", [...TAB_IDS], "clipboard");
+  const [tab, setTab] = usePageTab("tool", [...TOOL_TAB_IDS], DEFAULT_TOOL_TAB);
 
-  const tabs: TabDef[] = TAB_IDS.map((id) => ({ id, label: t(`tool.tabs.${id}`) }));
+  const tabs: TabDef[] = TOOL_TAB_IDS.map((id) => ({ id, label: t(`tool.tabs.${id}`) }));
 
   return (
     <div className="tool-page">

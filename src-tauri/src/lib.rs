@@ -2,6 +2,8 @@ mod adapters;
 mod alerts;
 mod collectors;
 mod config;
+mod constants;
+mod defaults;
 mod events;
 mod exec;
 mod jiggler;
@@ -60,18 +62,18 @@ pub fn run() {
             tracing::info!(port = info.port, "RickyDEVTool avviato");
 
             let window_url = if cfg!(debug_assertions) {
-                "http://localhost:1420".to_string()
+                constants::DEV_SERVER_URL.to_string()
             } else {
-                format!("http://127.0.0.1:{}", info.port)
+                format!("http://{}:{}", constants::LOOPBACK_HOST, info.port)
             };
             WebviewWindowBuilder::new(
                 app,
-                window::MAIN_LABEL,
+                constants::MAIN_WINDOW_LABEL,
                 WebviewUrl::External(window_url.parse()?),
             )
-            .title("RickyDEVTool")
-            .inner_size(1100.0, 720.0)
-            .min_inner_size(900.0, 600.0)
+            .title(constants::APP_NAME)
+            .inner_size(defaults::WINDOW_WIDTH, defaults::WINDOW_HEIGHT)
+            .min_inner_size(defaults::WINDOW_MIN_WIDTH, defaults::WINDOW_MIN_HEIGHT)
             .build()?;
 
             window::show_main(app.handle());
@@ -111,14 +113,14 @@ fn init_logging() {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let logs_dir = config::data_dir().join("logs");
+    let logs_dir = config::data_dir().join(constants::LOGS_DIR_NAME);
     let _ = std::fs::create_dir_all(&logs_dir);
-    let file_appender = tracing_appender::rolling::daily(&logs_dir, "rickydevtool.log");
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, constants::LOG_FILE_NAME);
     let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
     let _ = LOG_GUARD.set(guard);
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(defaults::LOG_FILTER));
 
     tracing_subscriber::registry()
         .with(filter)

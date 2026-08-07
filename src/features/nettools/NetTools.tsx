@@ -8,20 +8,22 @@ import { Services } from "../services/Services";
 import { Ports as ListeningPorts } from "../ports/Ports";
 import { Docker } from "../docker/Docker";
 import { TaskLog } from "../../components/TaskLog";
+import {
+  ALL_PORTS,
+  NET_TAB_IDS,
+  PING_ATTEMPTS,
+  PORT_MAX,
+  PORT_MIN,
+  PORT_SCAN_BATCH_SIZE,
+  PORT_SCAN_HISTORY_LABEL_CHARS,
+  PORT_SCAN_HISTORY_MAX,
+  PORT_SCAN_SHOW_CLOSED_MAX,
+  PORT_SERVICE_NAMES,
+  STORAGE_KEYS,
+  WELL_KNOWN_PORTS,
+} from "../../lib/constants";
+import { DEFAULT_NET_TAB, DEFAULT_PING_HOST, DEFAULT_PORT_SCAN_PORTS } from "../../lib/defaults";
 import type { DnsRecordSet, LanHost, PingResult, PortCheckResult, TaskInfo } from "../../lib/types";
-
-const TOOL_IDS = [
-  "listen",
-  "services",
-  "ping",
-  "dns",
-  "portcheck",
-  "traceroute",
-  "scan",
-  "docker",
-] as const;
-
-const PING_ATTEMPTS = 10;
 
 function ProgressBar({ done, total }: { done: number; total: number }) {
   const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
@@ -34,7 +36,7 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
 
 function Ping() {
   const { t } = useTranslation();
-  const [host, setHost] = useState("1.1.1.1");
+  const [host, setHost] = useState(DEFAULT_PING_HOST);
   const [attempts, setAttempts] = useState<{ ms: number | null }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,100 +164,6 @@ function Dns() {
   );
 }
 
-const PORT_SERVICE_NAMES: Record<number, string> = {
-  21: "FTP",
-  22: "SSH",
-  23: "Telnet",
-  25: "SMTP",
-  53: "DNS",
-  67: "DHCP",
-  68: "DHCP",
-  69: "TFTP",
-  80: "HTTP",
-  110: "POP3",
-  111: "RPCbind",
-  123: "NTP",
-  135: "RPC (Windows)",
-  137: "NetBIOS",
-  138: "NetBIOS",
-  139: "NetBIOS/SMB",
-  143: "IMAP",
-  161: "SNMP",
-  162: "SNMP trap",
-  179: "BGP",
-  389: "LDAP",
-  443: "HTTPS",
-  445: "SMB",
-  465: "SMTPS",
-  500: "IKE/VPN",
-  514: "Syslog",
-  515: "LPD",
-  587: "SMTP (submission)",
-  631: "IPP (CUPS)",
-  636: "LDAPS",
-  993: "IMAPS",
-  995: "POP3S",
-  1080: "SOCKS",
-  1433: "SQL Server",
-  1521: "Oracle DB",
-  1723: "PPTP",
-  2049: "NFS",
-  2181: "ZooKeeper",
-  2375: "Docker",
-  2376: "Docker (TLS)",
-  3000: "dev server",
-  3128: "Squid proxy",
-  3268: "LDAP GC",
-  3306: "MySQL",
-  3389: "RDP",
-  3690: "Subversion",
-  4000: "dev server",
-  4369: "Erlang epmd",
-  5000: "dev server",
-  5060: "SIP",
-  5222: "XMPP",
-  5432: "PostgreSQL",
-  5555: "ADB",
-  5601: "Kibana",
-  5672: "AMQP",
-  5900: "VNC",
-  5984: "CouchDB",
-  6379: "Redis",
-  6443: "Kubernetes API",
-  7000: "Cassandra",
-  7001: "Cassandra (TLS)",
-  7077: "Spark",
-  7199: "Cassandra JMX",
-  8000: "HTTP-alt",
-  8008: "HTTP-alt",
-  8080: "HTTP proxy",
-  8081: "HTTP-alt",
-  8443: "HTTPS-alt",
-  8500: "Consul",
-  8888: "Jupyter",
-  9000: "dev/PHP-FPM",
-  9042: "Cassandra CQL",
-  9090: "Prometheus",
-  9092: "Kafka",
-  9200: "Elasticsearch",
-  9300: "Elasticsearch (transport)",
-  9418: "Git",
-  9999: "dev server",
-  11211: "Memcached",
-  15672: "RabbitMQ mgmt",
-  16379: "Redis cluster",
-  20000: "dev server",
-  25565: "Minecraft",
-  27017: "MongoDB",
-  27018: "MongoDB",
-  28017: "MongoDB HTTP",
-  32400: "Plex",
-};
-const WELL_KNOWN_PORTS = Object.keys(PORT_SERVICE_NAMES).map(Number).sort((a, b) => a - b);
-const ALL_PORTS = Array.from({ length: 65535 }, (_, i) => i + 1);
-const PORT_BATCH_SIZE = 500;
-const PORT_HISTORY_KEY = "rdt-portscan-history";
-
 interface PortScanHistoryEntry {
   host: string;
   portsStr: string;
@@ -263,7 +171,7 @@ interface PortScanHistoryEntry {
 
 function loadPortHistory(): PortScanHistoryEntry[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(PORT_HISTORY_KEY) ?? "[]");
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.portScanHistory) ?? "[]");
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -274,8 +182,8 @@ function savePortHistory(entry: PortScanHistoryEntry): PortScanHistoryEntry[] {
   const prev = loadPortHistory().filter(
     (h) => !(h.host === entry.host && h.portsStr === entry.portsStr),
   );
-  const next = [entry, ...prev].slice(0, 5);
-  localStorage.setItem(PORT_HISTORY_KEY, JSON.stringify(next));
+  const next = [entry, ...prev].slice(0, PORT_SCAN_HISTORY_MAX);
+  localStorage.setItem(STORAGE_KEYS.portScanHistory, JSON.stringify(next));
   return next;
 }
 
@@ -283,7 +191,7 @@ function parsePortsInput(input: string): number[] {
   const set = new Set<number>();
   for (const token of input.split(/[\s,]+/)) {
     const n = parseInt(token, 10);
-    if (n > 0 && n < 65536) set.add(n);
+    if (n >= PORT_MIN && n <= PORT_MAX) set.add(n);
   }
   return [...set].sort((a, b) => a - b);
 }
@@ -291,7 +199,7 @@ function parsePortsInput(input: string): number[] {
 function Ports() {
   const { t } = useTranslation();
   const [host, setHost] = useState("");
-  const [portsStr, setPortsStr] = useState("22, 80, 443, 3000, 8080");
+  const [portsStr, setPortsStr] = useState(DEFAULT_PORT_SCAN_PORTS);
   const [results, setResults] = useState<PortCheckResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -312,9 +220,9 @@ function Ports() {
     setProgress({ done: 0, total: ports.length });
 
     const collected: PortCheckResult[] = [];
-    for (let i = 0; i < ports.length; i += PORT_BATCH_SIZE) {
+    for (let i = 0; i < ports.length; i += PORT_SCAN_BATCH_SIZE) {
       if (cancelRef.current) return;
-      const batch = ports.slice(i, i + PORT_BATCH_SIZE);
+      const batch = ports.slice(i, i + PORT_SCAN_BATCH_SIZE);
       const r = await post<{ results: PortCheckResult[] }>("/api/net/portcheck", { host, ports: batch });
       if (cancelRef.current) return;
       if (!r.ok) {
@@ -323,7 +231,7 @@ function Ports() {
       }
       collected.push(...r.data.results);
       setResults([...collected]);
-      setProgress({ done: Math.min(i + PORT_BATCH_SIZE, ports.length), total: ports.length });
+      setProgress({ done: Math.min(i + PORT_SCAN_BATCH_SIZE, ports.length), total: ports.length });
     }
     setBusy(false);
     setHistory(savePortHistory({ host, portsStr: historyLabel }));
@@ -350,7 +258,7 @@ function Ports() {
     setPortsStr(h.portsStr);
   };
 
-  const showClosed = (results?.length ?? 0) <= 100;
+  const showClosed = (results?.length ?? 0) <= PORT_SCAN_SHOW_CLOSED_MAX;
   const displayResults = showClosed ? results : results?.filter((r) => r.open);
   const openCount = results?.filter((r) => r.open).length ?? 0;
 
@@ -385,7 +293,10 @@ function Ports() {
         <div className="net-history">
           {history.map((h, i) => (
             <button key={i} type="button" className="small ghost" onClick={() => useHistoryEntry(h)}>
-              {h.host} · {h.portsStr.length > 28 ? `${h.portsStr.slice(0, 28)}…` : h.portsStr}
+              {h.host} ·{" "}
+              {h.portsStr.length > PORT_SCAN_HISTORY_LABEL_CHARS
+                ? `${h.portsStr.slice(0, PORT_SCAN_HISTORY_LABEL_CHARS)}…`
+                : h.portsStr}
             </button>
           ))}
         </div>
@@ -552,7 +463,7 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
   );
 }
 
-const TAB_LABEL_KEYS: Record<(typeof TOOL_IDS)[number], string> = {
+const TAB_LABEL_KEYS: Record<(typeof NET_TAB_IDS)[number], string> = {
   listen: "net.tabListen",
   services: "net.tabServices",
   ping: "net.tabPing",
@@ -565,13 +476,13 @@ const TAB_LABEL_KEYS: Record<(typeof TOOL_IDS)[number], string> = {
 
 export function NetTools() {
   const { t } = useTranslation();
-  const [tool, setTool] = usePageTab("net", [...TOOL_IDS], "listen");
+  const [tool, setTool] = usePageTab("net", [...NET_TAB_IDS], DEFAULT_NET_TAB);
   const page = useNavStore((s) => s.page);
   const reqTab = useNavStore((s) => s.tab);
   const seq = useNavStore((s) => s.seq);
   const scanSeq = page === "net" && reqTab === "scan" ? seq : 0;
 
-  const tabs: TabDef[] = TOOL_IDS.map((id) => ({
+  const tabs: TabDef[] = NET_TAB_IDS.map((id) => ({
     id,
     label: t(TAB_LABEL_KEYS[id] as "net.tabListen"),
   }));

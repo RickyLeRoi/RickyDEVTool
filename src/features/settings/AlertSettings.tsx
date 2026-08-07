@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
+import { ALERT_INPUT_LIMITS, FLASH_SHORT_MS } from "../../lib/constants";
 import type { AlertThresholds } from "../../lib/types";
 
 export function AlertSettings() {
@@ -24,7 +25,7 @@ export function AlertSettings() {
     if (r.ok) {
       setCfg(r.data);
       setSaved(true);
-      setTimeout(() => setSaved(false), 1200);
+      setTimeout(() => setSaved(false), FLASH_SHORT_MS);
     } else {
       if (prev) setCfg(prev);
       setError(r.error.message);
@@ -44,8 +45,8 @@ export function AlertSettings() {
             <span>{t("alerts.cpuOver")}</span>
             <input
               type="number"
-              min={10}
-              max={100}
+              min={ALERT_INPUT_LIMITS.cpuPct.min}
+              max={ALERT_INPUT_LIMITS.cpuPct.max}
               value={cfg.cpuPct}
               onChange={(e) => save({ ...cfg, cpuPct: Number(e.target.value) })}
             />
@@ -56,8 +57,8 @@ export function AlertSettings() {
             <span>{t("alerts.ramOver")}</span>
             <input
               type="number"
-              min={10}
-              max={100}
+              min={ALERT_INPUT_LIMITS.memPct.min}
+              max={ALERT_INPUT_LIMITS.memPct.max}
               value={cfg.memPct}
               onChange={(e) => save({ ...cfg, memPct: Number(e.target.value) })}
             />
@@ -80,8 +81,8 @@ export function AlertSettings() {
               <span>{t("alerts.tempThreshold")}</span>
               <input
                 type="number"
-                min={30}
-                max={120}
+                min={ALERT_INPUT_LIMITS.tempC.min}
+                max={ALERT_INPUT_LIMITS.tempC.max}
                 value={cfg.tempC}
                 onChange={(e) => save({ ...cfg, tempC: Number(e.target.value) })}
               />
@@ -105,8 +106,8 @@ export function AlertSettings() {
               <span>{t("alerts.batteryThreshold")}</span>
               <input
                 type="number"
-                min={1}
-                max={100}
+                min={ALERT_INPUT_LIMITS.batteryPct.min}
+                max={ALERT_INPUT_LIMITS.batteryPct.max}
                 value={cfg.batteryPct}
                 onChange={(e) => save({ ...cfg, batteryPct: Number(e.target.value) })}
               />

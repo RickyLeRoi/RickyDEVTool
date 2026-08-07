@@ -1,17 +1,18 @@
 use crate::config::ConfigHandle;
+use crate::constants::{PUSH_TIMEOUT, SEVERITY_CRITICAL, SEVERITY_WARNING};
 
 pub fn severity_rank(severity: &str) -> u8 {
     match severity {
-        "critical" => 2,
-        "warning" => 1,
+        SEVERITY_CRITICAL => 2,
+        SEVERITY_WARNING => 1,
         _ => 0,
     }
 }
 
 fn ntfy_priority(severity: &str) -> u8 {
     match severity {
-        "critical" => 4,
-        "warning" => 3,
+        SEVERITY_CRITICAL => 4,
+        SEVERITY_WARNING => 3,
         _ => 2,
     }
 }
@@ -41,8 +42,8 @@ pub async fn send(
     message: &str,
 ) -> Result<(), String> {
     let tag = match severity {
-        "critical" => "rotating_light",
-        "warning" => "warning",
+        SEVERITY_CRITICAL => "rotating_light",
+        SEVERITY_WARNING => "warning",
         _ => "information_source",
     };
     let body = serde_json::json!({
@@ -55,7 +56,7 @@ pub async fn send(
     let response = reqwest::Client::new()
         .post(server.trim_end_matches('/'))
         .json(&body)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(PUSH_TIMEOUT)
         .send()
         .await
         .map_err(|e| if e.is_timeout() { "timeout".to_string() } else { e.to_string() })?;

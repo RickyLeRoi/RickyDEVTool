@@ -32,8 +32,7 @@ pub enum KillError {
     Failed { message: String, os_hint: Option<String> },
 }
 
-const GRACE_SECS: u64 = 5;
-const START_TIME_TOLERANCE_S: i64 = 2;
+use crate::constants::{KILL_GRACE_SECS, START_TIME_TOLERANCE_S};
 
 pub async fn kill_process(req: KillRequest) -> Result<KillOutcome, KillError> {
     let pid = Pid::from_u32(req.pid);
@@ -88,7 +87,7 @@ pub async fn kill_process(req: KillRequest) -> Result<KillOutcome, KillError> {
 }
 
 async fn escalate_if_alive(pid_raw: u32, name: String, start_time: u64) {
-    tokio::time::sleep(std::time::Duration::from_secs(GRACE_SECS)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(KILL_GRACE_SECS)).await;
     let pid = Pid::from_u32(pid_raw);
     let mut sys = System::new();
     sys.refresh_processes_specifics(
@@ -98,7 +97,7 @@ async fn escalate_if_alive(pid_raw: u32, name: String, start_time: u64) {
     );
     if let Some(p) = sys.process(pid) {
         if p.name().to_string_lossy().eq_ignore_ascii_case(&name) && p.start_time() == start_time {
-            tracing::warn!(pid = pid_raw, %name, "ancora vivo dopo {GRACE_SECS}s, forzo il kill");
+            tracing::warn!(pid = pid_raw, %name, "ancora vivo dopo {KILL_GRACE_SECS}s, forzo il kill");
             let _ = kill_now(pid_raw, true);
         }
     }

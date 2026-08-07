@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { post } from "../../lib/api";
+import { isTauri } from "../../lib/appWindow";
+import { FLASH_SHORT_MS } from "../../lib/constants";
 import {
   hsvToRgb,
   parseColor,
@@ -20,9 +22,8 @@ interface HSVA {
 }
 
 const HAS_EYEDROPPER = typeof window !== "undefined" && "EyeDropper" in window;
-const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const IS_MAC = typeof navigator !== "undefined" && /Macintosh/.test(navigator.userAgent);
-const USE_COLOR_METER = !HAS_EYEDROPPER && IS_TAURI && IS_MAC;
+const USE_COLOR_METER = !HAS_EYEDROPPER && isTauri && IS_MAC;
 
 function hsvaToRgba({ h, s, v, a }: HSVA): RGBA {
   return { ...hsvToRgb(h, s, v), a };
@@ -133,7 +134,7 @@ export function Color() {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(value);
-      setTimeout(() => setCopied(null), 1200);
+      setTimeout(() => setCopied(null), FLASH_SHORT_MS);
     } catch {
     }
   };

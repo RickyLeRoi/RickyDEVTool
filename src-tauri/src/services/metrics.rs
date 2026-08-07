@@ -7,8 +7,7 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 use crate::events::now_ms;
 
-const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
-const RETENTION_MS: u64 = 25 * 3_600_000;
+use crate::constants::{METRICS_RETENTION_MS, METRICS_SAMPLE_INTERVAL};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,11 +118,11 @@ fn sampler_loop(conn: Arc<Mutex<Connection>>) {
             );
             let _ = conn.execute(
                 "DELETE FROM samples WHERE ts < ?1",
-                [now.saturating_sub(RETENTION_MS)],
+                [now.saturating_sub(METRICS_RETENTION_MS)],
             );
         }
 
-        std::thread::sleep(SAMPLE_INTERVAL);
+        std::thread::sleep(METRICS_SAMPLE_INTERVAL);
     }
 }
 

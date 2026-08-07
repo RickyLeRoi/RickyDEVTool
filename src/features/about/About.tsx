@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
+import { isTauri } from "../../lib/appWindow";
+import {
+  APP_GITHUB_PROFILE_URL,
+  APP_GITHUB_USER,
+  APP_OWNER,
+  APP_REPO_URL,
+} from "../../lib/constants";
 import { useUpdateStore } from "../../stores/updateStore";
-
-const isTauri = "__TAURI_INTERNALS__" in window;
-
-const OWNER = "Riccardo Giordano";
-const GITHUB_USER = "RickyLeRoi";
-const REPO_URL = "https://github.com/RickyLeRoi/RickyDEVTool";
 
 function openExternal(url: string) {
   if (isTauri) post("/api/system/open-url", { url });
@@ -66,21 +67,21 @@ export function About() {
         <h3>{t("about.author")}</h3>
         <div className="about-line">
           <span className="dim">{t("about.owner")}</span>
-          <span>{OWNER}</span>
+          <span>{APP_OWNER}</span>
         </div>
         <div className="about-line">
           <span className="dim">GitHub</span>
           <button
             className="linklike"
-            onClick={() => openExternal(`https://github.com/${GITHUB_USER}`)}
+            onClick={() => openExternal(APP_GITHUB_PROFILE_URL)}
           >
-            @{GITHUB_USER}
+            @{APP_GITHUB_USER}
           </button>
         </div>
         <div className="about-line">
           <span className="dim">{t("about.repository")}</span>
-          <button className="linklike" onClick={() => openExternal(REPO_URL)}>
-            {REPO_URL}
+          <button className="linklike" onClick={() => openExternal(APP_REPO_URL)}>
+            {APP_REPO_URL}
           </button>
         </div>
       </section>

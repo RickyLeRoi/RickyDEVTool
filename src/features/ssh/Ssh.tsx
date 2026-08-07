@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
+import { SSH_COMMAND_PRESETS } from "../../lib/constants";
+import { EMPTY_SSH_DRAFT } from "../../lib/defaults";
 import type { ApiError, SshHost, TaskInfo } from "../../lib/types";
 
 interface Draft {
@@ -10,10 +12,6 @@ interface Draft {
   host: string;
   defaultCommand: string;
 }
-
-const EMPTY: Draft = { name: "", host: "", defaultCommand: "uptime" };
-
-const PRESETS = ["uptime", "df -h", "free -h", "docker ps", "systemctl --failed"];
 
 function HostForm({
   draft,
@@ -106,7 +104,7 @@ function HostCard({
           </button>
         </form>
         <div className="ssh-presets">
-          {PRESETS.map((p) => (
+          {SSH_COMMAND_PRESETS.map((p) => (
             <button key={p} className="small ghost" onClick={() => setCommand(p)}>
               {p}
             </button>
@@ -172,7 +170,7 @@ export function Ssh() {
       <div className="section-header">
         <h2>{t("nav.ssh")}</h2>
         {!draft && (
-          <button className="small" onClick={() => setDraft({ ...EMPTY })}>
+          <button className="small" onClick={() => setDraft({ ...EMPTY_SSH_DRAFT })}>
             {t("ssh.newHost")}
           </button>
         )}

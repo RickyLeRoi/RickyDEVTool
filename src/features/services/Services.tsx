@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
+import { CERT_WARN_DAYS } from "../../lib/constants";
 import type { ServiceDef, ServiceState, ServiceStatus } from "../../lib/types";
 
 function StateDot({ state }: { state: ServiceState }) {
@@ -11,7 +12,7 @@ function StateDot({ state }: { state: ServiceState }) {
 function CertBadge({ daysLeft }: { daysLeft: number | null }) {
   const { t } = useTranslation();
   if (daysLeft === null) return null;
-  if (daysLeft > 21) return null;
+  if (daysLeft > CERT_WARN_DAYS) return null;
   if (daysLeft < 0) {
     return (
       <span className="badge badge-cert-expired" title={t("services.certExpiredTitle")}>

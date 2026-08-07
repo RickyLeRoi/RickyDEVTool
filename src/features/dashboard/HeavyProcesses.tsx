@@ -1,26 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
+import { KNOWN_APP_LABELS } from "../../lib/constants";
 import type { ApiError, HeavyProcessesResult, ProcessGroup } from "../../lib/types";
-
-const KNOWN_LABELS: Record<string, string> = {
-  node: "node",
-  dotnet: ".NET",
-  docker: "docker",
-  ssh: "ssh",
-  plex: "plex",
-  samba: "samba",
-  iisexpress: "IIS",
-  visualstudio: "VS",
-  vscode: "VS Code",
-  postgres: "pg",
-  mysql: "mysql",
-  redis: "redis",
-  nginx: "nginx",
-  python: "py",
-  java: "java",
-  chrome: "chrome",
-};
 
 function fmtMem(bytes: number) {
   const mb = bytes / 1024 ** 2;
@@ -42,7 +24,7 @@ function GroupRow({ group }: { group: ProcessGroup }) {
         <td>
           {group.name}
           {group.knownApp && (
-            <span className="badge badge-app">{KNOWN_LABELS[group.knownApp] ?? group.knownApp}</span>
+            <span className="badge badge-app">{KNOWN_APP_LABELS[group.knownApp] ?? group.knownApp}</span>
           )}
           {group.isSystem && <span className="badge">{t("dashboard.system")}</span>}
           {multi && <span className="dim"> · {t("dashboard.heavy.procCount", { count: group.count })}</span>}

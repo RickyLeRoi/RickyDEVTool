@@ -8,7 +8,7 @@ use crate::config::ConfigHandle;
 use crate::events::now_ms;
 use crate::poller::PollerRegistry;
 
-pub const TOPIC: &str = "stats";
+use crate::constants::TOPIC_STATS;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +49,7 @@ pub fn register(registry: &Arc<PollerRegistry>, config: &ConfigHandle) {
     let system = Arc::new(Mutex::new(System::new_with_specifics(refresh)));
     let cfg = config.clone();
 
-    registry.register(TOPIC, config.get().stats_interval_ms, {
+    registry.register(TOPIC_STATS, config.get().stats_interval_ms, {
         let system = system.clone();
         Arc::new(move || {
             let system = system.clone();

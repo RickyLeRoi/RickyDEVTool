@@ -3,10 +3,14 @@ import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
 import { LocalNetworkBanner } from "../../components/LocalNetworkBanner";
+import {
+  AI_MODE_IDS,
+  AI_PORT_MIN,
+  AI_STRATEGY_IDS,
+  FLASH_MS,
+  PORT_MAX,
+} from "../../lib/constants";
 import type { AiMode, AiStatus } from "../../lib/types";
-
-const STRATEGY_IDS = ["balanced", "fast", "local"] as const;
-const MODE_IDS: AiMode[] = ["local", "remote"];
 
 interface Draft {
   remoteUrl: string;
@@ -107,7 +111,7 @@ export function AiSettings() {
       setStatus(r.data);
       setDraft(draftOf(r.data));
       setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      setTimeout(() => setSaved(false), FLASH_MS);
     } else {
       setError(r.error.message);
     }
@@ -159,7 +163,7 @@ export function AiSettings() {
           <div className="form-row">
             <span>{t("ai.whereOfFree")}</span>
             <div className="segmented">
-              {MODE_IDS.map((id) => (
+              {AI_MODE_IDS.map((id: AiMode) => (
                 <button
                   key={id}
                   className={status.mode === id ? "active" : ""}
@@ -206,7 +210,7 @@ export function AiSettings() {
               <div className="form-row">
                 <span>{t("ai.strategy")}</span>
                 <div className="segmented">
-                  {STRATEGY_IDS.map((id) => (
+                  {AI_STRATEGY_IDS.map((id) => (
                     <button
                       key={id}
                       className={status.strategy === id ? "active" : ""}
@@ -234,8 +238,8 @@ export function AiSettings() {
                 <span>{t("ai.port")}</span>
                 <input
                   type="number"
-                  min={1024}
-                  max={65535}
+                  min={AI_PORT_MIN}
+                  max={PORT_MAX}
                   value={draft.port}
                   onChange={(e) => setDraft({ ...draft, port: e.target.value })}
                 />

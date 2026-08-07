@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
 import { getLang } from "../../lib/i18n";
+import { METRICS_GAP_MS, METRICS_MAX_POINTS, POLL_MS, STORAGE_KEYS } from "../../lib/constants";
+import { DEFAULT_METRICS_RANGE_HOURS } from "../../lib/defaults";
+import { METRICS_CHART, SERIES_COLORS } from "../../lib/styles";
 import type { MetricSample } from "../../lib/types";
 
 const RANGES = [
@@ -11,9 +14,9 @@ const RANGES = [
 ];
 
 const SERIES = [
-  { key: "cpuPct", color: "var(--accent)" },
-  { key: "memPct", color: "var(--accent2)" },
-  { key: "diskPct", color: "var(--ok)" },
+  { key: "cpuPct", color: SERIES_COLORS.cpu },
+  { key: "memPct", color: SERIES_COLORS.mem },
+  { key: "diskPct", color: SERIES_COLORS.disk },
 ] as const;
 
 type SeriesKey = (typeof SERIES)[number]["key"];
@@ -24,11 +27,9 @@ const SERIES_LABEL_KEYS: Record<SeriesKey, "dashboard.metrics.seriesCpu"> = {
   diskPct: "dashboard.metrics.seriesDisk" as "dashboard.metrics.seriesCpu",
 };
 
-const HIDDEN_KEY = "rdt-metrics-hidden";
-
 function loadHidden(): SeriesKey[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]");
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.metricsHiddenSeries) ?? "[]");
     const keys = SERIES.map((s) => s.key) as readonly string[];
     return Array.isArray(parsed) ? parsed.filter((k) => keys.includes(k)) : [];
   } catch {
@@ -36,12 +37,14 @@ function loadHidden(): SeriesKey[] {
   }
 }
 
-const W = 560;
-const H = 160;
-const PAD_L = 6;
-const PAD_R = 10;
-const PAD_T = 8;
-const PAD_B = 6;
+const {
+  width: W,
+  height: H,
+  padLeft: PAD_L,
+  padRight: PAD_R,
+  padTop: PAD_T,
+  padBottom: PAD_B,
+} = METRICS_CHART;
 
 function yFor(pct: number) {
   return PAD_T + (1 - pct / 100) * (H - PAD_T - PAD_B);
@@ -49,12 +52,10 @@ function yFor(pct: number) {
 function topPct(pct: number) {
   return (yFor(pct) / H) * 100;
 }
-const MAX_POINTS = 400;
-const GAP_MS = 5 * 60_000;
 
 function downsample(samples: MetricSample[]): MetricSample[] {
-  if (samples.length <= MAX_POINTS) return samples;
-  const bucketSize = Math.ceil(samples.length / MAX_POINTS);
+  if (samples.length <= METRICS_MAX_POINTS) return samples;
+  const bucketSize = Math.ceil(samples.length / METRICS_MAX_POINTS);
   const out: MetricSample[] = [];
   for (let i = 0; i < samples.length; i += bucketSize) {
     const bucket = samples.slice(i, i + bucketSize);
@@ -78,7 +79,7 @@ function fmtTime(ms: number) {
 
 export function MetricsHistory() {
   const { t } = useTranslation();
-  const [hours, setHours] = useState(24);
+  const [hours, setHours] = useState(DEFAULT_METRICS_RANGE_HOURS);
   const [samples, setSamples] = useState<MetricSample[] | null>(null);
   const [hidden, setHidden] = useState<SeriesKey[]>(loadHidden);
 
@@ -91,14 +92,14 @@ export function MetricsHistory() {
 
   useEffect(() => {
     load(hours);
-    const id = setInterval(() => load(hours), 30_000);
+    const id = setInterval(() => load(hours), POLL_MS.metricsHistory);
     return () => clearInterval(id);
   }, [hours]);
 
   const toggleSeries = (key: SeriesKey) => {
     setHidden((prev) => {
       const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
-      localStorage.setItem(HIDDEN_KEY, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEYS.metricsHiddenSeries, JSON.stringify(next));
       return next;
     });
   };
@@ -166,7 +167,7 @@ export function MetricsHistory() {
         <>
           <div className="metrics-plot">
             <div className="metrics-yaxis" aria-hidden>
-              {[100, 50, 0].map((v) => (
+              {METRICS_CHART.yAxisLabelPcts.map((v) => (
                 <span key={v} style={{ top: `${topPct(v)}%` }}>
                   {v}
                 </span>
@@ -178,15 +179,15 @@ export function MetricsHistory() {
               role="img"
               aria-label={t("dashboard.metrics.chartAria", { hours })}
             >
-              {[0, 25, 50, 75, 100].map((g) => (
+              {METRICS_CHART.gridLinePcts.map((g) => (
                 <line
                   key={g}
                   x1={PAD_L}
                   y1={geometry.y(g)}
                   x2={W - PAD_R}
                   y2={geometry.y(g)}
-                  stroke="var(--border)"
-                  strokeWidth="1"
+                  stroke={METRICS_CHART.gridColor}
+                  strokeWidth={METRICS_CHART.gridStrokeWidth}
                 />
               ))}
               {visible.map((s) => {
@@ -195,7 +196,7 @@ export function MetricsHistory() {
                 let prevTs: number | null = null;
                 for (const p of points) {
                   const v = p[s.key] as number | null;
-                  const gap = prevTs != null && p.ts - prevTs > GAP_MS;
+                  const gap = prevTs != null && p.ts - prevTs > METRICS_GAP_MS;
                   if (v == null || gap) {
                     if (current.length > 0) segments.push(current);
                     current = [];
@@ -214,7 +215,7 @@ export function MetricsHistory() {
                     points={seg.join(" ")}
                     fill="none"
                     stroke={s.color}
-                    strokeWidth="1.5"
+                    strokeWidth={METRICS_CHART.seriesStrokeWidth}
                     strokeLinejoin="round"
                     vectorEffect="non-scaling-stroke"
                   />

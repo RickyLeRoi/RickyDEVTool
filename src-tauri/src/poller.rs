@@ -5,13 +5,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::constants::POLLER_MAX_BACKOFF_MS;
 use crate::events::EventBus;
 
 pub type CollectResult = Result<serde_json::Value, String>;
 pub type CollectFuture = Pin<Box<dyn Future<Output = CollectResult> + Send>>;
 pub type CollectFn = Arc<dyn Fn() -> CollectFuture + Send + Sync>;
-
-const MAX_BACKOFF_MS: u64 = 60_000;
 
 struct Poller {
     interval_ms: Arc<AtomicU64>,
@@ -124,7 +123,7 @@ fn spawn_loop(
                     backoff_ms = if backoff_ms == 0 {
                         interval
                     } else {
-                        (backoff_ms * 2).min(MAX_BACKOFF_MS)
+                        (backoff_ms * 2).min(POLLER_MAX_BACKOFF_MS)
                     };
                     tracing::warn!(topic, %message, backoff_ms, "collect fallita");
                     bus.publish(

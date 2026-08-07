@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Update, DownloadEvent } from "@tauri-apps/plugin-updater";
+import { isTauri } from "../lib/appWindow";
 
 export type UpdatePhase =
   | "idle"
@@ -8,8 +9,6 @@ export type UpdatePhase =
   | "downloading"
   | "uptodate"
   | "error";
-
-const isTauri = "__TAURI_INTERNALS__" in window;
 
 interface UpdateState {
   phase: UpdatePhase;

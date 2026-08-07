@@ -4,40 +4,25 @@ import { ws } from "../../lib/ws";
 import { API_BASE, post } from "../../lib/api";
 import { usePortsStore } from "../../stores/portsStore";
 import { KillDialog } from "./KillDialog";
+import { isTauri } from "../../lib/appWindow";
+import { KNOWN_APP_LABELS, LOOPBACK_HOST, STORAGE_KEYS } from "../../lib/constants";
+import { DEFAULT_PORTS_GROUPING } from "../../lib/defaults";
 import type { PortEntry, PortProcess, PortScan } from "../../lib/types";
 
-const KNOWN_LABELS: Record<string, string> = {
-  node: "node",
-  dotnet: ".NET",
-  docker: "docker",
-  ssh: "ssh",
-  plex: "plex",
-  samba: "samba",
-  iisexpress: "IIS",
-  visualstudio: "VS",
-  vscode: "VS Code",
-  postgres: "pg",
-  mysql: "mysql",
-  redis: "redis",
-  nginx: "nginx",
-  python: "py",
-  java: "java",
-  chrome: "chrome",
-};
-
 type Grouping = "port" | "process";
-const GROUP_KEY = "rdt-ports-group";
 
 function initialGrouping(): Grouping {
-  return localStorage.getItem(GROUP_KEY) === "process" ? "process" : "port";
+  return localStorage.getItem(STORAGE_KEYS.portsGrouping) === "process"
+    ? "process"
+    : DEFAULT_PORTS_GROUPING;
 }
 
 function openPortInBrowser(port: number) {
   const base = API_BASE || window.location.origin;
   const hostname = new URL(base).hostname;
-  const host = hostname === "127.0.0.1" ? "localhost" : hostname;
+  const host = hostname === LOOPBACK_HOST ? "localhost" : hostname;
   const url = `http://${host}:${port}`;
-  if ("__TAURI_INTERNALS__" in window) {
+  if (isTauri) {
     post("/api/system/open-url", { url });
   } else {
     window.open(url, "_blank");
@@ -46,7 +31,7 @@ function openPortInBrowser(port: number) {
 
 function AppBadge({ app }: { app: string | null }) {
   if (!app) return null;
-  return <span className="badge badge-app">{KNOWN_LABELS[app] ?? app}</span>;
+  return <span className="badge badge-app">{KNOWN_APP_LABELS[app] ?? app}</span>;
 }
 
 interface ProcessPorts {
@@ -225,7 +210,7 @@ export function Ports() {
   const [grouping, setGrouping] = useState<Grouping>(initialGrouping);
 
   const chooseGrouping = (g: Grouping) => {
-    localStorage.setItem(GROUP_KEY, g);
+    localStorage.setItem(STORAGE_KEYS.portsGrouping, g);
     setGrouping(g);
   };
 

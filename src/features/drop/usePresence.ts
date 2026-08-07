@@ -3,9 +3,8 @@ import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import { getDeviceId, getDeviceName, getDeviceSecret } from "../../lib/device";
 import { useDropStore } from "../../stores/dropStore";
+import { POLL_MS } from "../../lib/constants";
 import type { DropIncoming, DropPeer } from "../../lib/types";
-
-const HELLO_INTERVAL_MS = 15000;
 
 export function usePresence() {
   const setPeers = useDropStore((s) => s.setPeers);
@@ -55,7 +54,7 @@ export function usePresence() {
       }
     };
     hello();
-    const timer = setInterval(hello, HELLO_INTERVAL_MS);
+    const timer = setInterval(hello, POLL_MS.dropHello);
 
     const unsubPeers = ws.subscribe("drop-peers", (event) => {
       const all = (event.payload as { peers: DropPeer[] }).peers;

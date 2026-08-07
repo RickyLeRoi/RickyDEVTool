@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../lib/api";
+import { isTauri } from "../lib/appWindow";
 import type { LocalNetworkStatus } from "../lib/types";
-
-const isTauri = "__TAURI_INTERNALS__" in window;
 
 // 20260805 RG il popup di macOS si vede una volta sola.
 export function LocalNetworkBanner({ what }: { what: string }) {

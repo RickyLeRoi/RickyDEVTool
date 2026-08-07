@@ -17,7 +17,7 @@ pub fn purge_root() {
     let _ = fs::remove_dir_all(root());
 }
 
-const BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+use crate::constants::CLIPBOARD_CACHE_BUDGET_BYTES;
 
 pub struct BlobCache {
     dir: PathBuf,
@@ -81,7 +81,7 @@ impl BlobCache {
         st.order.push_back(id);
         st.meta.insert(id, (sanitize(name), size));
         st.total += size;
-        while st.total > BUDGET_BYTES {
+        while st.total > CLIPBOARD_CACHE_BUDGET_BYTES {
             let Some(old) = st.order.pop_front() else { break };
             if let Some((_, sz)) = st.meta.remove(&old) {
                 st.total = st.total.saturating_sub(sz);

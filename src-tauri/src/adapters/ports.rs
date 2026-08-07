@@ -6,19 +6,8 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::sync::Mutex;
 
 use super::procs::{classify_known_app, is_system_process};
+use crate::constants::{DEV_SERVER_APPS, DEV_SERVER_NAMES, LEGIT_DAEMONS, PROTECTED_PROCESS_NAMES};
 use crate::exec;
-
-pub const PROTECTED_NAMES: &[&str] = &[
-    "sshd",
-    "dockerd",
-    "com.docker.backend",
-    "smbd",
-    "plex media server",
-    "postgres",
-    "mysqld",
-    "redis-server",
-    "nginx",
-];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,21 +48,12 @@ pub struct RawListener {
 }
 
 pub fn kill_protection_for(name: &str) -> &'static str {
-    if PROTECTED_NAMES.contains(&name.to_lowercase().as_str()) {
+    if PROTECTED_PROCESS_NAMES.contains(&name.to_lowercase().as_str()) {
         "typed-confirm"
     } else {
         "confirm"
     }
 }
-
-const LEGIT_DAEMONS: &[&str] = &["postgres", "mysql", "redis", "docker", "nginx", "plex", "ssh", "samba"];
-
-const DEV_SERVER_APPS: &[&str] = &["node", "python", "dotnet", "java"];
-const DEV_SERVER_NAMES: &[&str] = &[
-    "node", "deno", "bun", "python", "python3", "ruby", "php", "dotnet",
-    "vite", "next", "webpack", "nodemon", "rails", "flask", "gunicorn",
-    "uvicorn", "cargo", "esbuild", "http-server", "ng",
-];
 
 fn looks_like_dev_server(known_app: Option<&str>, name: &str) -> bool {
     if matches!(known_app, Some(app) if DEV_SERVER_APPS.contains(&app)) {

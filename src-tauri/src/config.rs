@@ -4,8 +4,11 @@ use std::sync::{Arc, RwLock};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-pub const APP_DIR_NAME: &str = "RickyDEVTool";
-pub const DEFAULT_PORT: u16 = 6969;
+use crate::constants::{
+    APP_DIR_NAME, CONFIG_FILE_NAME, HUB_CODE_ALPHABET, HUB_CODE_GROUP_LEN, HUB_CODE_LEN,
+    HUB_ID_PREFIX, PUSH_TOPIC_PREFIX, TOKEN_BYTES,
+};
+use crate::defaults;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -81,12 +84,12 @@ pub struct AlertThresholds {
 impl Default for AlertThresholds {
     fn default() -> Self {
         Self {
-            cpu_pct: 90.0,
-            mem_pct: 92.0,
-            temp_c: 85.0,
-            battery_pct: 15.0,
-            temp_enabled: true,
-            battery_enabled: true,
+            cpu_pct: defaults::ALERT_CPU_PCT,
+            mem_pct: defaults::ALERT_MEM_PCT,
+            temp_c: defaults::ALERT_TEMP_C,
+            battery_pct: defaults::ALERT_BATTERY_PCT,
+            temp_enabled: defaults::ALERT_TEMP_ENABLED,
+            battery_enabled: defaults::ALERT_BATTERY_ENABLED,
         }
     }
 }
@@ -94,23 +97,23 @@ impl Default for AlertThresholds {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            port: DEFAULT_PORT,
-            lan_enabled: true,
+            port: defaults::PORT,
+            lan_enabled: defaults::LAN_ENABLED,
             pair_token: String::new(),
-            stats_interval_ms: 10_000,
+            stats_interval_ms: defaults::STATS_INTERVAL_MS,
             tool_paths: std::collections::HashMap::new(),
             pinned_folders: Vec::new(),
             node_pm_overrides: std::collections::HashMap::new(),
             dotnet_startup: std::collections::HashMap::new(),
             dotnet_profile: std::collections::HashMap::new(),
             services: Vec::new(),
-            remote_control_enabled: false,
-            anti_idle_enabled: false,
-            close_to_tray: true,
-            push_enabled: false,
-            push_server: "https://ntfy.sh".to_string(),
+            remote_control_enabled: defaults::REMOTE_CONTROL_ENABLED,
+            anti_idle_enabled: defaults::ANTI_IDLE_ENABLED,
+            close_to_tray: defaults::CLOSE_TO_TRAY,
+            push_enabled: defaults::PUSH_ENABLED,
+            push_server: defaults::PUSH_SERVER.to_string(),
             push_topic: String::new(),
-            push_min_severity: "warning".to_string(),
+            push_min_severity: defaults::PUSH_MIN_SEVERITY.to_string(),
             drop_hub_id: String::new(),
             drop_hub_name: String::new(),
             drop_hub_code: String::new(),
@@ -120,14 +123,14 @@ impl Default for AppConfig {
             snippets: Vec::new(),
             ssh_hosts: Vec::new(),
             alert_thresholds: AlertThresholds::default(),
-            ai_enabled: false,
-            ai_mode: "remote".to_string(),
+            ai_enabled: defaults::AI_ENABLED,
+            ai_mode: defaults::AI_MODE.to_string(),
             ai_remote_url: None,
             ai_remote_key: None,
-            ai_port: crate::services::rickyai::DEFAULT_PORT,
+            ai_port: defaults::AI_PORT,
             ai_command: None,
             ai_keys: std::collections::BTreeMap::new(),
-            ai_strategy: "balanced".to_string(),
+            ai_strategy: defaults::AI_STRATEGY.to_string(),
             ai_system_prompt: String::new(),
         }
     }
@@ -145,7 +148,7 @@ impl ConfigHandle {
             .unwrap_or_else(|| PathBuf::from("."))
             .join(APP_DIR_NAME);
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("config.json");
+        let path = dir.join(CONFIG_FILE_NAME);
 
         let mut cfg: AppConfig = std::fs::read_to_string(&path)
             .ok()
@@ -156,10 +159,10 @@ impl ConfigHandle {
             cfg.pair_token = generate_token();
         }
         if cfg.push_topic.is_empty() {
-            cfg.push_topic = format!("rickydev-{}", generate_token());
+            cfg.push_topic = format!("{PUSH_TOPIC_PREFIX}{}", generate_token());
         }
         if cfg.drop_hub_id.is_empty() {
-            cfg.drop_hub_id = format!("hub-{}", generate_token());
+            cfg.drop_hub_id = format!("{HUB_ID_PREFIX}{}", generate_token());
         }
         for preset in crate::services::online::builtin_presets() {
             if !cfg.services.iter().any(|s| s.id == preset.id) {
@@ -233,23 +236,20 @@ pub fn secret_eq(a: &str, b: &str) -> bool {
 }
 
 pub(crate) fn generate_token() -> String {
-    let mut buf = [0u8; 16];
+    let mut buf = [0u8; TOKEN_BYTES];
     rand::rng().fill_bytes(&mut buf);
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// 20260806 ++ RG #Security il codice si legge a voce e si ridigita: alfabeto senza caratteri
-// ambigui (niente 0/O, 1/I/L) e gruppi da 4. 12 caratteri = ~60 bit.
 pub fn generate_hub_code() -> String {
-    const ALPHABET: &[u8] = b"23456789abcdefghjkmnpqrstuvwxyz";
-    let mut buf = [0u8; 12];
+    let mut buf = [0u8; HUB_CODE_LEN];
     rand::rng().fill_bytes(&mut buf);
     let chars: Vec<char> = buf
         .iter()
-        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .map(|b| HUB_CODE_ALPHABET[*b as usize % HUB_CODE_ALPHABET.len()] as char)
         .collect();
     chars
-        .chunks(4)
+        .chunks(HUB_CODE_GROUP_LEN)
         .map(|c| c.iter().collect::<String>())
         .collect::<Vec<_>>()
         .join("-")
@@ -264,9 +264,9 @@ mod tests {
         let vecchio = r#"{ "port": 6969, "lanEnabled": true, "statsIntervalMs": 5000 }"#;
         let cfg: AppConfig = serde_json::from_str(vecchio).expect("config leggibile");
 
-        assert_eq!(cfg.ai_port, crate::services::rickyai::DEFAULT_PORT);
-        assert_eq!(cfg.ai_strategy, "balanced");
-        assert_eq!(cfg.ai_mode, "remote", "si parte dal servizio in rete");
+        assert_eq!(cfg.ai_port, defaults::AI_PORT);
+        assert_eq!(cfg.ai_strategy, defaults::AI_STRATEGY);
+        assert_eq!(cfg.ai_mode, defaults::AI_MODE, "si parte dal servizio in rete");
         assert!(!cfg.ai_enabled);
         assert_eq!(cfg.port, 6969);
         assert_eq!(cfg.stats_interval_ms, 5000);

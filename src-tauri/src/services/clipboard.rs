@@ -2,17 +2,16 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::adapters::clipboard::ClipRead;
 use crate::services::clipboard_cache::{BlobCache, BlobId};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(1500);
-const MAX_ENTRIES: usize = 100;
-const MAX_TEXT_BYTES: usize = 256 * 1024;
-const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
+use crate::constants::{
+    CLIPBOARD_MAX_ENTRIES, CLIPBOARD_MAX_FILE_BYTES, CLIPBOARD_MAX_TEXT_BYTES,
+    CLIPBOARD_POLL_INTERVAL,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -116,7 +115,7 @@ impl ClipboardHistory {
                         }
                     }
                     drop(history);
-                    std::thread::sleep(POLL_INTERVAL);
+                    std::thread::sleep(CLIPBOARD_POLL_INTERVAL);
                 })
                 .ok();
         }
@@ -124,7 +123,7 @@ impl ClipboardHistory {
     }
 
     pub fn record(&self, text: String) {
-        if text.trim().is_empty() || text.len() > MAX_TEXT_BYTES {
+        if text.trim().is_empty() || text.len() > CLIPBOARD_MAX_TEXT_BYTES {
             return;
         }
         if self.is_duplicate_or_promote(&text) {
@@ -154,7 +153,7 @@ impl ClipboardHistory {
             let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
             let is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
             total += size;
-            let blob = if is_file && size <= MAX_FILE_BYTES {
+            let blob = if is_file && size <= CLIPBOARD_MAX_FILE_BYTES {
                 self.cache.store_copy(p, &name).ok()
             } else {
                 None
@@ -241,7 +240,7 @@ impl ClipboardHistory {
 
     fn evict(st: &mut State) -> Vec<ClipEntry> {
         let mut evicted = Vec::new();
-        while st.entries.iter().filter(|e| !e.pinned).count() > MAX_ENTRIES {
+        while st.entries.iter().filter(|e| !e.pinned).count() > CLIPBOARD_MAX_ENTRIES {
             if let Some(pos) = st.entries.iter().rposition(|e| !e.pinned) {
                 evicted.push(st.entries.remove(pos).unwrap());
             } else {
@@ -449,14 +448,14 @@ mod tests {
         h.record("importante".into());
         let id = h.list()[0].id;
         assert!(h.set_pinned(id, true));
-        for i in 0..(MAX_ENTRIES + 10) {
+        for i in 0..(CLIPBOARD_MAX_ENTRIES + 10) {
             h.record(format!("v{i}"));
         }
         let list = h.list();
         assert_eq!(list[0].text, "importante");
         assert!(list[0].pinned);
         assert!(list.iter().any(|e| e.id == id));
-        assert_eq!(list.iter().filter(|e| !e.pinned).count(), MAX_ENTRIES);
+        assert_eq!(list.iter().filter(|e| !e.pinned).count(), CLIPBOARD_MAX_ENTRIES);
     }
 
     #[test]

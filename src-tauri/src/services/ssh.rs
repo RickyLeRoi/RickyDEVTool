@@ -11,8 +11,6 @@ pub struct SshHost {
     pub default_command: String,
 }
 
-pub const MAX_HOSTS: usize = 100;
-
 pub fn valid_host(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 255

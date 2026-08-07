@@ -4,13 +4,13 @@ use crate::config::ConfigHandle;
 use crate::events::now_ms;
 use crate::poller::PollerRegistry;
 
-pub const TOPIC: &str = "docker:stats";
+use crate::constants::TOPIC_DOCKER_STATS;
 
-const DEFAULT_INTERVAL_MS: u64 = 3000;
+use crate::defaults::DOCKER_STATS_INTERVAL_MS;
 
 pub fn register(registry: &Arc<PollerRegistry>, config: &ConfigHandle) {
     let cfg = config.clone();
-    registry.register(TOPIC, DEFAULT_INTERVAL_MS, {
+    registry.register(TOPIC_DOCKER_STATS, DOCKER_STATS_INTERVAL_MS, {
         Arc::new(move || {
             let cfg = cfg.clone();
             Box::pin(async move {

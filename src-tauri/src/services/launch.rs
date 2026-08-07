@@ -17,7 +17,7 @@ pub struct LaunchBundle {
     pub steps: Vec<LaunchStep>,
 }
 
-const MAX_STEPS: usize = 20;
+use crate::constants::MAX_LAUNCH_STEPS;
 
 impl LaunchBundle {
     pub fn sanitized(mut self) -> Result<Self, String> {
@@ -29,8 +29,8 @@ impl LaunchBundle {
         if self.steps.is_empty() {
             return Err("aggiungi almeno uno step con un comando".to_string());
         }
-        if self.steps.len() > MAX_STEPS {
-            return Err(format!("troppi step (max {MAX_STEPS})"));
+        if self.steps.len() > MAX_LAUNCH_STEPS {
+            return Err(format!("troppi step (max {MAX_LAUNCH_STEPS})"));
         }
         for step in &mut self.steps {
             step.command = step.command.trim().to_string();

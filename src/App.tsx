@@ -22,6 +22,8 @@ import { ws } from "./lib/ws";
 import { api } from "./lib/api";
 import { applyTheme } from "./lib/theme";
 import { hideToTray, isTauri } from "./lib/appWindow";
+import { NAV_SECTIONS, QUICK_NAV, THEMES } from "./lib/constants";
+import { DEFAULT_PAGE } from "./lib/defaults";
 import { useNavStore, type Page } from "./stores/navStore";
 import { useStatsStore } from "./stores/statsStore";
 import { useDisksStore } from "./stores/disksStore";
@@ -29,42 +31,6 @@ import { useDropStore } from "./stores/dropStore";
 import { useTrayIntentStore } from "./stores/trayIntentStore";
 import { useTasksStore } from "./stores/tasksStore";
 import type { AiStatus, DiskInfo, MachineStats, TaskInfo } from "./lib/types";
-
-const SECTIONS: { id: Page; icon: string; position: "top" | "bottom" }[] = [
-  { id: "dashboard", icon: "🖥", position: "top" },
-  { id: "projects", icon: "📁", position: "top" },
-  { id: "net", icon: "🌐", position: "top" },
-  { id: "tool", icon: "🧰", position: "top" },
-  { id: "log", icon: "📜", position: "top" },
-  { id: "snippets", icon: "⌨️", position: "top" },
-  { id: "ssh", icon: "🔑", position: "top" },
-  { id: "drop", icon: "📤", position: "top" },
-  { id: "tasks", icon: "🧾", position: "bottom" },
-  { id: "rickyai", icon: "🤖", position: "bottom" },
-  { id: "about", icon: "ℹ️", position: "bottom" },
-  { id: "settings", icon: "⚙️", position: "bottom" },
-];
-
-type QuickId =
-  | "ports"
-  | "docker"
-  | "clipboard"
-  | "launch"
-  | "calc"
-  | "color"
-  | "compare"
-  | "services";
-
-const QUICK_NAV: { id: QuickId; icon: string }[] = [
-  { id: "ports", icon: "🔌" },
-  { id: "docker", icon: "🐳" },
-  { id: "clipboard", icon: "📋" },
-  { id: "launch", icon: "🚀" },
-  { id: "calc", icon: "🧮" },
-  { id: "color", icon: "🎨" },
-  { id: "compare", icon: "🔀" },
-  { id: "services", icon: "📡" },
-];
 
 function idFromHash(): string | null {
   const m = window.location.hash.match(/^#\/([a-z]+)/);
@@ -112,7 +78,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (aiEnabled === false && page === "rickyai") go("dashboard");
+    if (aiEnabled === false && page === "rickyai") go(DEFAULT_PAGE);
   }, [aiEnabled, page, go]);
 
   useEffect(() => {
@@ -127,7 +93,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
+    if (!isTauri) return;
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     import("@tauri-apps/api/event").then(({ listen }) =>
@@ -174,14 +140,14 @@ export default function App() {
     });
   }, [page, setDisks]);
 
-  const isVisible = (s: (typeof SECTIONS)[number]) => {
+  const isVisible = (s: (typeof NAV_SECTIONS)[number]) => {
     if (s.id === "tasks") return taskCount > 0;
     if (s.id === "rickyai") return aiEnabled === true;
     return true;
   };
 
   const commands = useMemo<Command[]>(() => {
-    const nav: Command[] = SECTIONS.filter(isVisible).map((s) => ({
+    const nav: Command[] = NAV_SECTIONS.filter(isVisible).map((s) => ({
       id: `nav:${s.id}`,
       title: t(`nav.${s.id}`),
       hint: t("common.goTo"),
@@ -196,7 +162,7 @@ export default function App() {
       keywords: "tool",
       run: () => go(q.id),
     }));
-    const themes: Command[] = (["auto", "light", "dark"] as const).map((key) => ({
+    const themes: Command[] = THEMES.map((key) => ({
       id: `theme:${key}`,
       title: t("theme.label", { name: t(`theme.${key}`) }),
       hint: t("theme.appearance"),
@@ -225,7 +191,7 @@ export default function App() {
     return undefined;
   };
 
-  const railButton = (s: (typeof SECTIONS)[number]) => {
+  const railButton = (s: (typeof NAV_SECTIONS)[number]) => {
     const dot = railDot(s.id);
     const showDot = (dot?.count ?? 0) > 0;
     const label = t(`nav.${s.id}`);
@@ -249,9 +215,9 @@ export default function App() {
     <PairGate>
       <div className="shell">
         <nav className="rail">
-          {SECTIONS.filter((s) => s.position === "top" && isVisible(s)).map(railButton)}
+          {NAV_SECTIONS.filter((s) => s.position === "top" && isVisible(s)).map(railButton)}
           <div className="rail-spacer" />
-          {SECTIONS.filter((s) => s.position === "bottom" && isVisible(s)).map(railButton)}
+          {NAV_SECTIONS.filter((s) => s.position === "bottom" && isVisible(s)).map(railButton)}
           {isTauri && (
             <button
               className="rail-btn"

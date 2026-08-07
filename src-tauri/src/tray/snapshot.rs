@@ -1,13 +1,10 @@
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 use crate::config::ConfigHandle;
 
-const TICK: Duration = Duration::from_secs(3);
-const SERVICES_EVERY_TICKS: u32 = 7;
-const TOOLS_EVERY_TICKS: u32 = 20;
+use crate::constants::{TRAY_SERVICES_EVERY_TICKS, TRAY_TICK, TRAY_TOOLS_EVERY_TICKS};
 
 #[derive(Default, Clone)]
 pub struct TraySnapshot {
@@ -59,19 +56,19 @@ pub fn start(config: ConfigHandle) -> SharedSnapshot {
                 guard.ports = ports;
             }
 
-            if tick % SERVICES_EVERY_TICKS == 0 {
+            if tick % TRAY_SERVICES_EVERY_TICKS == 0 {
                 let defs = config.get().services;
                 let services = crate::services::online::check_all(&defs).await;
                 shared.write().expect("tray snapshot lock").services = services;
             }
-            if tick % TOOLS_EVERY_TICKS == 0 {
+            if tick % TRAY_TOOLS_EVERY_TICKS == 0 {
                 let overrides = config.get().tool_paths;
                 let tools = crate::adapters::tools::discover_all(&overrides).await;
                 shared.write().expect("tray snapshot lock").tools = tools;
             }
 
             tick = tick.wrapping_add(1);
-            tokio::time::sleep(TICK).await;
+            tokio::time::sleep(TRAY_TICK).await;
         }
     });
 

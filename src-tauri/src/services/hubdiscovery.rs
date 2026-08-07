@@ -10,10 +10,7 @@ use tokio::net::UdpSocket;
 use crate::config::ConfigHandle;
 use crate::events::now_ms;
 
-pub const DISCOVERY_PORT: u16 = 51969;
-const BEACON_INTERVAL_SECS: u64 = 5;
-const HUB_TTL_MS: u64 = 22_000;
-const MAGIC: &str = "rickydevtool-hub";
+use crate::constants::{BEACON_INTERVAL_SECS, DISCOVERY_MAGIC, DISCOVERY_PORT, HUB_TTL_MS};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Beacon {
@@ -162,7 +159,7 @@ async fn beacon_loop(hub_id: String, config: ConfigHandle, http_port: u16) -> st
         if !code.is_empty() {
             let name = hub_name(&config);
             let beacon = Beacon {
-                app: MAGIC.to_string(),
+                app: DISCOVERY_MAGIC.to_string(),
                 sig: beacon_signature(&hub_id, &name, http_port, &code),
                 hub_id: hub_id.clone(),
                 name,
@@ -199,7 +196,7 @@ fn handle_packet(
     registry: &HubRegistry,
 ) {
     let Ok(beacon) = serde_json::from_slice::<Beacon>(data) else { return };
-    if beacon.app != MAGIC || beacon.hub_id == self_hub_id {
+    if beacon.app != DISCOVERY_MAGIC || beacon.hub_id == self_hub_id {
         return;
     }
     if !signature_valid(&beacon, code) {
@@ -223,7 +220,7 @@ mod tests {
 
     fn beacon_firmato(hub_id: &str, name: &str, port: u16, code: &str) -> Vec<u8> {
         serde_json::to_vec(&Beacon {
-            app: MAGIC.into(),
+            app: DISCOVERY_MAGIC.into(),
             hub_id: hub_id.into(),
             name: name.into(),
             http_port: port,
@@ -267,7 +264,7 @@ mod tests {
         let from: SocketAddr = "10.0.0.66:1234".parse().unwrap();
 
         let nudo = serde_json::to_vec(&Beacon {
-            app: MAGIC.into(),
+            app: DISCOVERY_MAGIC.into(),
             hub_id: "hub-ostile".into(),
             name: "Intruso".into(),
             http_port: 6969,

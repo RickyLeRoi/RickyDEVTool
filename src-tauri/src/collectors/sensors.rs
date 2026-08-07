@@ -3,14 +3,14 @@ use std::sync::Arc;
 use crate::events::now_ms;
 use crate::poller::PollerRegistry;
 
-pub const TOPIC: &str = "sensors";
+use crate::constants::TOPIC_SENSORS;
 
-const DEFAULT_INTERVAL_MS: u64 = 5000;
+use crate::defaults::SENSORS_INTERVAL_MS;
 
 pub fn register(registry: &Arc<PollerRegistry>) {
     registry.register(
-        TOPIC,
-        DEFAULT_INTERVAL_MS,
+        TOPIC_SENSORS,
+        SENSORS_INTERVAL_MS,
         Arc::new(|| {
             Box::pin(async move {
                 let snap = crate::adapters::sensors::read().await;

@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::time::Duration;
 
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+use crate::constants::CREATE_NO_WINDOW;
 
 pub fn cmd(program: impl AsRef<OsStr>) -> tokio::process::Command {
     #[cfg_attr(not(windows), allow(unused_mut))]

@@ -4,6 +4,10 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 
 use crate::config::ConfigHandle;
+use crate::constants::{
+    ALERT_COOLDOWN_MS, CERT_ALERT_COOLDOWN_MS, CERT_WARN_DAYS, CPU_SUSTAINED_SECS, MAX_ALERTS,
+    SEVERITY_CRITICAL, SEVERITY_WARNING,
+};
 use crate::events::{now_ms, EventBus};
 
 #[derive(Debug, Clone, Serialize)]
@@ -17,12 +21,6 @@ pub struct Alert {
     pub created_at: u64,
     pub acknowledged: bool,
 }
-
-const CPU_SUSTAINED_SECS: u64 = 60;
-const COOLDOWN_MS: u64 = 600_000;
-const CERT_COOLDOWN_MS: u64 = 86_400_000;
-const CERT_WARN_DAYS: i64 = 14;
-const MAX_ALERTS: usize = 50;
 
 pub struct AlertService {
     bus: EventBus,
@@ -112,7 +110,7 @@ impl AlertService {
             self.fire(
                 "cpu-sustained",
                 "cpu",
-                "warning",
+                SEVERITY_WARNING,
                 "CPU sostenuta".into(),
                 format!("CPU sopra il {:.0}% da oltre {CPU_SUSTAINED_SECS}s", thresholds.cpu_pct),
             );
@@ -121,7 +119,7 @@ impl AlertService {
             self.fire(
                 "mem-high",
                 "mem",
-                "warning",
+                SEVERITY_WARNING,
                 "RAM quasi esaurita".into(),
                 format!("Memoria al {mem:.0}%"),
             );
@@ -136,7 +134,7 @@ impl AlertService {
                     self.fire(
                         "temp-high",
                         "temp",
-                        "warning",
+                        SEVERITY_WARNING,
                         "Temperatura alta".into(),
                         format!("Sensore a {max:.0}°C (soglia {:.0}°C)", thresholds.temp_c),
                     );
@@ -152,7 +150,7 @@ impl AlertService {
                         self.fire(
                             "battery-low",
                             "battery",
-                            "warning",
+                            SEVERITY_WARNING,
                             "Batteria quasi scarica".into(),
                             format!("Batteria al {p:.0}% e non in carica"),
                         );
@@ -180,7 +178,7 @@ impl AlertService {
                 self.fire(
                     "service-down",
                     id,
-                    "critical",
+                    SEVERITY_CRITICAL,
                     format!("{label} irraggiungibile"),
                     status
                         .get("error")
@@ -194,19 +192,19 @@ impl AlertService {
                     self.fire_with_cooldown(
                         "cert-expired",
                         id,
-                        "critical",
+                        SEVERITY_CRITICAL,
                         format!("Certificato di {label} scaduto"),
                         format!("Scaduto da {} giorni", -days),
-                        CERT_COOLDOWN_MS,
+                        CERT_ALERT_COOLDOWN_MS,
                     );
                 } else if days <= CERT_WARN_DAYS {
                     self.fire_with_cooldown(
                         "cert-expiring",
                         id,
-                        "warning",
+                        SEVERITY_WARNING,
                         format!("Certificato di {label} in scadenza"),
                         format!("Scade tra {days} giorni"),
-                        CERT_COOLDOWN_MS,
+                        CERT_ALERT_COOLDOWN_MS,
                     );
                 }
             }
@@ -228,7 +226,7 @@ impl AlertService {
                 self.fire(
                     "task-failed",
                     id,
-                    "warning",
+                    SEVERITY_WARNING,
                     "Task fallito".into(),
                     format!("{label} (exit {})", code.map_or("?".into(), |c| c.to_string())),
                 );
@@ -237,7 +235,7 @@ impl AlertService {
     }
 
     fn fire(&self, kind: &'static str, key: &str, severity: &'static str, title: String, detail: String) {
-        self.fire_with_cooldown(kind, key, severity, title, detail, COOLDOWN_MS);
+        self.fire_with_cooldown(kind, key, severity, title, detail, ALERT_COOLDOWN_MS);
     }
 
     fn fire_with_cooldown(

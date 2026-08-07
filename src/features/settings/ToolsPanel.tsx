@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
+import { LAUNCHABLE_TOOL_IDS } from "../../lib/constants";
 import type { DiscoveredTool } from "../../lib/types";
 
 const TOOL_LABELS: Record<string, string> = {
@@ -14,8 +15,6 @@ const TOOL_LABELS: Record<string, string> = {
   dotnet: ".NET SDK",
   docker: "Docker",
 };
-
-const LAUNCHABLE = new Set(["vscode", "visualstudio", "terminal"]);
 
 const SOURCE_KEYS: Record<string, string> = {
   wellKnownPath: "tools.sourceWellKnownPath",
@@ -112,7 +111,7 @@ export function ToolsPanel() {
                     </span>
                   ) : (
                     <>
-                      {tool.found && LAUNCHABLE.has(tool.id) && (
+                      {tool.found && LAUNCHABLE_TOOL_IDS.has(tool.id) && (
                         <button className="small" onClick={() => launch(tool.id)}>
                           {t("common.open")}
                         </button>

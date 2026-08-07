@@ -7,13 +7,9 @@ use serde::Serialize;
 use crate::config::ConfigHandle;
 use crate::events::{now_ms, EventBus};
 
-const PEER_TTL_MS: u64 = 45_000;
-const TRANSFER_TTL_MS: u64 = 3_600_000;
+use crate::constants::{CLAIM_TTL_MS, DROP_MAX_TEXT_LEN, MAX_PROXY_BYTES, PEER_TTL_MS, TRANSFER_TTL_MS};
 // 20260806 ++ RG #Security la rivendicazione di un deviceId sopravvive alla presenza: se scadesse
 // coi 45s dei peer, basterebbe aspettare che il telefono chiuda l'app per prenderne il canale.
-const CLAIM_TTL_MS: u64 = 24 * 3_600_000;
-const MAX_TEXT_LEN: usize = 64 * 1024;
-pub const MAX_PROXY_BYTES: usize = 200 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,7 +314,7 @@ impl DropService {
     }
 
     pub fn send_text(&self, to_device: &str, from_name: &str, text: &str) -> Result<(), String> {
-        if text.is_empty() || text.len() > MAX_TEXT_LEN {
+        if text.is_empty() || text.len() > DROP_MAX_TEXT_LEN {
             return Err("testo vuoto o troppo lungo".to_string());
         }
         self.peer_is_desktop(to_device)
@@ -331,7 +327,7 @@ impl DropService {
     }
 
     pub fn send_clipboard(&self, to_device: &str, from_name: &str, text: &str) -> Result<(), String> {
-        if text.is_empty() || text.len() > MAX_TEXT_LEN {
+        if text.is_empty() || text.len() > DROP_MAX_TEXT_LEN {
             return Err("testo vuoto o troppo lungo".to_string());
         }
         self.peer_is_desktop(to_device)

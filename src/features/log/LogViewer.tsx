@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
+import { LOG_VIEWER_MAX_LINES } from "../../lib/constants";
 import type { ApiError, TailInfo } from "../../lib/types";
 
 interface TailEvent {
@@ -49,9 +50,9 @@ export function LogViewer() {
     return ws.subscribe(`tail:${activeId}`, (event) => {
       const p = event.payload as TailEvent;
       if (p.event === "line" && p.line !== undefined) {
-        setLines((prev) => [...prev.slice(-1999), p.line as string]);
+        setLines((prev) => [...prev.slice(-(LOG_VIEWER_MAX_LINES - 1)), p.line as string]);
       } else if (p.event === "rotated") {
-        setLines((prev) => [...prev.slice(-1999), t("log.rotated")]);
+        setLines((prev) => [...prev.slice(-(LOG_VIEWER_MAX_LINES - 1)), t("log.rotated")]);
       } else if (p.event === "error" && p.message) {
         setError({ code: "TAIL", message: p.message, retryable: false });
       }

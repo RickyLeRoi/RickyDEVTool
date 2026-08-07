@@ -10,11 +10,10 @@ import { WindowPanel } from "./WindowPanel";
 import { isTauri } from "../../lib/appWindow";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
 import { getLang, setLang, LANGS, type Lang } from "../../lib/i18n";
+import { LANG_LABELS, THEMES } from "../../lib/constants";
+import { QR_SIZE_PX } from "../../lib/styles";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { LanInfo, PairedDevice } from "../../lib/types";
-
-const THEMES: Theme[] = ["auto", "light", "dark"];
-const LANG_LABELS: Record<Lang, string> = { it: "Italiano", en: "English" };
 
 export function Settings() {
   const { t } = useTranslation();
@@ -256,8 +255,8 @@ export function Settings() {
             className="qr"
             src={`${API_BASE}/api/lan/qr.svg?v=${qrSeq}`}
             alt={t("settings.qrAlt")}
-            width={220}
-            height={220}
+            width={QR_SIZE_PX}
+            height={QR_SIZE_PX}
           />
           <p className="hint">{t("settings.qrHint")}</p>
           <div className="setting-actions">

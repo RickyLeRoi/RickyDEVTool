@@ -8,11 +8,9 @@ use serde::Serialize;
 
 use crate::events::{now_ms, EventBus};
 
-const POLL_MS: u64 = 500;
-const INITIAL_TAIL_BYTES: u64 = 64 * 1024;
-const MAX_TAILS: usize = 5;
-const MAX_AGE_MS: u64 = 2 * 3600 * 1000;
-const MAX_LINE_LEN: usize = 4000;
+use crate::constants::{
+    LOGTAIL_INITIAL_BYTES, LOGTAIL_POLL_MS, MAX_TAILS, TAIL_MAX_AGE_MS, TAIL_MAX_LINE_LEN,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,7 +58,7 @@ impl TailRegistry {
         let mut tails = self.tails.lock().expect("tail lock");
         let now = now_ms();
         tails.retain(|_, h| {
-            let keep = now.saturating_sub(h.info.started_at) < MAX_AGE_MS;
+            let keep = now.saturating_sub(h.info.started_at) < TAIL_MAX_AGE_MS;
             if !keep {
                 h.task.abort();
             }
@@ -110,7 +108,7 @@ async fn tail_loop(bus: EventBus, id: String, path: PathBuf) {
 
     let mut carry = String::new();
     loop {
-        tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(LOGTAIL_POLL_MS)).await;
         let meta = match std::fs::metadata(&path) {
             Ok(m) => m,
             Err(_) => continue,
@@ -134,7 +132,7 @@ async fn tail_loop(bus: EventBus, id: String, path: PathBuf) {
             let line: String = carry.drain(..=newline).collect();
             publish_line(&bus, &topic, line.trim_end_matches(['\n', '\r']));
         }
-        if carry.len() > MAX_LINE_LEN {
+        if carry.len() > TAIL_MAX_LINE_LEN {
             let flushed: String = carry.drain(..).collect();
             publish_line(&bus, &topic, &flushed);
         }
@@ -143,8 +141,8 @@ async fn tail_loop(bus: EventBus, id: String, path: PathBuf) {
 
 fn publish_line(bus: &EventBus, topic: &str, line: &str) {
     let mut line = line;
-    if line.len() > MAX_LINE_LEN {
-        let mut end = MAX_LINE_LEN;
+    if line.len() > TAIL_MAX_LINE_LEN {
+        let mut end = TAIL_MAX_LINE_LEN;
         while !line.is_char_boundary(end) {
             end -= 1;
         }
@@ -159,7 +157,7 @@ fn publish_line(bus: &EventBus, topic: &str, line: &str) {
 fn read_initial(path: &PathBuf, pos: &mut u64) -> Result<Vec<String>, String> {
     let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let len = file.metadata().map_err(|e| e.to_string())?.len();
-    let start = len.saturating_sub(INITIAL_TAIL_BYTES);
+    let start = len.saturating_sub(LOGTAIL_INITIAL_BYTES);
     file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).map_err(|e| e.to_string())?;

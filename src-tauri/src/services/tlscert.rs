@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use tokio_rustls::rustls::{self, pki_types::ServerName};
 
-const CACHE_TTL: Duration = Duration::from_secs(3600);
+use crate::constants::CERT_CACHE_TTL;
 
 #[derive(Debug)]
 struct AcceptAnyCert(rustls::crypto::CryptoProvider);
@@ -66,7 +66,7 @@ fn cache() -> &'static Mutex<HashMap<String, (Instant, Option<u64>)>> {
 pub async fn cert_expiry_ms(host: &str, port: u16) -> Option<u64> {
     let key = format!("{host}:{port}");
     if let Some((at, value)) = cache().lock().expect("cert cache").get(&key) {
-        if at.elapsed() < CACHE_TTL {
+        if at.elapsed() < CERT_CACHE_TTL {
             return *value;
         }
     }

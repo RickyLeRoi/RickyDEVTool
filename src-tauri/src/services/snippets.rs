@@ -11,8 +11,6 @@ pub struct Snippet {
     pub cwd: String,
 }
 
-pub const MAX_SNIPPETS: usize = 200;
-
 impl Snippet {
     pub fn sanitized(mut self) -> Result<Self, String> {
         self.name = self.name.trim().to_string();

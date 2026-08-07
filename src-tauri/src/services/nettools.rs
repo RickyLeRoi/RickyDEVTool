@@ -42,7 +42,7 @@ pub struct LanHost {
     pub is_self: bool,
 }
 
-const DEFAULT_PING_COUNT: u32 = 4;
+use crate::defaults::PING_COUNT;
 
 pub(crate) fn valid_host(host: &str) -> bool {
     !host.is_empty()
@@ -54,7 +54,7 @@ pub(crate) fn valid_host(host: &str) -> bool {
 }
 
 pub async fn ping(host: &str, count: Option<u32>) -> PingResult {
-    let count = count.unwrap_or(DEFAULT_PING_COUNT).clamp(1, 20);
+    let count = count.unwrap_or(PING_COUNT).clamp(1, 20);
     if !valid_host(host) {
         return PingResult {
             host: host.to_string(),
@@ -190,8 +190,7 @@ pub async fn dns_lookup(name: &str) -> Result<Vec<DnsRecordSet>, String> {
     Ok(sets)
 }
 
-pub const MAX_PORTS_PER_CALL: usize = 1000;
-const MAX_CONCURRENT_PORT_CHECKS: usize = 200;
+use crate::constants::{MAX_CONCURRENT_PORT_CHECKS, MAX_PORTS_PER_CALL};
 
 pub async fn check_ports(host: &str, ports: &[u16]) -> Result<Vec<PortCheckResult>, String> {
     if !valid_host(host) {

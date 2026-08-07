@@ -3,6 +3,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { Modal } from "../../components/Modal";
 import { post } from "../../lib/api";
 import { useSubmit } from "../../lib/useSubmit";
+import { DEFAULT_FORMAT_FILESYSTEM } from "../../lib/defaults";
 import type { DiskInfo } from "../../lib/types";
 
 const FILESYSTEMS = [
@@ -21,7 +22,7 @@ export function FormatDialog({
   onClose: (done: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const [filesystem, setFilesystem] = useState("exfat");
+  const [filesystem, setFilesystem] = useState(DEFAULT_FORMAT_FILESYSTEM);
   const [label, setLabel] = useState(disk.name);
   const [wholeDisk, setWholeDisk] = useState(false);
   const [confirmName, setConfirmName] = useState("");

@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const MAX_ENTRIES: usize = 20_000;
+use crate::constants::FSCOMPARE_MAX_ENTRIES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,7 +94,7 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     fn push(&mut self, entry: DiffEntry) {
-        if self.entries.len() >= MAX_ENTRIES {
+        if self.entries.len() >= FSCOMPARE_MAX_ENTRIES {
             self.truncated = true;
             return;
         }

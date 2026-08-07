@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import { API_BASE, post } from "../../lib/api";
 import { getDeviceSecret } from "../../lib/device";
 import { fmtBytes } from "../../lib/format";
+import { DEVICE_SECRET_HEADER, DROP_MAX_TOASTS } from "../../lib/constants";
 import { useDropStore } from "../../stores/dropStore";
 
 // 20260806 ++ RG #Security il segreto del device viaggia in un header, non nella URL: un <a href>
@@ -11,7 +12,7 @@ import { useDropStore } from "../../stores/dropStore";
 async function scarica(transferId: string, name: string, t: TFunction): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/api/drop/download/${transferId}`, {
-      headers: { "X-RickyDev-Device-Secret": getDeviceSecret() },
+      headers: { [DEVICE_SECRET_HEADER]: getDeviceSecret() },
     });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
@@ -38,7 +39,7 @@ export function DropToasts() {
 
   return (
     <div className="drop-toasts">
-      {incoming.slice(0, 5).map((item) => {
+      {incoming.slice(0, DROP_MAX_TOASTS).map((item) => {
         const d = item.data;
         return (
           <div key={item.id} className="drop-toast">

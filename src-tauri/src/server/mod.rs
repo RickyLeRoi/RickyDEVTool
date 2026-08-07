@@ -23,8 +23,10 @@ use crate::poller::PollerRegistry;
 #[folder = "../dist"]
 struct Assets;
 
-const PAIR_COOKIE: &str = "rdt";
-const PORT_FALLBACK_RANGE: u16 = 10;
+use crate::constants::{
+    MAX_LOG_FIELD, MAX_PAIR_SESSIONS, MIN_HUB_CODE_LEN, PAIR_COOKIE, PORT_FALLBACK_RANGE,
+    SENSORS_ALERT_INTERVAL, TOPIC_SENSORS_BACKGROUND,
+};
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -190,8 +192,8 @@ pub async fn start(
         tokio::spawn(async move {
             loop {
                 let payload = crate::adapters::sensors::read_for_alerts().await;
-                bus_bg.publish("sensorsbg", payload);
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                bus_bg.publish(TOPIC_SENSORS_BACKGROUND, payload);
+                tokio::time::sleep(SENSORS_ALERT_INTERVAL).await;
             }
         });
     }
@@ -544,8 +546,6 @@ struct PairBody {
     device_name: Option<String>,
 }
 
-const MAX_PAIR_SESSIONS: usize = 32;
-
 async fn pair(State(state): State<ServerState>, Json(body): Json<PairBody>) -> Response {
     let cfg = state.config.get();
     if !crate::config::secret_eq(&cfg.pair_token, &body.token) {
@@ -648,8 +648,6 @@ struct LogBody {
     message: String,
     stack: Option<String>,
 }
-
-const MAX_LOG_FIELD: usize = 2000;
 
 // 20260806 ++ RG #Security lo scrive un client e finisce nei nostri log: senza tetto satura il
 // disco, e i caratteri di controllo ci scrivono righe finte.
@@ -876,7 +874,7 @@ async fn set_tool_path(
     Path(id): Path<String>,
     Json(body): Json<ToolPathBody>,
 ) -> Response {
-    if !crate::adapters::tools::TOOL_IDS.contains(&id.as_str()) {
+    if !crate::constants::TOOL_IDS.contains(&id.as_str()) {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -1491,7 +1489,7 @@ async fn snippets_upsert(
     state.config.update(|c| {
         if let Some(existing) = c.snippets.iter_mut().find(|s| s.id == snippet.id) {
             *existing = snippet.clone();
-        } else if c.snippets.len() >= crate::services::snippets::MAX_SNIPPETS {
+        } else if c.snippets.len() >= crate::constants::MAX_SNIPPETS {
             too_many = true;
         } else {
             c.snippets.push(snippet.clone());
@@ -1500,7 +1498,7 @@ async fn snippets_upsert(
     if too_many {
         return internal_error(format!(
             "troppi snippet (max {})",
-            crate::services::snippets::MAX_SNIPPETS
+            crate::constants::MAX_SNIPPETS
         ));
     }
     Json(json!({ "ok": true, "data": { "snippets": state.config.get().snippets } })).into_response()
@@ -1585,14 +1583,14 @@ async fn ssh_host_upsert(
     state.config.update(|c| {
         if let Some(existing) = c.ssh_hosts.iter_mut().find(|h| h.id == host.id) {
             *existing = host.clone();
-        } else if c.ssh_hosts.len() >= crate::services::ssh::MAX_HOSTS {
+        } else if c.ssh_hosts.len() >= crate::constants::MAX_SSH_HOSTS {
             too_many = true;
         } else {
             c.ssh_hosts.push(host.clone());
         }
     });
     if too_many {
-        return internal_error(format!("troppi host (max {})", crate::services::ssh::MAX_HOSTS));
+        return internal_error(format!("troppi host (max {})", crate::constants::MAX_SSH_HOSTS));
     }
     Json(json!({ "ok": true, "data": { "hosts": state.config.get().ssh_hosts } })).into_response()
 }
@@ -2219,7 +2217,7 @@ async fn set_interval(
         )
             .into_response();
     }
-    if topic == crate::collectors::stats::TOPIC {
+    if topic == crate::constants::TOPIC_STATS {
         state
             .config
             .update(|c| c.stats_interval_ms = body.interval_ms.clamp(200, 60_000));
@@ -2604,7 +2602,6 @@ async fn drop_hubs(State(state): State<ServerState>) -> Json<serde_json::Value> 
 }
 
 // 20260806 ++ RG #Security il codice hub è un segreto: anche la GET sta nel gruppo solo-desktop.
-const MIN_HUB_CODE_LEN: usize = 8;
 
 #[derive(Deserialize)]
 struct HubCodeBody {
@@ -2643,7 +2640,7 @@ async fn hub_code_set(
     Json(json!({ "ok": true, "data": { "code": code } })).into_response()
 }
 
-const MAX_PROXY_BYTES: usize = crate::services::drop::MAX_PROXY_BYTES;
+const MAX_PROXY_BYTES: usize = crate::constants::MAX_PROXY_BYTES;
 
 fn proxy_too_big() -> String {
     format!(
@@ -2796,7 +2793,7 @@ async fn drop_text(State(state): State<ServerState>, Json(body): Json<DropTextBo
     }
 }
 
-const DEVICE_SECRET_HEADER: &str = "x-rickydev-device-secret";
+use crate::constants::DEVICE_SECRET_HEADER;
 
 async fn drop_download(
     State(state): State<ServerState>,
@@ -2999,7 +2996,8 @@ async fn ai_config_set(
     State(state): State<ServerState>,
     Json(body): Json<AiConfigBody>,
 ) -> Response {
-    use crate::services::rickyai::{valid_remote_url, MODES, PROVIDER_KEYS, STRATEGIES};
+    use crate::constants::{AI_MODES, AI_PROVIDER_KEYS, AI_STRATEGIES};
+    use crate::services::rickyai::valid_remote_url;
 
     let command = match body.command.as_deref().map(|p| existing_file(p, "binario of-free")) {
         Some(Err(message)) => return internal_error(message),
@@ -3007,7 +3005,7 @@ async fn ai_config_set(
         None => None,
     };
     if let Some(mode) = &body.mode {
-        if !MODES.contains(&mode.trim()) {
+        if !AI_MODES.contains(&mode.trim()) {
             return internal_error("modalità non valida: usa local o remote".into());
         }
     }
@@ -3022,16 +3020,16 @@ async fn ai_config_set(
     // 20260804 RG passare a "remote" senza indirizzo non è un errore: il campo compare dopo.
     if let Some(keys) = &body.keys {
         for name in keys.keys() {
-            if !PROVIDER_KEYS.iter().any(|(_, _, var)| var == name) {
+            if !AI_PROVIDER_KEYS.iter().any(|(_, _, var)| var == name) {
                 return internal_error(format!("chiave sconosciuta: {name}"));
             }
         }
     }
     if let Some(strategy) = &body.strategy {
-        if !STRATEGIES.contains(&strategy.trim()) {
+        if !AI_STRATEGIES.contains(&strategy.trim()) {
             return internal_error(format!(
                 "strategia non valida: usa {}",
-                STRATEGIES.join(", ")
+                AI_STRATEGIES.join(", ")
             ));
         }
     }

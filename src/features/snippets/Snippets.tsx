@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
+import { EMPTY_SNIPPET_DRAFT } from "../../lib/defaults";
 import type { ApiError, Snippet, TaskInfo } from "../../lib/types";
 
 interface Draft {
@@ -10,8 +11,6 @@ interface Draft {
   command: string;
   cwd: string;
 }
-
-const EMPTY: Draft = { name: "", command: "", cwd: "" };
 
 function SnippetForm({
   draft,
@@ -115,7 +114,7 @@ export function Snippets() {
       <div className="section-header">
         <h2>{t("nav.snippets")}</h2>
         {!draft && (
-          <button className="small" onClick={() => setDraft({ ...EMPTY })}>
+          <button className="small" onClick={() => setDraft({ ...EMPTY_SNIPPET_DRAFT })}>
             {t("snippets.new")}
           </button>
         )}

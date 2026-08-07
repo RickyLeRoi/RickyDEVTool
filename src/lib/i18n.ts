@@ -2,21 +2,18 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { it } from "../locales/it";
 import { en } from "../locales/en";
+import { LANGS, STORAGE_KEYS, type Lang } from "./constants";
+import { DEFAULT_LANG } from "./defaults";
 
-export const LANGS = ["it", "en"] as const;
-export type Lang = (typeof LANGS)[number];
-
-const KEY = "rdt-lang";
-const DEFAULT_LANG: Lang = "it";
+export { LANGS };
+export type { Lang };
 
 function isLang(v: string | null): v is Lang {
-  return v === "it" || v === "en";
+  return v !== null && (LANGS as readonly string[]).includes(v);
 }
 
 function initialLang(): Lang {
-  // 20260807 ++ RG #i18n default all'italiano (lingua base); la scelta esplicita è persistita.
-  // Per l'auto-detect dalla lingua del browser: leggere navigator.language qui.
-  const stored = localStorage.getItem(KEY);
+  const stored = localStorage.getItem(STORAGE_KEYS.lang);
   return isLang(stored) ? stored : DEFAULT_LANG;
 }
 
@@ -32,7 +29,7 @@ export function getLang(): Lang {
 }
 
 export function setLang(lang: Lang) {
-  localStorage.setItem(KEY, lang);
+  localStorage.setItem(STORAGE_KEYS.lang, lang);
   i18n.changeLanguage(lang);
   document.documentElement.setAttribute("lang", lang);
 }

@@ -58,9 +58,11 @@ pub struct ServiceStatus {
     pub cert_days_left: Option<i64>,
 }
 
-const DEGRADED_LATENCY_MS: u64 = 2500;
-const HISTORY_LEN: usize = 20;
-const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 RickyDEVTool/0.1";
+use crate::constants::{
+    DEGRADED_LATENCY_MS, HTTP_USER_AGENT, SERVICE_HISTORY_LEN, SERVICE_TIMEOUT_MAX_MS,
+    SERVICE_TIMEOUT_MIN_MS,
+};
+use crate::defaults::SERVICE_TIMEOUT_MS;
 
 pub fn builtin_presets() -> Vec<ServiceDef> {
     let http = |id: &str, label: &str, target: &str, expect: Option<Vec<u16>>| ServiceDef {
@@ -69,7 +71,7 @@ pub fn builtin_presets() -> Vec<ServiceDef> {
         kind: ServiceKind::Http,
         target: target.into(),
         expect_status: expect,
-        timeout_ms: 4000,
+        timeout_ms: SERVICE_TIMEOUT_MS,
         builtin: true,
         enabled: true,
     };
@@ -89,7 +91,7 @@ fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent(USER_AGENT)
+            .user_agent(HTTP_USER_AGENT)
             .build()
             .expect("client http")
     })
@@ -117,8 +119,8 @@ pub async fn check_all(defs: &[ServiceDef]) -> Vec<ServiceStatus> {
     for status in &mut results {
         let entry = store.entry(status.id.clone()).or_default();
         entry.push(status.state);
-        if entry.len() > HISTORY_LEN {
-            let excess = entry.len() - HISTORY_LEN;
+        if entry.len() > SERVICE_HISTORY_LEN {
+            let excess = entry.len() - SERVICE_HISTORY_LEN;
             entry.drain(..excess);
         }
         status.history = entry.clone();
@@ -128,7 +130,7 @@ pub async fn check_all(defs: &[ServiceDef]) -> Vec<ServiceStatus> {
 
 async fn check_one(def: ServiceDef) -> ServiceStatus {
     let started = Instant::now();
-    let timeout = Duration::from_millis(def.timeout_ms.clamp(500, 30_000));
+    let timeout = Duration::from_millis(def.timeout_ms.clamp(SERVICE_TIMEOUT_MIN_MS, SERVICE_TIMEOUT_MAX_MS));
     let (state, http_status, error) = match def.kind {
         ServiceKind::Http => check_http(&def, timeout).await,
         ServiceKind::Tcp => check_tcp(&def, timeout).await,

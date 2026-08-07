@@ -4,10 +4,8 @@ import { api, post, API_BASE } from "../../lib/api";
 import { getDeviceName } from "../../lib/device";
 import { getLang } from "../../lib/i18n";
 import { useDropStore } from "../../stores/dropStore";
+import { CLIPBOARD_PREVIEW_CHARS, FLASH_MS, FLASH_SHORT_MS, POLL_MS } from "../../lib/constants";
 import type { ClipboardHistory, ClipEntry } from "../../lib/types";
-
-const REFRESH_MS = 2000;
-const PREVIEW_CHARS = 280;
 
 function fmtTime(ms: number) {
   return new Date(ms).toLocaleTimeString(getLang(), {
@@ -31,8 +29,8 @@ function blobUrl(id: number, index?: number) {
 function TextBody({ entry }: { entry: ClipEntry }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const long = entry.text.length > PREVIEW_CHARS;
-  const shown = expanded || !long ? entry.text : entry.text.slice(0, PREVIEW_CHARS) + "…";
+  const long = entry.text.length > CLIPBOARD_PREVIEW_CHARS;
+  const shown = expanded || !long ? entry.text : entry.text.slice(0, CLIPBOARD_PREVIEW_CHARS) + "…";
   return (
     <>
       <pre className="clip-text" onClick={() => long && setExpanded(!expanded)}>
@@ -108,7 +106,7 @@ function Entry({
     const r = await post<{ copied: boolean }>("/api/clipboard/copy", { id: entry.id });
     if (r.ok) {
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      setTimeout(() => setCopied(false), FLASH_SHORT_MS);
     }
   };
 
@@ -120,7 +118,7 @@ function Entry({
     });
     if (r.ok) {
       setSentTo(name);
-      setTimeout(() => setSentTo(null), 1500);
+      setTimeout(() => setSentTo(null), FLASH_MS);
     }
   };
   const pin = async () => {
@@ -204,7 +202,7 @@ export function Clipboard() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, REFRESH_MS);
+    const id = setInterval(load, POLL_MS.clipboard);
     return () => clearInterval(id);
   }, [load]);
 

@@ -35,7 +35,7 @@ pub struct LogLine {
     pub line: String,
 }
 
-const MAX_LOG_LINES: usize = 5000;
+use crate::constants::{MAX_TASK_LOG_LINES, TASK_REAP_DELAY};
 
 struct TaskHandle {
     info: TaskInfo,
@@ -224,7 +224,7 @@ impl TaskRegistry {
             let registry = Arc::clone(self);
             let task_id = id.to_string();
             tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                tokio::time::sleep(TASK_REAP_DELAY).await;
                 if registry.is_running(&task_id) {
                     tracing::warn!(task = %task_id, "SIGTERM ignorato, forzo la chiusura");
                     unsafe { libc::killpg(pgid, libc::SIGKILL) };
@@ -268,8 +268,8 @@ async fn stream_lines<R: tokio::io::AsyncRead + Unpin>(
         {
             let mut buf = log.lock().expect("log lock");
             buf.push(LogLine { stream, line: line.clone() });
-            if buf.len() > MAX_LOG_LINES {
-                let excess = buf.len() - MAX_LOG_LINES;
+            if buf.len() > MAX_TASK_LOG_LINES {
+                let excess = buf.len() - MAX_TASK_LOG_LINES;
                 buf.drain(..excess);
             }
         }

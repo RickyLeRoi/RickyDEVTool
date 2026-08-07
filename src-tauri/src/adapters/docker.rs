@@ -1,17 +1,20 @@
 use serde::Serialize;
 
+use crate::constants::{
+    DOCKER_AVAILABLE_TTL, DOCKER_CMD_TIMEOUT, DOCKER_HOST_MAX_LEN, DOCKER_HOST_SCHEMES,
+    DOCKER_PS_TTL, DOCKER_REF_MAX_LEN,
+};
 use crate::exec;
 
 fn valid_ref(s: &str) -> bool {
     !s.is_empty()
-        && s.len() <= 128
+        && s.len() <= DOCKER_REF_MAX_LEN
         && !s.starts_with('-')
         && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
 pub fn valid_host(s: &str) -> bool {
-    const SCHEMES: &[&str] = &["tcp://", "ssh://", "unix://", "npipe://", "http://", "https://"];
-    s.len() <= 255 && SCHEMES.iter().any(|scheme| s.starts_with(scheme))
+    s.len() <= DOCKER_HOST_MAX_LEN && DOCKER_HOST_SCHEMES.iter().any(|scheme| s.starts_with(scheme))
 }
 
 fn docker_cmd(host: Option<&str>) -> tokio::process::Command {
@@ -23,15 +26,11 @@ fn docker_cmd(host: Option<&str>) -> tokio::process::Command {
     cmd
 }
 
-const CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
-
 // 20260806 ++ RG #Security ogni invocazione è uno spawn di processo, e su host ssh:// anche un
-// round-trip SSH: due cache lo tengono giù. PS_TTL sta appena sotto i 5s di poll della UI, così i
+// round-trip SSH: due cache lo tengono giù. DOCKER_PS_TTL sta appena sotto i 5s di poll della UI, così i
 // pannelli container e immagini riusano la stessa lettura invece di farne una a testa, e le
 // richieste che arrivano mentre una chiamata lenta è in corso si fondono in quella. Le azioni
 // fatte da qui invalidano esplicitamente.
-const AVAILABLE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
-const PS_TTL: std::time::Duration = std::time::Duration::from_millis(4000);
 
 struct TtlCache<T> {
     ttl: std::time::Duration,
@@ -60,9 +59,9 @@ impl<T: Clone> TtlCache<T> {
 }
 
 static AVAILABLE_CACHE: std::sync::LazyLock<tokio::sync::Mutex<TtlCache<bool>>> =
-    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(TtlCache::new(AVAILABLE_TTL)));
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(TtlCache::new(DOCKER_AVAILABLE_TTL)));
 static PS_CACHE: std::sync::LazyLock<tokio::sync::Mutex<TtlCache<DockerState>>> =
-    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(TtlCache::new(PS_TTL)));
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(TtlCache::new(DOCKER_PS_TTL)));
 
 // 20260806 ++ RG #Security dopo un'azione la UI ricarica subito: il TTL non deve mostrarle
 // il container ancora nello stato di prima.
@@ -71,12 +70,12 @@ pub async fn invalidate_state() {
 }
 
 async fn run(mut cmd: tokio::process::Command) -> Result<std::process::Output, String> {
-    match tokio::time::timeout(CMD_TIMEOUT, cmd.output()).await {
+    match tokio::time::timeout(DOCKER_CMD_TIMEOUT, cmd.output()).await {
         Ok(Ok(out)) => Ok(out),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err(format!(
             "nessuna risposta entro {}s (host irraggiungibile o in attesa di credenziali)",
-            CMD_TIMEOUT.as_secs()
+            DOCKER_CMD_TIMEOUT.as_secs()
         )),
     }
 }
@@ -176,22 +175,9 @@ async fn state_uncached(host: Option<&str>) -> DockerState {
 }
 
 fn looks_like_daemon_down(stderr_lower: &str) -> bool {
-    const MARKERS: &[&str] = &[
-        "cannot connect to the docker daemon",
-        "is the docker daemon running",
-        "failed to connect to the docker api",
-        "docker.sock",
-        "error during connect",
-        "connection refused",
-        "no route to host",
-        "could not resolve hostname",
-        "host key verification failed",
-        "permission denied",
-        "connection timed out",
-        "network is unreachable",
-        "i/o timeout",
-    ];
-    MARKERS.iter().any(|m| stderr_lower.contains(m))
+    crate::constants::DOCKER_DAEMON_DOWN_MARKERS
+        .iter()
+        .any(|m| stderr_lower.contains(m))
 }
 
 fn clean_error(stderr: &str) -> String {

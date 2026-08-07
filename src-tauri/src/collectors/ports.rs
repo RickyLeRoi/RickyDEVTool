@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::adapters::ports::scan_tcp_listen;
 use crate::poller::PollerRegistry;
 
-pub const TOPIC: &str = "ports";
-const DEFAULT_INTERVAL_MS: u64 = 3000;
+use crate::constants::TOPIC_PORTS;
+use crate::defaults::PORTS_INTERVAL_MS;
 
 pub fn register(registry: &Arc<PollerRegistry>) {
     registry.register(
-        TOPIC,
-        DEFAULT_INTERVAL_MS,
+        TOPIC_PORTS,
+        PORTS_INTERVAL_MS,
         Arc::new(|| {
             Box::pin(async {
                 let scan = scan_tcp_listen(false).await?;

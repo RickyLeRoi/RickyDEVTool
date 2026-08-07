@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { getLang } from "../../lib/i18n";
+import { COMMITS_PAGE_SIZE } from "../../lib/constants";
 import type { ApiError, GitCommit, GitRepoInfo } from "../../lib/types";
 
 interface CommitListProps {
@@ -10,8 +11,6 @@ interface CommitListProps {
   onCheckout: (info: GitRepoInfo) => void;
   refName: string | null;
 }
-
-const PAGE = 50;
 
 function fmtDate(ms: number) {
   return new Date(ms).toLocaleDateString(getLang(), {
@@ -33,7 +32,7 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
   const fetchPage = async (skip: number): Promise<GitCommit[]> => {
     const refQ = refName ? `&ref=${encodeURIComponent(refName)}` : "";
     const r = await api<{ commits: GitCommit[] }>(
-      `/api/git/commits?path=${encodeURIComponent(path)}&limit=${PAGE}&skip=${skip}${refQ}`,
+      `/api/git/commits?path=${encodeURIComponent(path)}&limit=${COMMITS_PAGE_SIZE}&skip=${skip}${refQ}`,
     );
     if (r.ok) {
       setError(null);
@@ -57,7 +56,7 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
       const first = await fetchPage(0);
       if (!cancelled) {
         setCommits(first);
-        setAtEnd(first.length < PAGE);
+        setAtEnd(first.length < COMMITS_PAGE_SIZE);
       }
     })();
     return () => {
@@ -70,7 +69,7 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
     if (!open && !commits) {
       const first = await fetchPage(0);
       setCommits(first);
-      setAtEnd(first.length < PAGE);
+      setAtEnd(first.length < COMMITS_PAGE_SIZE);
     }
     setOpen(!open);
   };
@@ -81,13 +80,13 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
     const next = await fetchPage(commits.length);
     setLoadingMore(false);
     setCommits([...commits, ...next]);
-    if (next.length < PAGE) setAtEnd(true);
+    if (next.length < COMMITS_PAGE_SIZE) setAtEnd(true);
   };
 
   const reloadFromTop = async () => {
     const first = await fetchPage(0);
     setCommits(first);
-    setAtEnd(first.length < PAGE);
+    setAtEnd(first.length < COMMITS_PAGE_SIZE);
   };
 
   const checkout = async (c: GitCommit) => {

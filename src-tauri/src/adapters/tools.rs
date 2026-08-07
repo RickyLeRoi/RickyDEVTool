@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::constants::TOOL_IDS;
 use crate::exec;
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,10 +26,6 @@ pub struct ToolEdition {
     pub label: String,
     pub path: String,
 }
-
-pub const TOOL_IDS: &[&str] = &[
-    "vscode", "visualstudio", "git", "node", "npm", "yarn", "pnpm", "dotnet", "docker", "terminal",
-];
 
 pub async fn discover_all(overrides: &HashMap<String, String>) -> Vec<DiscoveredTool> {
     let mut tools = Vec::with_capacity(TOOL_IDS.len());
@@ -110,7 +106,7 @@ async fn version_of(id: &str, path: &str) -> Option<String> {
         "docker" => "--version",
         _ => "--version",
     };
-    let out = exec::text_within(exec::cmd(path).arg(arg), Duration::from_secs(4)).await?;
+    let out = exec::text_within(exec::cmd(path).arg(arg), crate::constants::TOOL_VERSION_TIMEOUT).await?;
     let first = out.lines().next()?.trim().to_string();
     (!first.is_empty()).then_some(first)
 }

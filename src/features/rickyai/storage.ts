@@ -1,3 +1,11 @@
+import {
+  AI_CONTEXT_MESSAGES,
+  AI_MAX_THREADS,
+  AI_TITLE_MAX_CHARS,
+  STORAGE_KEYS,
+} from "../../lib/constants";
+import { DEFAULT_AI_MODEL, DEFAULT_AI_THREAD_TITLE } from "../../lib/defaults";
+
 export interface AiChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -16,30 +24,25 @@ export interface AiThread {
   updatedAt: number;
 }
 
-const THREADS_KEY = "rdt-rickyai-threads";
-const MODEL_KEY = "rdt-rickyai-model";
-
-export const MAX_THREADS = 30;
-
-export const CONTEXT_MESSAGES = 40;
-
 export function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export function newThread(): AiThread {
-  return { id: newId(), title: "Nuova chat", messages: [], updatedAt: Date.now() };
+  return { id: newId(), title: DEFAULT_AI_THREAD_TITLE, messages: [], updatedAt: Date.now() };
 }
 
 export function titleFor(text: string): string {
   const firstLine = text.trim().split("\n")[0].trim();
-  if (!firstLine) return "Nuova chat";
-  return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
+  if (!firstLine) return DEFAULT_AI_THREAD_TITLE;
+  return firstLine.length > AI_TITLE_MAX_CHARS
+    ? `${firstLine.slice(0, AI_TITLE_MAX_CHARS)}…`
+    : firstLine;
 }
 
 export function conversationFor(thread: AiThread): { role: string; content: string }[] {
   return thread.messages
-    .slice(-CONTEXT_MESSAGES)
+    .slice(-AI_CONTEXT_MESSAGES)
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
@@ -60,7 +63,7 @@ function isThread(value: unknown): value is AiThread {
 export function loadThreads(): AiThread[] {
   let raw: string | null = null;
   try {
-    raw = localStorage.getItem(THREADS_KEY);
+    raw = localStorage.getItem(STORAGE_KEYS.aiThreads);
   } catch {
     return [];
   }
@@ -68,7 +71,7 @@ export function loadThreads(): AiThread[] {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isThread).slice(0, MAX_THREADS);
+    return parsed.filter(isThread).slice(0, AI_MAX_THREADS);
   } catch {
     return [];
   }
@@ -77,24 +80,24 @@ export function loadThreads(): AiThread[] {
 export function saveThreads(threads: AiThread[]): void {
   const trimmed = [...threads]
     .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_THREADS);
+    .slice(0, AI_MAX_THREADS);
   try {
-    localStorage.setItem(THREADS_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(STORAGE_KEYS.aiThreads, JSON.stringify(trimmed));
   } catch {
   }
 }
 
 export function loadModel(): string {
   try {
-    return localStorage.getItem(MODEL_KEY) || "auto";
+    return localStorage.getItem(STORAGE_KEYS.aiModel) || DEFAULT_AI_MODEL;
   } catch {
-    return "auto";
+    return DEFAULT_AI_MODEL;
   }
 }
 
 export function saveModel(model: string): void {
   try {
-    localStorage.setItem(MODEL_KEY, model);
+    localStorage.setItem(STORAGE_KEYS.aiModel, model);
   } catch {
   }
 }

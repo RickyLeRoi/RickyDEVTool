@@ -1,4 +1,5 @@
 import { WS_URL } from "./api";
+import { WS_BACKOFF_MAX_MS, WS_BACKOFF_START_MS } from "./constants";
 import type { WsEvent } from "./types";
 
 type Handler = (event: WsEvent) => void;
@@ -9,7 +10,7 @@ class WsClient {
   // 20260806 ++ RG #Security l'auth va ricordata per topic: alla riconnessione il server rifà il
   // controllo da zero e senza segreto le sottoscrizioni drop: verrebbero negate.
   private auth = new Map<string, string>();
-  private backoffMs = 500;
+  private backoffMs = WS_BACKOFF_START_MS;
   private closed = false;
 
   private sendSubscribe(socket: WebSocket, topic: string) {
@@ -23,7 +24,7 @@ class WsClient {
     this.socket = socket;
 
     socket.onopen = () => {
-      this.backoffMs = 500;
+      this.backoffMs = WS_BACKOFF_START_MS;
       for (const topic of this.handlers.keys()) {
         this.sendSubscribe(socket, topic);
       }
@@ -45,7 +46,7 @@ class WsClient {
       this.socket = null;
       if (this.closed) return;
       setTimeout(() => this.connect(), this.backoffMs);
-      this.backoffMs = Math.min(this.backoffMs * 2, 10_000);
+      this.backoffMs = Math.min(this.backoffMs * 2, WS_BACKOFF_MAX_MS);
     };
     socket.onerror = () => socket.close();
   }

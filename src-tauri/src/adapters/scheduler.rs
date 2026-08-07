@@ -373,22 +373,13 @@ async fn schtasks_detail(taskname: &str) -> Vec<String> {
     let Some(text) = exec::text(cmd).await else {
         return vec!["Dettagli non disponibili.".into()];
     };
-    const WANT: &[&str] = &[
-        "Schedule Type",
-        "Start Time",
-        "Start Date",
-        "Next Run Time",
-        "Last Run Time",
-        "Tipo pianificazione",
-        "Ora di inizio",
-        "Prossima esecuzione",
-        "Ultima esecuzione",
-    ];
+    use crate::constants::SCHTASKS_DETAIL_FIELDS;
+
     let mut lines = Vec::new();
     for line in text.lines() {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim(), v.trim());
-            if !v.is_empty() && WANT.iter().any(|w| k.eq_ignore_ascii_case(w)) {
+            if !v.is_empty() && SCHTASKS_DETAIL_FIELDS.iter().any(|w| k.eq_ignore_ascii_case(w)) {
                 lines.push(format!("{k}: {v}"));
             }
         }

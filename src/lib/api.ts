@@ -1,12 +1,15 @@
+import { LOOPBACK_HOST, SERVER_PORT, SERVER_PORT_FALLBACK_RANGE, WS_PATH } from "./constants";
 import type { ApiResult } from "./types";
 
 const port = Number(window.location.port);
 export const API_BASE =
-  port >= 6969 && port < 6979 ? "" : "http://127.0.0.1:6969";
+  port >= SERVER_PORT && port < SERVER_PORT + SERVER_PORT_FALLBACK_RANGE
+    ? ""
+    : `http://${LOOPBACK_HOST}:${SERVER_PORT}`;
 
 export const WS_URL = API_BASE
-  ? API_BASE.replace(/^http/, "ws") + "/ws"
-  : `ws://${window.location.host}/ws`;
+  ? API_BASE.replace(/^http/, "ws") + WS_PATH
+  : `ws://${window.location.host}${WS_PATH}`;
 
 export async function api<T>(
   path: string,

@@ -4,6 +4,8 @@ import { useStatsStore } from "../stores/statsStore";
 import { Sparkline } from "../components/Sparkline";
 import { ws } from "../lib/ws";
 import { api, post } from "../lib/api";
+import { FLASH_MS, POLL_MS } from "../lib/constants";
+import { SERIES_COLORS, VITALS_SPARKLINE } from "../lib/styles";
 import type { Alert, DockerState, LaunchBundle } from "../lib/types";
 
 function fmtGb(bytes: number) {
@@ -17,8 +19,6 @@ function alertTarget(kind: string): string | null {
     return "dashboard";
   return null;
 }
-
-const DOCKER_POLL_MS = 60_000;
 
 export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => void }) {
   const { t } = useTranslation();
@@ -50,7 +50,7 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
         if (alive && r.ok) setDocker(r.data);
       });
     load();
-    const id = setInterval(load, DOCKER_POLL_MS);
+    const id = setInterval(load, POLL_MS.dockerVitals);
     return () => {
       alive = false;
       clearInterval(id);
@@ -61,7 +61,7 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
     const r = await post("/api/launch/run", { id: b.id });
     if (r.ok) {
       setRanBundle(b.id);
-      setTimeout(() => setRanBundle(null), 1500);
+      setTimeout(() => setRanBundle(null), FLASH_MS);
     }
   };
 
@@ -78,7 +78,7 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
             {latest ? `${latest.cpuTotalPct.toFixed(0)}%` : "—"}
           </span>
         </div>
-        <Sparkline values={cpuHistory} width={180} height={24} />
+        <Sparkline values={cpuHistory} {...VITALS_SPARKLINE} />
         {latest && (
           <div className="vitals-sub">{t("vitals.cores", { count: latest.cores.length })}</div>
         )}
@@ -90,7 +90,7 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
             {latest ? `${latest.mem.usedPct.toFixed(0)}%` : "—"}
           </span>
         </div>
-        <Sparkline values={memHistory} width={180} height={24} stroke="var(--accent2)" />
+        <Sparkline values={memHistory} {...VITALS_SPARKLINE} stroke={SERIES_COLORS.mem} />
         {latest && (
           <div className="vitals-sub">
             {fmtGb(latest.mem.usedBytes)} / {fmtGb(latest.mem.totalBytes)} GB

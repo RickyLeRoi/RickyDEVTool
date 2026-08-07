@@ -4,6 +4,7 @@ import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import { TaskLog } from "../../components/TaskLog";
 import { LocalNetworkBanner } from "../../components/LocalNetworkBanner";
+import { DOCKER_STATS_INTERVAL_OPTIONS_MS, POLL_MS } from "../../lib/constants";
 import type {
   ContainerStat,
   DockerContainer,
@@ -11,9 +12,6 @@ import type {
   DockerState,
   TaskInfo,
 } from "../../lib/types";
-
-const REFRESH_MS = 5000;
-const STAT_INTERVALS = [2000, 3000, 5000, 10000];
 
 function ImagesPanel() {
   const { t } = useTranslation();
@@ -30,7 +28,7 @@ function ImagesPanel() {
   useEffect(() => {
     if (!open) return;
     fetchImages();
-    const id = setInterval(fetchImages, REFRESH_MS);
+    const id = setInterval(fetchImages, POLL_MS.dockerImages);
     return () => clearInterval(id);
   }, [open, fetchImages]);
 
@@ -355,7 +353,7 @@ export function Docker() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, REFRESH_MS);
+    const id = setInterval(load, POLL_MS.dockerContainers);
     return () => clearInterval(id);
   }, [load]);
 
@@ -390,7 +388,7 @@ export function Docker() {
     <div className="docker-tool">
       <div className="docker-toolbar">
         <div className="segmented" title={t("docker.statsInterval")}>
-          {STAT_INTERVALS.map((ms) => (
+          {DOCKER_STATS_INTERVAL_OPTIONS_MS.map((ms) => (
             <button
               key={ms}
               className={statInterval === ms ? "active" : ""}

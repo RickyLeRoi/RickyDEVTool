@@ -2,9 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
+import { emptyLaunchStep } from "../../lib/defaults";
 import type { ApiError, LaunchBundle, LaunchStep, TaskInfo } from "../../lib/types";
-
-const emptyStep = (): LaunchStep => ({ label: "", command: "", cwd: "" });
 
 function BundleEditor({
   initial,
@@ -18,7 +17,7 @@ function BundleEditor({
   const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? "");
   const [steps, setSteps] = useState<LaunchStep[]>(
-    initial ? initial.steps.map((s) => ({ ...s })) : [emptyStep()],
+    initial ? initial.steps.map((s) => ({ ...s })) : [emptyLaunchStep()],
   );
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -88,7 +87,7 @@ function BundleEditor({
             </div>
           </div>
         ))}
-        <button className="small ghost" onClick={() => setSteps((ss) => [...ss, emptyStep()])}>
+        <button className="small ghost" onClick={() => setSteps((ss) => [...ss, emptyLaunchStep()])}>
           {t("tool.launch.addStep")}
         </button>
       </div>

@@ -1,7 +1,6 @@
 import { create } from "zustand";
+import { STATS_HISTORY_POINTS } from "../lib/constants";
 import type { MachineStats } from "../lib/types";
-
-const HISTORY_WINDOW = 60;
 
 interface StatsState {
   latest: MachineStats | null;
@@ -21,8 +20,8 @@ export const useStatsStore = create<StatsState>((set) => ({
     set((s) => ({
       latest: stats,
       error: null,
-      cpuHistory: [...s.cpuHistory, stats.cpuTotalPct].slice(-HISTORY_WINDOW),
-      memHistory: [...s.memHistory, stats.mem.usedPct].slice(-HISTORY_WINDOW),
+      cpuHistory: [...s.cpuHistory, stats.cpuTotalPct].slice(-STATS_HISTORY_POINTS),
+      memHistory: [...s.memHistory, stats.mem.usedPct].slice(-STATS_HISTORY_POINTS),
     })),
   setError: (message) => set({ error: message }),
 }));

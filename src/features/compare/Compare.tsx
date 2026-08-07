@@ -2,10 +2,9 @@ import { useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
+import { STORAGE_KEYS } from "../../lib/constants";
+import { DEFAULT_COMPARE_EXCLUDES, DEFAULT_COMPARE_FILTER } from "../../lib/defaults";
 import type { CompareResult, DiffEntry, DiffStatus, DirListing } from "../../lib/types";
-
-const STORE_KEY = "rdt-compare-paths";
-const DEFAULT_EXCLUDES = ".git, node_modules";
 
 interface StoredPaths {
   left: string;
@@ -15,17 +14,17 @@ interface StoredPaths {
 
 function loadPaths(): StoredPaths {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null");
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.comparePaths) ?? "null");
     if (parsed && typeof parsed === "object") {
       return {
         left: typeof parsed.left === "string" ? parsed.left : "",
         right: typeof parsed.right === "string" ? parsed.right : "",
-        excludes: typeof parsed.excludes === "string" ? parsed.excludes : DEFAULT_EXCLUDES,
+        excludes: typeof parsed.excludes === "string" ? parsed.excludes : DEFAULT_COMPARE_EXCLUDES,
       };
     }
   } catch {
   }
-  return { left: "", right: "", excludes: DEFAULT_EXCLUDES };
+  return { left: "", right: "", excludes: DEFAULT_COMPARE_EXCLUDES };
 }
 
 const STATUS_LABEL_KEYS = {
@@ -134,7 +133,7 @@ export function Compare() {
   const [result, setResult] = useState<CompareResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"all" | DiffStatus>("all");
+  const [filter, setFilter] = useState<"all" | DiffStatus>(DEFAULT_COMPARE_FILTER);
   const [ignored, setIgnored] = useState<string[]>([]);
   const [done, setDone] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<string | null>(null);
@@ -147,7 +146,7 @@ export function Compare() {
   const update = (patch: Partial<StoredPaths>) => {
     setPaths((prev) => {
       const next = { ...prev, ...patch };
-      localStorage.setItem(STORE_KEY, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEYS.comparePaths, JSON.stringify(next));
       return next;
     });
   };

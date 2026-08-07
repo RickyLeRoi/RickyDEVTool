@@ -38,9 +38,7 @@ pub enum GitError {
     Timeout,
 }
 
-const INFO_TIMEOUT: Duration = Duration::from_secs(10);
-const NETWORK_TIMEOUT: Duration = Duration::from_secs(90);
-const STALE_FETCH_DAYS: u64 = 7;
+use crate::constants::{GIT_INFO_TIMEOUT, GIT_MAX_COMMITS, GIT_NETWORK_TIMEOUT, GIT_STALE_FETCH_DAYS};
 
 async fn run_git(repo: &str, args: &[&str], timeout: Duration) -> Result<String, GitError> {
     let mut cmd = exec::cmd("git");
@@ -73,18 +71,18 @@ async fn run_git(repo: &str, args: &[&str], timeout: Duration) -> Result<String,
 }
 
 pub async fn repo_info(path: &str) -> Result<GitRepoInfo, GitError> {
-    let root = run_git(path, &["rev-parse", "--show-toplevel"], INFO_TIMEOUT)
+    let root = run_git(path, &["rev-parse", "--show-toplevel"], GIT_INFO_TIMEOUT)
         .await?
         .trim()
         .to_string();
-    let git_dir = run_git(path, &["rev-parse", "--absolute-git-dir"], INFO_TIMEOUT)
+    let git_dir = run_git(path, &["rev-parse", "--absolute-git-dir"], GIT_INFO_TIMEOUT)
         .await?
         .trim()
         .to_string();
     let status = run_git(
         path,
         &["status", "--porcelain=v2", "--branch"],
-        INFO_TIMEOUT,
+        GIT_INFO_TIMEOUT,
     )
     .await?;
 
@@ -140,7 +138,7 @@ pub async fn repo_info(path: &str) -> Result<GitRepoInfo, GitError> {
     if let Some(fetched) = last_fetch_at {
         let age_ms = crate::events::now_ms().saturating_sub(fetched);
         let days = age_ms / 86_400_000;
-        if days >= STALE_FETCH_DAYS {
+        if days >= GIT_STALE_FETCH_DAYS {
             warnings.push(GitWarning::StaleFetch { days });
         }
     }
@@ -180,7 +178,7 @@ pub struct LastCommit {
 }
 
 pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
-    let current = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"], INFO_TIMEOUT)
+    let current = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_INFO_TIMEOUT)
         .await
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
@@ -194,7 +192,7 @@ pub async fn branches(path: &str) -> Result<Vec<GitBranch>, GitError> {
             "refs/heads",
             "refs/remotes",
         ],
-        INFO_TIMEOUT,
+        GIT_INFO_TIMEOUT,
     )
     .await?;
 
@@ -290,8 +288,6 @@ pub struct GitCommit {
     pub refs: Vec<String>,
 }
 
-const MAX_COMMITS: u32 = 200;
-
 fn valid_ref(r: &str) -> bool {
     !r.is_empty()
         && r.len() <= 200
@@ -311,7 +307,7 @@ pub async fn commits(
             return Err(GitError::Failed("ref non valido".to_string()));
         }
     }
-    let limit = limit.clamp(1, MAX_COMMITS).to_string();
+    let limit = limit.clamp(1, GIT_MAX_COMMITS).to_string();
     let skip = skip.to_string();
     let mut args = vec![
         "log",
@@ -324,7 +320,7 @@ pub async fn commits(
     if let Some(r) = git_ref {
         args.push(r);
     }
-    let output = run_git(path, &args, INFO_TIMEOUT).await?;
+    let output = run_git(path, &args, GIT_INFO_TIMEOUT).await?;
 
     let mut commits = Vec::new();
     for line in output.lines() {
@@ -368,7 +364,7 @@ pub async fn checkout_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitE
             "working tree non pulito: committa o stasha prima del checkout".to_string(),
         ));
     }
-    run_git(path, &["checkout", hash], INFO_TIMEOUT).await?;
+    run_git(path, &["checkout", hash], GIT_INFO_TIMEOUT).await?;
     repo_info(path).await
 }
 
@@ -381,7 +377,7 @@ pub async fn delete_branch(
     if branch.is_empty() || branch.starts_with('-') {
         return Err(GitError::Failed("nome branch non valido".to_string()));
     }
-    let current = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"], INFO_TIMEOUT)
+    let current = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_INFO_TIMEOUT)
         .await
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
@@ -391,7 +387,7 @@ pub async fn delete_branch(
         ));
     }
     let flag = if force { "-D" } else { "-d" };
-    run_git(path, &["branch", flag, "--", branch], INFO_TIMEOUT).await?;
+    run_git(path, &["branch", flag, "--", branch], GIT_INFO_TIMEOUT).await?;
 
     if let Some(rem) = remote {
         let rem = rem.trim();
@@ -401,7 +397,7 @@ pub async fn delete_branch(
         {
             return Err(GitError::Failed("nome remote non valido".to_string()));
         }
-        run_git(path, &["push", rem, "--delete", branch], NETWORK_TIMEOUT).await?;
+        run_git(path, &["push", rem, "--delete", branch], GIT_NETWORK_TIMEOUT).await?;
     }
     branches(path).await
 }
@@ -416,10 +412,10 @@ pub async fn revert_commit(path: &str, hash: &str) -> Result<GitRepoInfo, GitErr
             "working tree non pulito: committa o stasha prima del revert".to_string(),
         ));
     }
-    match run_git(path, &["revert", "--no-edit", hash], INFO_TIMEOUT).await {
+    match run_git(path, &["revert", "--no-edit", hash], GIT_INFO_TIMEOUT).await {
         Ok(_) => repo_info(path).await,
         Err(e) => {
-            let _ = run_git(path, &["revert", "--abort"], INFO_TIMEOUT).await;
+            let _ = run_git(path, &["revert", "--abort"], GIT_INFO_TIMEOUT).await;
             Err(conflict_hint(e, "revert"))
         }
     }
@@ -435,10 +431,10 @@ pub async fn cherry_pick_commit(path: &str, hash: &str) -> Result<GitRepoInfo, G
             "working tree non pulito: committa o stasha prima del cherry-pick".to_string(),
         ));
     }
-    match run_git(path, &["cherry-pick", hash], INFO_TIMEOUT).await {
+    match run_git(path, &["cherry-pick", hash], GIT_INFO_TIMEOUT).await {
         Ok(_) => repo_info(path).await,
         Err(e) => {
-            let _ = run_git(path, &["cherry-pick", "--abort"], INFO_TIMEOUT).await;
+            let _ = run_git(path, &["cherry-pick", "--abort"], GIT_INFO_TIMEOUT).await;
             Err(conflict_hint(e, "cherry-pick"))
         }
     }
@@ -461,17 +457,17 @@ pub async fn checkout(path: &str, branch: &str) -> Result<GitRepoInfo, GitError>
         ));
     }
     let target = branch.trim_start_matches("origin/");
-    run_git(path, &["checkout", target], INFO_TIMEOUT).await?;
+    run_git(path, &["checkout", target], GIT_INFO_TIMEOUT).await?;
     repo_info(path).await
 }
 
 pub async fn fetch(path: &str) -> Result<GitRepoInfo, GitError> {
-    run_git(path, &["fetch", "--prune", "--quiet"], NETWORK_TIMEOUT).await?;
+    run_git(path, &["fetch", "--prune", "--quiet"], GIT_NETWORK_TIMEOUT).await?;
     repo_info(path).await
 }
 
 pub async fn pull(path: &str) -> Result<(GitRepoInfo, String), GitError> {
-    let output = run_git(path, &["pull", "--ff-only"], NETWORK_TIMEOUT).await?;
+    let output = run_git(path, &["pull", "--ff-only"], GIT_NETWORK_TIMEOUT).await?;
     let info = repo_info(path).await?;
     let summary = output.lines().last().unwrap_or("").trim().to_string();
     Ok((info, summary))

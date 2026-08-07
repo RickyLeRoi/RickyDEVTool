@@ -13,8 +13,7 @@ use crate::services::drop::DropService;
 
 use snapshot::{SharedSnapshot, TraySnapshot};
 
-const TRAY_ID: &str = "main-tray";
-const LAUNCHABLE_TOOLS: [&str; 3] = ["vscode", "visualstudio", "terminal"];
+use crate::constants::{LAUNCHABLE_TOOLS, TRAY_ID, TRAY_MAX_LISTED};
 
 pub fn setup(app: &AppHandle, info: ServerInfo) -> tauri::Result<()> {
     let config = info.state.config.clone();
@@ -140,15 +139,13 @@ fn build_system_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<S
     builder.build()
 }
 
-const MAX_LISTED: usize = 25;
-
 fn build_ports_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Submenu<Wry>> {
     let mut builder = SubmenuBuilder::new(app, "Porte");
     if snap.ports.is_empty() {
         let none = MenuItemBuilder::new("Nessuna porta in ascolto").enabled(false).build(app)?;
         return builder.item(&none).build();
     }
-    for entry in snap.ports.iter().take(MAX_LISTED) {
+    for entry in snap.ports.iter().take(TRAY_MAX_LISTED) {
         let names: Vec<&str> = entry.processes.iter().map(|p| p.name.as_str()).collect();
         let label = format!(
             ":{} — {}",
@@ -184,8 +181,8 @@ fn build_ports_submenu(app: &AppHandle, snap: &TraySnapshot) -> tauri::Result<Su
         }
         builder = builder.item(&sub.build()?);
     }
-    if snap.ports.len() > MAX_LISTED {
-        let more = MenuItemBuilder::with_id("nav:ports", format!("… e altre {}", snap.ports.len() - MAX_LISTED))
+    if snap.ports.len() > TRAY_MAX_LISTED {
+        let more = MenuItemBuilder::with_id("nav:ports", format!("… e altre {}", snap.ports.len() - TRAY_MAX_LISTED))
             .build(app)?;
         builder = builder.item(&more);
     }
@@ -251,7 +248,7 @@ fn build_drop_submenu(app: &AppHandle, drop: &DropService) -> tauri::Result<Subm
         let none = MenuItemBuilder::new("Nessun dispositivo online").enabled(false).build(app)?;
         return builder.item(&none).build();
     }
-    for peer in peers.iter().take(MAX_LISTED) {
+    for peer in peers.iter().take(TRAY_MAX_LISTED) {
         let icon = if peer.remote {
             "🌐"
         } else if peer.is_desktop {

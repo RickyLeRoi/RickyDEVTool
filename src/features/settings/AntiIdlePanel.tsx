@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
+import { isTauri } from "../../lib/appWindow";
 import type { AccessibilityStatus, LanInfo } from "../../lib/types";
-
-const isTauri = "__TAURI_INTERNALS__" in window;
 
 export function AntiIdlePanel() {
   const { t } = useTranslation();

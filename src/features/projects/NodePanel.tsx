@@ -2,9 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
+import { NODE_PACKAGE_MANAGERS } from "../../lib/constants";
 import type { ApiError, NodeProject, TaskInfo } from "../../lib/types";
-
-const PMS = ["npm", "yarn", "pnpm"] as const;
 
 export function NodePanel({ path }: { path: string }) {
   const { t } = useTranslation();
@@ -64,7 +63,7 @@ export function NodePanel({ path }: { path: string }) {
             {project.pmSource === "userOverride" && <span className="badge">{t("projects.node.manual")}</span>}
             {pmMenuOpen && (
               <span className="pm-menu">
-                {PMS.map((pm) => (
+                {NODE_PACKAGE_MANAGERS.map((pm) => (
                   <button key={pm} className="small" onClick={() => setPm(pm)}>
                     {pm}
                   </button>

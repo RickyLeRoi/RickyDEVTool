@@ -2,11 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-const MAX_DEPTH: usize = 3;
-const IGNORED_DIRS: &[&str] = &[
-    "node_modules", ".git", "bin", "obj", "dist", "build", "target", "Library",
-    ".venv", "venv", "vendor", ".next", ".nuxt", "coverage", "DerivedData",
-];
+use crate::constants::{PROJECT_IGNORED_DIRS, PROJECT_SCAN_MAX_DEPTH, PROJECT_SCAN_MAX_VISITED};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -206,8 +202,6 @@ fn sln_referenced_csprojs(slns: &[PathBuf]) -> std::collections::HashSet<PathBuf
     referenced
 }
 
-const MAX_VISITED: usize = 5000;
-
 fn walk(
     dir: &Path,
     depth: usize,
@@ -216,7 +210,7 @@ fn walk(
     visited: &mut usize,
 ) -> bool {
     *visited += 1;
-    if *visited > MAX_VISITED {
+    if *visited > PROJECT_SCAN_MAX_VISITED {
         return true;
     }
 
@@ -237,7 +231,7 @@ fn walk(
             detected.csprojs,
         ));
     }
-    if depth >= MAX_DEPTH {
+    if depth >= PROJECT_SCAN_MAX_DEPTH {
         return false;
     }
     if is_git_root && depth > 0 {
@@ -248,7 +242,7 @@ fn walk(
     let mut truncated = false;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || IGNORED_DIRS.contains(&name.as_str()) {
+        if name.starts_with('.') || PROJECT_IGNORED_DIRS.contains(&name.as_str()) {
             continue;
         }
         if is_tauri && name == "src-tauri" {

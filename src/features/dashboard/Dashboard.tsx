@@ -6,8 +6,8 @@ import { HeavyProcesses } from "./HeavyProcesses";
 import { Disks } from "./Disks";
 import { MetricsHistory } from "./MetricsHistory";
 import { SensorsPanel } from "./SensorsPanel";
-
-const INTERVALS = [500, 1000, 2000, 5000, 10000];
+import { STATS_INTERVAL_OPTIONS_MS } from "../../lib/constants";
+import { DEFAULT_STATS_INTERVAL_MS } from "../../lib/defaults";
 
 function fmtGb(bytes: number) {
   return (bytes / 1024 ** 3).toFixed(1);
@@ -16,7 +16,7 @@ function fmtGb(bytes: number) {
 export function Dashboard() {
   const { t } = useTranslation();
   const { latest, cpuHistory, memHistory, error } = useStatsStore();
-  const activeInterval = latest?.intervalMs ?? 10000;
+  const activeInterval = latest?.intervalMs ?? DEFAULT_STATS_INTERVAL_MS;
 
   const setInterval = (ms: number) =>
     post("/api/pollers/stats/interval", { intervalMs: ms });
@@ -26,7 +26,7 @@ export function Dashboard() {
       <div className="dashboard-header">
         <h2>{t("nav.dashboard")}</h2>
         <div className="segmented">
-          {INTERVALS.map((ms) => (
+          {STATS_INTERVAL_OPTIONS_MS.map((ms) => (
             <button
               key={ms}
               className={activeInterval === ms ? "active" : ""}

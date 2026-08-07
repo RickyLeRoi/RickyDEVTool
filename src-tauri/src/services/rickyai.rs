@@ -14,44 +14,12 @@ use crate::config::{AppConfig, ConfigHandle};
 use crate::events::{now_ms, EventBus};
 use crate::exec;
 
-pub const DEFAULT_PORT: u16 = 4141;
-
-pub const STRATEGIES: &[&str] = &["balanced", "fast", "local"];
-
-pub const MODES: &[&str] = &["local", "remote"];
-
-// 20260804 RG lista chiusa: solo queste variabili finiscono nell'environment di of-free, così una
-// chiave inventata nella config non diventa una variabile arbitraria.
-pub const PROVIDER_KEYS: &[(&str, &str, &str)] = &[
-    ("groq", "Groq", "GROQ_API_KEY"),
-    ("google", "Google AI Studio", "GEMINI_API_KEY"),
-    ("cerebras", "Cerebras", "CEREBRAS_API_KEY"),
-    ("github", "GitHub Models", "GITHUB_TOKEN"),
-    ("mistral", "Mistral La Plateforme", "MISTRAL_API_KEY"),
-    ("openrouter", "OpenRouter", "OPENROUTER_API_KEY"),
-    ("cohere", "Cohere", "COHERE_API_KEY"),
-];
-
-const REMOTE_DEFAULT_PORT: u16 = DEFAULT_PORT;
-
-const PORT_FALLBACK_RANGE: u16 = 10;
-
-const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
-
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
-
-const CHAT_TIMEOUT: Duration = Duration::from_secs(180);
-
-const MAX_LOG_LINES: usize = 60;
-
-const MAX_MESSAGES: usize = 400;
-const MAX_CHARS: usize = 400_000;
-
-const ADOPTED_POLL: Duration = Duration::from_secs(5);
-
-const REMOTE_POLL: Duration = Duration::from_secs(30);
-
-const MISSING_RETRY: Duration = Duration::from_secs(300);
+use crate::constants::{
+    AI_ADOPTED_POLL, AI_CHAT_TIMEOUT, AI_MAX_CHARS, AI_MAX_LOG_LINES, AI_MAX_MESSAGES,
+    AI_MISSING_RETRY, AI_MODES, AI_PORT_FALLBACK_RANGE, AI_PROBE_TIMEOUT, AI_PROVIDER_KEYS,
+    AI_REMOTE_POLL, AI_STARTUP_TIMEOUT, AI_STRATEGIES,
+};
+use crate::defaults::AI_PORT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,7 +91,7 @@ pub fn valid_remote_url(raw: &str) -> Result<String, String> {
     let path = path.strip_suffix("/v1").unwrap_or(path);
     let port = match url.port() {
         Some(port) => format!(":{port}"),
-        None if !explicit_scheme => format!(":{REMOTE_DEFAULT_PORT}"),
+        None if !explicit_scheme => format!(":{AI_PORT}"),
         None => String::new(),
     };
     Ok(format!("{}://{}{}{}", url.scheme(), host, port, path))
@@ -275,7 +243,7 @@ impl AiService {
     }
 
     async fn get_json(&self, url: &str, key: Option<&str>) -> Option<Value> {
-        let mut request = self.client.get(url).timeout(PROBE_TIMEOUT);
+        let mut request = self.client.get(url).timeout(AI_PROBE_TIMEOUT);
         if let Some(key) = auth_key(key) {
             request = request.bearer_auth(key);
         }
@@ -326,8 +294,8 @@ impl AiService {
     fn push_log(&self, line: String) {
         let mut inner = self.inner.lock().expect("ai lock");
         inner.log.push(line);
-        if inner.log.len() > MAX_LOG_LINES {
-            let excess = inner.log.len() - MAX_LOG_LINES;
+        if inner.log.len() > AI_MAX_LOG_LINES {
+            let excess = inner.log.len() - AI_MAX_LOG_LINES;
             inner.log.drain(..excess);
         }
     }
@@ -402,7 +370,7 @@ async fn supervise(service: Arc<AiService>) {
             Outcome::Idle => {
                 tokio::select! {
                     _ = service.restart.notified() => {}
-                    _ = tokio::time::sleep(MISSING_RETRY) => {}
+                    _ = tokio::time::sleep(AI_MISSING_RETRY) => {}
                 }
                 backoff = Duration::from_secs(2);
             }
@@ -466,7 +434,7 @@ async fn run_once(service: &Arc<AiService>, cfg: &AppConfig) -> Outcome {
                 Some(format!(
                     "nessuna porta libera tra {} e {}",
                     configured_port(cfg),
-                    configured_port(cfg) + PORT_FALLBACK_RANGE - 1
+                    configured_port(cfg) + AI_PORT_FALLBACK_RANGE - 1
                 )),
             );
             Outcome::Idle
@@ -573,7 +541,7 @@ async fn wait_healthy(
     child: &mut tokio::process::Child,
     port: u16,
 ) -> Result<(), String> {
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let deadline = Instant::now() + AI_STARTUP_TIMEOUT;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
             let detail = service.log_tail(3);
@@ -664,7 +632,7 @@ async fn watch_external(
     key: Option<&str>,
     caduto: &str,
 ) -> Outcome {
-    let every = if base.contains("127.0.0.1") { ADOPTED_POLL } else { REMOTE_POLL };
+    let every = if base.contains("127.0.0.1") { AI_ADOPTED_POLL } else { AI_REMOTE_POLL };
     loop {
         tokio::select! {
             _ = service.restart.notified() => return Outcome::Restart,
@@ -710,7 +678,7 @@ enum PortChoice {
 }
 
 async fn choose_port(service: &Arc<AiService>, base: u16) -> PortChoice {
-    for candidate in base..base.saturating_add(PORT_FALLBACK_RANGE) {
+    for candidate in base..base.saturating_add(AI_PORT_FALLBACK_RANGE) {
         if is_of_free(&service.client, &base_url(candidate)).await {
             return PortChoice::Adopt(candidate);
         }
@@ -723,7 +691,7 @@ async fn choose_port(service: &Arc<AiService>, base: u16) -> PortChoice {
 
 pub fn configured_port(cfg: &AppConfig) -> u16 {
     if cfg.ai_port == 0 {
-        DEFAULT_PORT
+        AI_PORT
     } else {
         cfg.ai_port
     }
@@ -735,7 +703,7 @@ pub fn is_remote(cfg: &AppConfig) -> bool {
 
 pub fn mode(cfg: &AppConfig) -> String {
     let requested = cfg.ai_mode.trim();
-    if MODES.contains(&requested) {
+    if AI_MODES.contains(&requested) {
         requested.to_string()
     } else {
         "local".to_string()
@@ -751,7 +719,7 @@ pub struct Endpoint {
 async fn probe(client: &reqwest::Client, base: &str, key: Option<&str>) -> Option<Endpoint> {
     // 20260804 RG /v1/models e non /health: quest'ultimo è solo di of-free, gli altri danno 404.
     let url = format!("{base}/v1/models");
-    let mut request = client.get(&url).timeout(PROBE_TIMEOUT);
+    let mut request = client.get(&url).timeout(AI_PROBE_TIMEOUT);
     if let Some(key) = auth_key(key) {
         request = request.bearer_auth(key);
     }
@@ -838,7 +806,7 @@ pub fn serve_args(cfg: &AppConfig, port: u16) -> Vec<String> {
 
 pub fn strategy(cfg: &AppConfig) -> String {
     let requested = cfg.ai_strategy.trim();
-    if STRATEGIES.contains(&requested) {
+    if AI_STRATEGIES.contains(&requested) {
         requested.to_string()
     } else {
         "balanced".to_string()
@@ -846,7 +814,7 @@ pub fn strategy(cfg: &AppConfig) -> String {
 }
 
 pub fn serve_env(cfg: &AppConfig) -> Vec<(String, String)> {
-    PROVIDER_KEYS
+    AI_PROVIDER_KEYS
         .iter()
         .filter_map(|(_, _, var)| {
             let value = cfg.ai_keys.get(*var)?.trim();
@@ -919,7 +887,7 @@ fn snapshot_of(status: &AiStatus, log: &[String], cfg: &AppConfig) -> Value {
         "strategy": strategy(cfg),
         "systemPrompt": cfg.ai_system_prompt,
         "keysSet": keys_set(cfg),
-        "providerKeys": PROVIDER_KEYS
+        "providerKeys": AI_PROVIDER_KEYS
             .iter()
             .map(|(id, label, var)| json!({ "id": id, "label": label, "env": var }))
             .collect::<Vec<_>>(),
@@ -932,8 +900,8 @@ pub fn validate(request: &ChatRequest) -> Result<(), String> {
     if request.messages.is_empty() {
         return Err("nessun messaggio da inviare".to_string());
     }
-    if request.messages.len() > MAX_MESSAGES {
-        return Err(format!("troppi messaggi (max {MAX_MESSAGES})"));
+    if request.messages.len() > AI_MAX_MESSAGES {
+        return Err(format!("troppi messaggi (max {AI_MAX_MESSAGES})"));
     }
     for message in &request.messages {
         if !matches!(message.role.as_str(), "system" | "user" | "assistant") {
@@ -941,8 +909,8 @@ pub fn validate(request: &ChatRequest) -> Result<(), String> {
         }
     }
     let total: usize = request.messages.iter().map(|m| m.content.len()).sum();
-    if total > MAX_CHARS {
-        return Err(format!("conversazione troppo lunga (max {MAX_CHARS} caratteri)"));
+    if total > AI_MAX_CHARS {
+        return Err(format!("conversazione troppo lunga (max {AI_MAX_CHARS} caratteri)"));
     }
     let last = request.messages.last().expect("messaggi non vuoti");
     if last.role != "user" {
@@ -1010,7 +978,7 @@ pub async fn complete(
     let mut request = client
         .post(format!("{base}/v1/chat/completions"))
         .json(payload)
-        .timeout(CHAT_TIMEOUT);
+        .timeout(AI_CHAT_TIMEOUT);
     if let Some(key) = auth_key(key) {
         request = request.bearer_auth(key);
     }
@@ -1201,12 +1169,12 @@ mod tests {
 
     #[test]
     fn il_catalogo_dei_provider_combacia_con_of_free() {
-        let vars: Vec<&str> = PROVIDER_KEYS.iter().map(|(_, _, var)| *var).collect();
+        let vars: Vec<&str> = AI_PROVIDER_KEYS.iter().map(|(_, _, var)| *var).collect();
         assert!(vars.contains(&"GROQ_API_KEY"));
         assert!(vars.contains(&"GEMINI_API_KEY"));
         assert!(vars.contains(&"GITHUB_TOKEN"));
         assert_eq!(vars.len(), 7);
-        assert!(!PROVIDER_KEYS.iter().any(|(id, _, _)| *id == "ollama"));
+        assert!(!AI_PROVIDER_KEYS.iter().any(|(id, _, _)| *id == "ollama"));
     }
 
     #[test]
@@ -1260,7 +1228,7 @@ mod tests {
 
     #[test]
     fn porta_zero_ricade_sul_default() {
-        assert_eq!(configured_port(&config_with(|c| c.ai_port = 0)), DEFAULT_PORT);
+        assert_eq!(configured_port(&config_with(|c| c.ai_port = 0)), AI_PORT);
         assert_eq!(configured_port(&config_with(|c| c.ai_port = 5000)), 5000);
     }
 
@@ -1290,12 +1258,12 @@ mod tests {
 
     #[test]
     fn validate_applica_i_tetti() {
-        let troppi: Vec<ChatMessage> = (0..MAX_MESSAGES + 1)
+        let troppi: Vec<ChatMessage> = (0..AI_MAX_MESSAGES + 1)
             .map(|i| message(if i % 2 == 0 { "user" } else { "assistant" }, "x"))
             .collect();
         assert!(validate(&request(troppi)).is_err());
 
-        let enorme = request(vec![message("user", &"a".repeat(MAX_CHARS + 1))]);
+        let enorme = request(vec![message("user", &"a".repeat(AI_MAX_CHARS + 1))]);
         assert!(validate(&enorme).is_err());
     }
 
@@ -1576,14 +1544,14 @@ mod tests {
     #[tokio::test]
     async fn il_log_del_processo_e_un_ring_buffer() {
         let service = test_service();
-        for i in 0..MAX_LOG_LINES + 10 {
+        for i in 0..AI_MAX_LOG_LINES + 10 {
             service.push_log(format!("riga {i}"));
         }
         let snapshot = service.snapshot();
         let log = snapshot["log"].as_array().unwrap();
-        assert_eq!(log.len(), MAX_LOG_LINES);
-        assert_eq!(log.last().unwrap(), &json!(format!("riga {}", MAX_LOG_LINES + 9)));
-        assert_eq!(service.log_tail(2), format!("riga {} · riga {}", MAX_LOG_LINES + 8, MAX_LOG_LINES + 9));
+        assert_eq!(log.len(), AI_MAX_LOG_LINES);
+        assert_eq!(log.last().unwrap(), &json!(format!("riga {}", AI_MAX_LOG_LINES + 9)));
+        assert_eq!(service.log_tail(2), format!("riga {} · riga {}", AI_MAX_LOG_LINES + 8, AI_MAX_LOG_LINES + 9));
     }
 
     #[tokio::test]

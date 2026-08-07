@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api, API_BASE, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
 import { getDeviceName, setDeviceName } from "../../lib/device";
+import { TOAST_MS } from "../../lib/constants";
 import { useDropStore } from "../../stores/dropStore";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { DropPeer, ReceivedFile } from "../../lib/types";
@@ -38,7 +39,7 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
     } catch {
       setStatus(t("drop.networkError"));
     }
-    setTimeout(() => setStatus(null), 4000);
+    setTimeout(() => setStatus(null), TOAST_MS);
   };
 
   const sendText = async () => {
@@ -53,7 +54,7 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
       setText("");
       setShowText(false);
     }
-    setTimeout(() => setStatus(null), 4000);
+    setTimeout(() => setStatus(null), TOAST_MS);
   };
 
   return (

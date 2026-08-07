@@ -1,32 +1,42 @@
-export type Theme = "auto" | "light" | "dark";
+import { STORAGE_KEYS, type Theme } from "./constants";
+import { DEFAULT_THEME } from "./defaults";
+import {
+  THEME_ATTRIBUTE,
+  THEME_BG_CSS_VAR,
+  THEME_COLOR_FALLBACK,
+  THEME_TRANSITION_CLASS,
+  THEME_TRANSITION_MS,
+} from "./styles";
 
-const KEY = "rdt-theme";
-const TRANSITION_MS = 1000;
+export type { Theme };
+
 let transitionTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function getTheme(): Theme {
-  const stored = localStorage.getItem(KEY);
-  return stored === "light" || stored === "dark" ? stored : "auto";
+  const stored = localStorage.getItem(STORAGE_KEYS.theme);
+  return stored === "light" || stored === "dark" ? stored : DEFAULT_THEME;
 }
 
 export function applyTheme(theme: Theme, animate = false) {
-  localStorage.setItem(KEY, theme);
+  localStorage.setItem(STORAGE_KEYS.theme, theme);
   const root = document.documentElement;
 
   if (animate) {
-    root.classList.add("theme-transition");
+    root.classList.add(THEME_TRANSITION_CLASS);
     clearTimeout(transitionTimer);
     transitionTimer = setTimeout(
-      () => root.classList.remove("theme-transition"),
-      TRANSITION_MS,
+      () => root.classList.remove(THEME_TRANSITION_CLASS),
+      THEME_TRANSITION_MS,
     );
   }
 
-  if (theme === "auto") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", theme);
+  if (theme === "auto") root.removeAttribute(THEME_ATTRIBUTE);
+  else root.setAttribute(THEME_ATTRIBUTE, theme);
 
-  const bg = getComputedStyle(root).getPropertyValue("--bg").trim();
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg || "#16181d");
+  const bg = getComputedStyle(root).getPropertyValue(THEME_BG_CSS_VAR).trim();
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", bg || THEME_COLOR_FALLBACK);
 }
 
 export function initTheme() {

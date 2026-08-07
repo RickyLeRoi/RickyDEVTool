@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::adapters::disks;
 use crate::poller::PollerRegistry;
 
-pub const TOPIC: &str = "disks";
-const DEFAULT_INTERVAL_MS: u64 = 10_000;
+use crate::constants::TOPIC_DISKS;
+use crate::defaults::DISKS_INTERVAL_MS;
 
 pub fn register(registry: &Arc<PollerRegistry>) {
     registry.register(
-        TOPIC,
-        DEFAULT_INTERVAL_MS,
+        TOPIC_DISKS,
+        DISKS_INTERVAL_MS,
         Arc::new(|| {
             Box::pin(async {
                 let disks = tokio::task::spawn_blocking(disks::list)

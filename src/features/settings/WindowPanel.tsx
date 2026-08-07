@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
 import { hideToTray } from "../../lib/appWindow";
+import { DEFAULT_CLOSE_TO_TRAY } from "../../lib/defaults";
 import type { LanInfo } from "../../lib/types";
 
 export function WindowPanel() {
@@ -34,7 +35,7 @@ export function WindowPanel() {
           </div>
         </div>
         <Toggle
-          checked={lan?.closeToTray ?? true}
+          checked={lan?.closeToTray ?? DEFAULT_CLOSE_TO_TRAY}
           onChange={toggleCloseToTray}
           disabled={!lan}
           label={t("windowPanel.closeToTray")}

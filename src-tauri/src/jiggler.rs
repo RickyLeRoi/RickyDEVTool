@@ -1,15 +1,13 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::config::ConfigHandle;
 #[cfg(target_os = "macos")]
 use crate::exec;
 
-const IDLE_THRESHOLD_SECS: u64 = 300;
-const MOVE_INTERVAL: Duration = Duration::from_secs(180);
-const TICK: Duration = Duration::from_secs(10);
-const NUDGE_SETTLE_SECS: u64 = 25;
-const ACTIVE_IDLE_SECS: u64 = 15;
-const NUDGE_PX: i32 = 12;
+use crate::constants::{
+    ACTIVE_IDLE_SECS, IDLE_THRESHOLD_SECS, JIGGLER_MOVE_INTERVAL, JIGGLER_TICK, NUDGE_PX,
+    NUDGE_SETTLE_SECS,
+};
 
 pub fn start(config: ConfigHandle) {
     tokio::spawn(async move {
@@ -17,11 +15,11 @@ pub fn start(config: ConfigHandle) {
         let mut forward = true;
         let mut keep_awake: Option<KeepAwake> = None;
         let mut last_nudge = Instant::now()
-            .checked_sub(MOVE_INTERVAL)
+            .checked_sub(JIGGLER_MOVE_INTERVAL)
             .unwrap_or_else(Instant::now);
 
         loop {
-            tokio::time::sleep(TICK).await;
+            tokio::time::sleep(JIGGLER_TICK).await;
             let enabled = config.get().anti_idle_enabled;
 
             if enabled && keep_awake.is_none() {
@@ -42,7 +40,7 @@ pub fn start(config: ConfigHandle) {
                 if since_nudge.as_secs() > NUDGE_SETTLE_SECS && idle < ACTIVE_IDLE_SECS {
                     armed = false;
                     tracing::info!("anti-idle: utente attivo, movimenti sospesi");
-                } else if since_nudge >= MOVE_INTERVAL {
+                } else if since_nudge >= JIGGLER_MOVE_INTERVAL {
                     nudge(forward);
                     forward = !forward;
                     last_nudge = Instant::now();
