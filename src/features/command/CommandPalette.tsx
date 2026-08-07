@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface Command {
   id: string;
@@ -39,6 +40,7 @@ export function CommandPalette({
   onClose: () => void;
   commands: Command[];
 }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -110,13 +112,13 @@ export function CommandPalette({
         <input
           ref={inputRef}
           className="cmdk-input"
-          placeholder="Vai a… o cerca un'azione"
+          placeholder={t("command.placeholder")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <div className="cmdk-list" ref={listRef}>
-          {results.length === 0 && <div className="cmdk-empty">Nessun risultato</div>}
+          {results.length === 0 && <div className="cmdk-empty">{t("command.noResults")}</div>}
           {results.map((c, idx) => (
             <button
               key={c.id}
@@ -132,9 +134,9 @@ export function CommandPalette({
           ))}
         </div>
         <div className="cmdk-footer">
-          <span>↑↓ per muoverti</span>
-          <span>↵ per aprire</span>
-          <span>esc per chiudere</span>
+          <span>{t("command.footerMove")}</span>
+          <span>{t("command.footerOpen")}</span>
+          <span>{t("command.footerClose")}</span>
         </div>
       </div>
     </div>

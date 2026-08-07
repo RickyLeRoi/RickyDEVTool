@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
 import type { CompareResult, DiffEntry, DiffStatus, DirListing } from "../../lib/types";
@@ -27,18 +28,18 @@ function loadPaths(): StoredPaths {
   return { left: "", right: "", excludes: DEFAULT_EXCLUDES };
 }
 
-const STATUS_LABEL: Record<DiffStatus, string> = {
-  onlyLeft: "solo a sinistra",
-  onlyRight: "solo a destra",
-  different: "dimensioni diverse",
-};
+const STATUS_LABEL_KEYS = {
+  onlyLeft: "tool.compare.statusOnlyLeft",
+  onlyRight: "tool.compare.statusOnlyRight",
+  different: "tool.compare.statusDifferent",
+} as const;
 
-const FILTERS: { id: "all" | DiffStatus; label: string }[] = [
-  { id: "all", label: "Tutte" },
-  { id: "onlyLeft", label: "◀ Solo sinistra" },
-  { id: "onlyRight", label: "Solo destra ▶" },
-  { id: "different", label: "≠ Diverse" },
-];
+const FILTERS = [
+  { id: "all", labelKey: "tool.compare.filterAll" },
+  { id: "onlyLeft", labelKey: "tool.compare.filterOnlyLeft" },
+  { id: "onlyRight", labelKey: "tool.compare.filterOnlyRight" },
+  { id: "different", labelKey: "tool.compare.filterDifferent" },
+] as const;
 
 function PathField({
   label,
@@ -49,6 +50,7 @@ function PathField({
   value: string;
   onChange: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [listing, setListing] = useState<DirListing | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,11 +77,11 @@ function PathField({
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="percorso della cartella"
+          placeholder={t("tool.compare.folderPathPlaceholder")}
           spellCheck={false}
         />
         <button type="button" className="small" onClick={toggle}>
-          {open ? "Chiudi" : "Sfoglia…"}
+          {open ? t("common.close") : t("tool.compare.browse")}
         </button>
       </label>
       {open && (
@@ -96,7 +98,7 @@ function PathField({
                   setOpen(false);
                 }}
               >
-                Usa questa cartella
+                {t("tool.compare.useThisFolder")}
               </button>
             </span>
           </div>
@@ -112,7 +114,7 @@ function PathField({
                 <button onClick={() => browse(d.path)}>📁 {d.name}</button>
               </li>
             ))}
-            {listing && listing.dirs.length === 0 && <li className="dim">nessuna sottocartella</li>}
+            {listing && listing.dirs.length === 0 && <li className="dim">{t("tool.compare.noSubfolders")}</li>}
           </ul>
         </div>
       )}
@@ -120,13 +122,14 @@ function PathField({
   );
 }
 
-function sizeCell(entry: DiffEntry, size: number | null) {
+function sizeCell(entry: DiffEntry, size: number | null, folderLabel: string) {
   if (size == null) return <span className="compare-missing">—</span>;
-  if (entry.isDir) return <span className="dim">cartella</span>;
+  if (entry.isDir) return <span className="dim">{folderLabel}</span>;
   return <>{fmtBytes(size)}</>;
 }
 
 export function Compare() {
+  const { t } = useTranslation();
   const [paths, setPaths] = useState<StoredPaths>(loadPaths);
   const [result, setResult] = useState<CompareResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -214,10 +217,12 @@ export function Compare() {
     if (r.ok) {
       const label =
         action === "toRight"
-          ? "copiato a destra"
+          ? t("tool.compare.copiedRight")
           : action === "toLeft"
-            ? "copiato a sinistra"
-            : `eliminato a ${side === "left" ? "sinistra" : "destra"}`;
+            ? t("tool.compare.copiedLeft")
+            : side === "left"
+              ? t("tool.compare.deletedLeft")
+              : t("tool.compare.deletedRight");
       setDone((prev) => ({ ...prev, [entry.relPath]: label }));
     } else {
       setRowError({ rel: entry.relPath, message: r.error.message });
@@ -226,17 +231,18 @@ export function Compare() {
 
   const copy = (entry: DiffEntry, action: "toRight" | "toLeft") => {
     if (entry.status === "different") {
-      const where = action === "toRight" ? "destra" : "sinistra";
-      if (!confirm(`Sovrascrivere "${entry.relPath}" a ${where} con la versione dell'altro ramo?`))
-        return;
+      const where = action === "toRight" ? t("tool.compare.right") : t("tool.compare.left");
+      if (!confirm(t("tool.compare.overwriteConfirm", { path: entry.relPath, where }))) return;
     }
     apply(entry, action);
   };
 
   const remove = (entry: DiffEntry, side: "left" | "right") => {
     const root = side === "left" ? result?.left : result?.right;
-    const what = entry.isDir ? "la cartella (e tutto il contenuto)" : "il file";
-    if (!confirm(`Eliminare ${what}\n${root}\\${entry.relPath}\n\nL'operazione non è annullabile.`))
+    const what = entry.isDir
+      ? t("tool.compare.removeConfirmDir")
+      : t("tool.compare.removeConfirmFile");
+    if (!confirm(t("tool.compare.removeConfirm", { what, path: `${root}\\${entry.relPath}` })))
       return;
     apply(entry, "delete", side);
   };
@@ -265,21 +271,21 @@ export function Compare() {
   return (
     <div className="tool-panel compare-tool">
       <div className="compare-form">
-        <PathField label="Ramo sinistro" value={paths.left} onChange={(p) => update({ left: p })} />
-        <PathField label="Ramo destro" value={paths.right} onChange={(p) => update({ right: p })} />
+        <PathField label={t("tool.compare.leftBranch")} value={paths.left} onChange={(p) => update({ left: p })} />
+        <PathField label={t("tool.compare.rightBranch")} value={paths.right} onChange={(p) => update({ right: p })} />
         <label className="form-row">
-          <span title="Nomi di file/cartelle da saltare, separati da virgola">Ignora nomi</span>
+          <span title={t("tool.compare.ignoreNamesTitle")}>{t("tool.compare.ignoreNames")}</span>
           <input
             value={paths.excludes}
             onChange={(e) => update({ excludes: e.target.value })}
-            placeholder=".git, node_modules  (vuoto = confronta tutto)"
+            placeholder={t("tool.compare.ignorePlaceholder")}
             spellCheck={false}
           />
           <button
             onClick={run}
             disabled={busy || !paths.left.trim() || !paths.right.trim()}
           >
-            {busy ? "Confronto…" : "Confronta"}
+            {busy ? t("tool.compare.comparing") : t("tool.compare.compareBtn")}
           </button>
         </label>
       </div>
@@ -290,8 +296,11 @@ export function Compare() {
         <>
           <div className="compare-summary">
             <span>
-              {result.entries.length} differenze su {result.compared} voci ·{" "}
-              <span className="dim">{result.identical} identiche</span>
+              {t("tool.compare.summaryDiffs", {
+                diffs: result.entries.length,
+                compared: result.compared,
+              })}{" "}
+              · <span className="dim">{t("tool.compare.summaryIdentical", { count: result.identical })}</span>
             </span>
             <div className="segmented">
               {FILTERS.map((f) => (
@@ -300,37 +309,32 @@ export function Compare() {
                   className={filter === f.id ? "active" : ""}
                   onClick={() => setFilter(f.id)}
                 >
-                  {f.label}
+                  {t(f.labelKey)}
                   {f.id !== "all" && <span className="dim"> {counts[f.id as DiffStatus]}</span>}
                 </button>
               ))}
             </div>
             <button className="small" onClick={run} disabled={busy}>
-              Ricontrolla
+              {t("tool.compare.recheck")}
             </button>
           </div>
 
           {result.entries.length > 0 && (
             <div className="hint compare-legend">
-              Su ogni riga: <b>→</b> porta a destra · <b>←</b> porta a sinistra · <b>⊘</b> ignora ·{" "}
-              <b>🗑</b> elimina. Una cartella si apre con <b>▸</b> se vuoi decidere file per file
-              invece che sul blocco intero.
+              <Trans i18nKey="tool.compare.legend" components={{ b: <b /> }} />
             </div>
           )}
 
           {result.truncated && (
-            <div className="banner banner-warn">
-              Troppe differenze: l'elenco è stato troncato. Restringi le cartelle o aggiungi
-              qualche nome da ignorare.
-            </div>
+            <div className="banner banner-warn">{t("tool.compare.truncated")}</div>
           )}
 
           {result.entries.length === 0 && (
-            <div className="empty">Le due alberature sono identiche.</div>
+            <div className="empty">{t("tool.compare.identical")}</div>
           )}
 
           {result.entries.length > 0 && visible.length === 0 && (
-            <div className="empty">Nessuna differenza in questo filtro.</div>
+            <div className="empty">{t("tool.compare.noneInFilter")}</div>
           )}
 
           {visible.length > 0 && (
@@ -338,10 +342,10 @@ export function Compare() {
               <table className="proc-table compare-table">
                 <thead>
                   <tr>
-                    <th>Percorso</th>
-                    <th className="num">Sinistra</th>
-                    <th className="num">Destra</th>
-                    <th className="num">Azioni</th>
+                    <th>{t("tool.compare.colPath")}</th>
+                    <th className="num">{t("tool.compare.colLeft")}</th>
+                    <th className="num">{t("tool.compare.colRight")}</th>
+                    <th className="num">{t("tool.compare.colActions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -353,13 +357,13 @@ export function Compare() {
                       <tr key={e.relPath} className={resolved ? "compare-done" : undefined}>
                         <td>
                           <span className="compare-indent" style={{ width: depth * 16 }} />
-                          <span className={`compare-badge ${e.status}`} title={STATUS_LABEL[e.status]}>
+                          <span className={`compare-badge ${e.status}`} title={t(STATUS_LABEL_KEYS[e.status])}>
                             {e.status === "onlyLeft" ? "◀" : e.status === "onlyRight" ? "▶" : "≠"}
                           </span>
                           {e.isDir ? (
                             <button
                               className="compare-expand"
-                              title={isOpen ? "Chiudi la cartella" : "Apri: agisci sui singoli file"}
+                              title={isOpen ? t("tool.compare.closeFolder") : t("tool.compare.openFolder")}
                               aria-expanded={isOpen}
                               onClick={() => toggleFolder(e)}
                             >
@@ -379,17 +383,17 @@ export function Compare() {
                             </div>
                           )}
                         </td>
-                        <td className="num dim">{sizeCell(e, e.leftSize)}</td>
-                        <td className="num dim">{sizeCell(e, e.rightSize)}</td>
+                        <td className="num dim">{sizeCell(e, e.leftSize, t("tool.compare.folder"))}</td>
+                        <td className="num dim">{sizeCell(e, e.rightSize, t("tool.compare.folder"))}</td>
                         <td className="num">
                           {askDelete === e.relPath ? (
                             <div className="compare-actions">
-                              <span className="dim">Elimina da:</span>
+                              <span className="dim">{t("tool.compare.deleteFrom")}</span>
                               <button className="small danger" onClick={() => remove(e, "left")}>
-                                sinistra
+                                {t("tool.compare.left")}
                               </button>
                               <button className="small danger" onClick={() => remove(e, "right")}>
-                                destra
+                                {t("tool.compare.right")}
                               </button>
                               <button className="small ghost" onClick={() => setAskDelete(null)}>
                                 ✕
@@ -399,12 +403,8 @@ export function Compare() {
                             <div className="compare-actions">
                               <button
                                 className="compare-btn"
-                                title={
-                                  e.isDir
-                                    ? "Porta a destra tutta la cartella (aprila per scegliere i singoli file)"
-                                    : "Porta a destra (copia dal ramo sinistro)"
-                                }
-                                aria-label="Porta a destra"
+                                title={e.isDir ? t("tool.compare.toRightDirTitle") : t("tool.compare.toRightFileTitle")}
+                                aria-label={t("tool.compare.toRight")}
                                 disabled={busyRow || !!resolved || e.leftSize == null}
                                 onClick={() => copy(e, "toRight")}
                               >
@@ -412,12 +412,8 @@ export function Compare() {
                               </button>
                               <button
                                 className="compare-btn"
-                                title={
-                                  e.isDir
-                                    ? "Porta a sinistra tutta la cartella (aprila per scegliere i singoli file)"
-                                    : "Porta a sinistra (copia dal ramo destro)"
-                                }
-                                aria-label="Porta a sinistra"
+                                title={e.isDir ? t("tool.compare.toLeftDirTitle") : t("tool.compare.toLeftFileTitle")}
+                                aria-label={t("tool.compare.toLeft")}
                                 disabled={busyRow || !!resolved || e.rightSize == null}
                                 onClick={() => copy(e, "toLeft")}
                               >
@@ -425,8 +421,8 @@ export function Compare() {
                               </button>
                               <button
                                 className="compare-btn"
-                                title="Ignora questa differenza"
-                                aria-label="Ignora"
+                                title={t("tool.compare.ignoreTitle")}
+                                aria-label={t("tool.compare.ignore")}
                                 disabled={busyRow}
                                 onClick={() => setIgnored((prev) => [...prev, e.relPath])}
                               >
@@ -434,8 +430,8 @@ export function Compare() {
                               </button>
                               <button
                                 className="compare-btn danger"
-                                title={e.isDir ? "Elimina tutta la cartella" : "Elimina"}
-                                aria-label="Elimina"
+                                title={e.isDir ? t("tool.compare.deleteDirTitle") : t("tool.compare.delete")}
+                                aria-label={t("tool.compare.delete")}
                                 disabled={busyRow || !!resolved}
                                 onClick={() => {
                                   // Presente da un lato solo: non c'è nulla da
@@ -459,21 +455,16 @@ export function Compare() {
 
           {ignored.length > 0 && (
             <div className="dim compare-ignored">
-              {ignored.length} differenze ignorate ·{" "}
+              {t("tool.compare.ignoredCount", { count: ignored.length })} ·{" "}
               <button className="small ghost" onClick={() => setIgnored([])}>
-                mostra di nuovo
+                {t("tool.compare.showAgain")}
               </button>
             </div>
           )}
         </>
       )}
 
-      {!result && !error && (
-        <div className="empty">
-          Indica due cartelle e premi Confronta: vedrai cosa ha in più il ramo di sinistra, cosa
-          quello di destra e i file con lo stesso percorso ma dimensioni diverse.
-        </div>
-      )}
+      {!result && !error && <div className="empty">{t("tool.compare.emptyIntro")}</div>}
     </div>
   );
 }

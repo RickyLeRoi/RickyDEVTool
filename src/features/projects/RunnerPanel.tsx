@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
 import type { ApiError, RunnerAction, RunnerInfo, TaskInfo } from "../../lib/types";
@@ -13,6 +14,7 @@ const KIND_META: Record<string, { icon: string; title: string }> = {
 const PRIMARY: RunnerAction["category"][] = ["run"];
 
 export function RunnerPanel({ path, kind }: { path: string; kind: string }) {
+  const { t } = useTranslation();
   const [info, setInfo] = useState<RunnerInfo | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [task, setTask] = useState<TaskInfo | null>(null);
@@ -71,7 +73,7 @@ export function RunnerPanel({ path, kind }: { path: string; kind: string }) {
             </button>
           ))}
           {info.actions.length === 0 && (
-            <span className="dim">Nessuna azione disponibile per questa cartella.</span>
+            <span className="dim">{t("projects.runner.noActions")}</span>
           )}
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
 import type { AccessibilityStatus, LanInfo } from "../../lib/types";
@@ -6,6 +7,7 @@ import type { AccessibilityStatus, LanInfo } from "../../lib/types";
 const isTauri = "__TAURI_INTERNALS__" in window;
 
 export function AntiIdlePanel() {
+  const { t } = useTranslation();
   const [lan, setLan] = useState<LanInfo | null>(null);
   const [access, setAccess] = useState<AccessibilityStatus | null>(null);
   const [recheckedStillOff, setRecheckedStillOff] = useState(false);
@@ -50,49 +52,42 @@ export function AntiIdlePanel() {
 
   return (
     <section>
-      <h3>Anti-inattività</h3>
+      <h3>{t("antiIdle.title")}</h3>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-title">Muovi il mouse quando sono inattivo</div>
-          <div className="hint">
-            Dopo 5 minuti di inattività muove il mouse ogni 3 minuti, così lo schermo non si
-            spegne e le chat non ti segnano assente. Se torni attivo, si ferma da solo.
-          </div>
+          <div className="setting-title">{t("antiIdle.moveMouse")}</div>
+          <div className="hint">{t("antiIdle.moveMouseHint")}</div>
         </div>
         <Toggle
           checked={lan?.antiIdleEnabled ?? false}
           onChange={toggleAntiIdle}
           disabled={!lan || locked}
-          label="Anti-inattività"
+          label={t("antiIdle.label")}
         />
       </div>
       {locked && (
         <div className="hint hint-locked">
-          🔒 Dal telefono i comandi sono in sola lettura: attiva il <strong>Controllo
-          remoto</strong> qui sotto per gestire questo interruttore.
+          <Trans i18nKey="antiIdle.locked" components={{ b: <strong /> }} />
         </div>
       )}
       {needsAccessibility && (
         <div className="banner banner-warn">
           <div>
-            <strong>Permesso Accessibilità richiesto.</strong> Per muovere il mouse, macOS
-            chiede di autorizzare RickyDEVTool in Impostazioni di Sistema → Privacy e sicurezza
-            → Accessibilità. Finché non lo concedi, l'anti-inattività resta senza effetto.
+            <Trans i18nKey="antiIdle.accessRequired" components={{ b: <strong /> }} />
             {recheckedStillOff && (
               <div className="banner-subnote">
-                Risulta ancora non concesso. Se l'hai appena attivato, macOS spesso applica il
-                permesso solo dopo aver <strong>riavviato l'app</strong>.
+                <Trans i18nKey="antiIdle.accessStillOff" components={{ b: <strong /> }} />
               </div>
             )}
           </div>
           <div className="banner-actions">
             <button onClick={() => post("/api/system/open-accessibility", {})}>
-              Apri Accessibilità
+              {t("antiIdle.openAccessibility")}
             </button>
-            <button onClick={recheckAccess}>Ho attivato, ricontrolla</button>
+            <button onClick={recheckAccess}>{t("antiIdle.recheck")}</button>
             {recheckedStillOff && isTauri && (
               <button className="primary" onClick={relaunchApp}>
-                Riavvia RickyDEVTool
+                {t("antiIdle.relaunch")}
               </button>
             )}
           </div>

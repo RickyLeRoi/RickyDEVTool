@@ -1,19 +1,12 @@
 import { useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
 import { LocalNetworkBanner } from "../../components/LocalNetworkBanner";
 import type { AiMode, AiStatus } from "../../lib/types";
 
-const STRATEGIES: { id: string; label: string; hint: string }[] = [
-  { id: "balanced", label: "Bilanciata", hint: "usa chi ha più quota residua" },
-  { id: "fast", label: "Veloce", hint: "preferisce i provider a bassa latenza" },
-  { id: "local", label: "Locale", hint: "non esce mai dalla macchina" },
-];
-
-const MODES: { id: AiMode; label: string; hint: string }[] = [
-  { id: "local", label: "Su questo computer", hint: "il tool avvia of-free in locale" },
-  { id: "remote", label: "Servizio in rete", hint: "usa un of-free già in esecuzione altrove" },
-];
+const STRATEGY_IDS = ["balanced", "fast", "local"] as const;
+const MODE_IDS: AiMode[] = ["local", "remote"];
 
 interface Draft {
   remoteUrl: string;
@@ -46,6 +39,7 @@ function KeyRow({
   onSave: (value: string) => void;
   onClear: () => void;
 }) {
+  const { t } = useTranslation();
   const [value, setValue] = useState("");
 
   const save = () => {
@@ -58,12 +52,12 @@ function KeyRow({
     <div className="ai-key-row">
       <span className="ai-key-label" title={env}>
         {label}
-        {isSet && <span className="badge badge-ok">impostata</span>}
+        {isSet && <span className="badge badge-ok">{t("ai.keySet")}</span>}
       </span>
       <input
         type="password"
         value={value}
-        placeholder={isSet ? "••••••••••••  (incolla per sostituire)" : "incolla la chiave"}
+        placeholder={isSet ? t("ai.keyPlaceholderSet") : t("ai.keyPlaceholderUnset")}
         autoComplete="off"
         spellCheck={false}
         onChange={(e) => setValue(e.target.value)}
@@ -75,16 +69,17 @@ function KeyRow({
         }}
       />
       <button className="small" onClick={save} disabled={busy || !value.trim()}>
-        Salva
+        {t("common.save")}
       </button>
       <button className="small danger" onClick={onClear} disabled={busy || !isSet}>
-        Rimuovi
+        {t("common.remove")}
       </button>
     </div>
   );
 }
 
 export function AiSettings() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,8 +116,8 @@ export function AiSettings() {
   if (!status || !draft) {
     return (
       <section>
-        <h3>RickyAI</h3>
-        <div className="empty">Caricamento…</div>
+        <h3>{t("ai.title")}</h3>
+        <div className="empty">{t("common.loading")}</div>
       </section>
     );
   }
@@ -137,23 +132,23 @@ export function AiSettings() {
 
   return (
     <section className="ai-settings">
-      <h3>RickyAI {saved && <span className="badge badge-ok">salvato</span>}</h3>
+      <h3>
+        {t("ai.title")} {saved && <span className="badge badge-ok">{t("ai.saved")}</span>}
+      </h3>
 
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-title">
-            Abilita <span className="badge badge-beta">beta</span>
+            {t("ai.enable")} <span className="badge badge-beta">{t("ai.beta")}</span>
           </div>
           <div className="hint">
-            Spento, la sezione RickyAI non compare affatto. Acceso, la chat usa il motore scelto
-            qui sotto: dev’essere un servizio che espone API <strong>OpenAI-like</strong> (of-free,
-            Ollama, LM Studio, vLLM, OpenRouter…).
+            <Trans i18nKey="ai.enableHint" components={{ b: <strong /> }} />
           </div>
         </div>
         <Toggle
           checked={status.enabled}
           onChange={(enabled) => save({ enabled })}
-          label="Abilita RickyAI"
+          label={t("ai.enableLabel")}
         />
       </div>
 
@@ -162,17 +157,17 @@ export function AiSettings() {
       {status.enabled && (
         <>
           <div className="form-row">
-            <span>Dove gira of-free</span>
+            <span>{t("ai.whereOfFree")}</span>
             <div className="segmented">
-              {MODES.map((m) => (
+              {MODE_IDS.map((id) => (
                 <button
-                  key={m.id}
-                  className={status.mode === m.id ? "active" : ""}
-                  title={m.hint}
+                  key={id}
+                  className={status.mode === id ? "active" : ""}
+                  title={t(`ai.mode${id === "local" ? "Local" : "Remote"}Hint` as const)}
                   disabled={busy}
-                  onClick={() => save({ mode: m.id })}
+                  onClick={() => save({ mode: id })}
                 >
-                  {m.label}
+                  {t(`ai.mode${id === "local" ? "Local" : "Remote"}` as const)}
                 </button>
               ))}
             </div>
@@ -182,60 +177,61 @@ export function AiSettings() {
             <>
               <LocalNetworkBanner what="RickyAI" />
               <label className="form-row">
-                <span>Indirizzo del servizio</span>
+                <span>{t("ai.serviceAddress")}</span>
                 <input
                   value={draft.remoteUrl}
-                  placeholder="es. 192.168.1.50:4141"
+                  placeholder={t("ai.serviceAddressPlaceholder")}
                   onChange={(e) => setDraft({ ...draft, remoteUrl: e.target.value })}
                 />
               </label>
               <div className="ai-keys">
                 <KeyRow
-                  label="Chiave API"
+                  label={t("ai.apiKey")}
                   env="Authorization: Bearer"
                   isSet={status.remoteKeySet}
                   busy={busy}
                   onSave={(value) => save({ remoteKey: value })}
                   onClear={() => save({ remoteKey: "" })}
                 />
-                <div className="hint">
-                  Serve solo se il servizio la richiede: of-free, Ollama e gli altri motori in LAN
-                  di solito no, OpenRouter e le API hosted sì. Come le altre chiavi, dopo il
-                  salvataggio non è più rileggibile da qui.
-                </div>
+                <div className="hint">{t("ai.apiKeyHint")}</div>
               </div>
               <div className="hint">
-                Va bene qualunque endpoint <strong>OpenAI-compatibile</strong>: un{" "}
-                <code>of-free serve</code> (anche in Docker) su un altro computer, un Ollama, LM
-                Studio, vLLM, o direttamente OpenRouter. Se è of-free trovi anche quote e routing
-                fra provider; altrove si sceglie il modello dalla lista del servizio.
+                <Trans i18nKey="ai.remoteHelp1" components={{ b: <strong />, code: <code /> }} />
                 <br />
-                Un servizio in LAN deve essere in ascolto su <code>0.0.0.0</code> e non solo su{" "}
-                <code>127.0.0.1</code>, altrimenti da qui non risponde — è il motivo per cui un
-                container “non si vede”.
+                <Trans i18nKey="ai.remoteHelp2" components={{ code: <code /> }} />
               </div>
             </>
           ) : (
             <>
               <div className="form-row">
-                <span>Strategia di routing</span>
+                <span>{t("ai.strategy")}</span>
                 <div className="segmented">
-                  {STRATEGIES.map((s) => (
+                  {STRATEGY_IDS.map((id) => (
                     <button
-                      key={s.id}
-                      className={status.strategy === s.id ? "active" : ""}
-                      title={s.hint}
+                      key={id}
+                      className={status.strategy === id ? "active" : ""}
+                      title={t(
+                        `ai.strategy${id[0].toUpperCase()}${id.slice(1)}Hint` as
+                          | "ai.strategyBalancedHint"
+                          | "ai.strategyFastHint"
+                          | "ai.strategyLocalHint",
+                      )}
                       disabled={busy}
-                      onClick={() => save({ strategy: s.id })}
+                      onClick={() => save({ strategy: id })}
                     >
-                      {s.label}
+                      {t(
+                        `ai.strategy${id[0].toUpperCase()}${id.slice(1)}` as
+                          | "ai.strategyBalanced"
+                          | "ai.strategyFast"
+                          | "ai.strategyLocal",
+                      )}
                     </button>
                   ))}
                 </div>
               </div>
 
               <label className="form-row">
-                <span>Porta</span>
+                <span>{t("ai.port")}</span>
                 <input
                   type="number"
                   min={1024}
@@ -246,17 +242,17 @@ export function AiSettings() {
               </label>
 
               <label className="form-row">
-                <span>Binario of-free</span>
+                <span>{t("ai.ofFreeBinary")}</span>
                 <input
                   value={draft.command}
-                  placeholder="vuoto = cercato nel PATH"
+                  placeholder={t("ai.ofFreeBinaryPlaceholder")}
                   onChange={(e) => setDraft({ ...draft, command: e.target.value })}
                 />
               </label>
 
               <div className="ai-keys">
                 <div className="form-row">
-                  <span>Chiavi dei provider</span>
+                  <span>{t("ai.providerKeys")}</span>
                 </div>
                 {status.providerKeys.map((p) => (
                   <KeyRow
@@ -269,29 +265,24 @@ export function AiSettings() {
                     onClear={() => save({ keys: { [p.env]: "" } })}
                   />
                 ))}
-                <div className="hint">
-                  Ogni chiave è facoltativa: of-free usa i provider che hai configurato e ripiega
-                  su Ollama in locale. Una volta salvate non sono più rileggibili da qui — restano
-                  nella config del tool (file leggibile solo dal tuo utente) e vengono passate a
-                  of-free nel suo ambiente, mai su disco né sulla riga di comando.
-                </div>
+                <div className="hint">{t("ai.providerKeysHint")}</div>
               </div>
             </>
           )}
 
           <label className="form-row">
-            <span>Prompt di sistema</span>
+            <span>{t("ai.systemPrompt")}</span>
             <textarea
               rows={2}
               value={draft.systemPrompt}
-              placeholder="opzionale — come deve comportarsi RickyAI"
+              placeholder={t("ai.systemPromptPlaceholder")}
               onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })}
             />
           </label>
 
           <div className="dialog-actions">
             <button onClick={() => setDraft(draftOf(status))} disabled={!dirty || busy}>
-              Annulla
+              {t("common.cancel")}
             </button>
             <button
               className="primary"
@@ -308,7 +299,7 @@ export function AiSettings() {
                 )
               }
             >
-              {busy ? "Salvo…" : "Salva e riavvia"}
+              {busy ? t("ai.saving") : t("ai.saveRestart")}
             </button>
           </div>
         </>

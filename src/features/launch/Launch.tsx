@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
 import type { ApiError, LaunchBundle, LaunchStep, TaskInfo } from "../../lib/types";
@@ -14,6 +15,7 @@ function BundleEditor({
   onSaved: (bundles: LaunchBundle[]) => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? "");
   const [steps, setSteps] = useState<LaunchStep[]>(
     initial ? initial.steps.map((s) => ({ ...s })) : [emptyStep()],
@@ -40,11 +42,11 @@ function BundleEditor({
   return (
     <div className="launch-editor">
       <label className="form-row">
-        <span>Nome profilo</span>
+        <span>{t("tool.launch.profileName")}</span>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="es. Stack completo"
+          placeholder={t("tool.launch.profileNamePlaceholder")}
           autoFocus
         />
       </label>
@@ -53,13 +55,13 @@ function BundleEditor({
         {steps.map((s, i) => (
           <div key={i} className="launch-step-edit">
             <div className="launch-step-head">
-              <span className="dim">Step {i + 1}</span>
+              <span className="dim">{t("tool.launch.step", { n: i + 1 })}</span>
               {steps.length > 1 && (
                 <button
                   className="small ghost"
                   onClick={() => setSteps((ss) => ss.filter((_, j) => j !== i))}
                 >
-                  rimuovi
+                  {t("tool.launch.removeStep")}
                 </button>
               )}
             </div>
@@ -67,27 +69,27 @@ function BundleEditor({
               className="launch-cmd"
               value={s.command}
               onChange={(e) => setStep(i, { command: e.target.value })}
-              placeholder="comando shell — es. npm run dev"
+              placeholder={t("tool.launch.commandPlaceholder")}
               spellCheck={false}
             />
             <div className="launch-step-row">
               <input
                 value={s.label}
                 onChange={(e) => setStep(i, { label: e.target.value })}
-                placeholder="etichetta (opzionale)"
+                placeholder={t("tool.launch.labelPlaceholder")}
               />
               <input
                 className="launch-cwd"
                 value={s.cwd}
                 onChange={(e) => setStep(i, { cwd: e.target.value })}
-                placeholder="cartella di lavoro (path assoluto)"
+                placeholder={t("tool.launch.cwdPlaceholder")}
                 spellCheck={false}
               />
             </div>
           </div>
         ))}
         <button className="small ghost" onClick={() => setSteps((ss) => [...ss, emptyStep()])}>
-          + aggiungi step
+          {t("tool.launch.addStep")}
         </button>
       </div>
 
@@ -100,10 +102,10 @@ function BundleEditor({
 
       <div className="dialog-actions">
         <button onClick={onCancel} disabled={busy}>
-          Annulla
+          {t("common.cancel")}
         </button>
         <button className="primary" onClick={save} disabled={busy || !name.trim()}>
-          {busy ? "Salvo…" : "Salva profilo"}
+          {busy ? t("tool.launch.saving") : t("tool.launch.saveProfile")}
         </button>
       </div>
     </div>
@@ -111,6 +113,7 @@ function BundleEditor({
 }
 
 export function Launch() {
+  const { t } = useTranslation();
   const [bundles, setBundles] = useState<LaunchBundle[] | null>(null);
   const [editing, setEditing] = useState<LaunchBundle | null | "new">(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -135,7 +138,7 @@ export function Launch() {
   };
 
   const del = async (b: LaunchBundle) => {
-    if (!window.confirm(`Eliminare il profilo «${b.name}»?`)) return;
+    if (!window.confirm(t("tool.launch.deleteConfirm", { name: b.name }))) return;
     const r = await post<{ bundles: LaunchBundle[] }>("/api/launch/bundles/delete", { id: b.id });
     if (r.ok) setBundles(r.data.bundles);
   };
@@ -143,14 +146,13 @@ export function Launch() {
   return (
     <div>
       <div className="section-header">
-        <h2>Avvii compositi</h2>
-        {editing === null && <button onClick={() => setEditing("new")}>Nuovo profilo</button>}
+        <h2>{t("tool.launch.title")}</h2>
+        {editing === null && (
+          <button onClick={() => setEditing("new")}>{t("tool.launch.newProfile")}</button>
+        )}
       </div>
 
-      <p className="hint">
-        Un profilo lancia più comandi insieme (es. backend + frontend + docker), ciascuno come task
-        nella sezione Task. I comandi girano nella shell di sistema.
-      </p>
+      <p className="hint">{t("tool.launch.intro")}</p>
 
       {editing !== null ? (
         <BundleEditor
@@ -164,7 +166,7 @@ export function Launch() {
       ) : (
         <>
           {bundles && bundles.length === 0 && (
-            <div className="empty">Nessun profilo: crea il primo con "Nuovo profilo".</div>
+            <div className="empty">{t("tool.launch.noProfiles")}</div>
           )}
           {bundles && bundles.length > 0 && (
             <div className="launch-list">
@@ -174,20 +176,20 @@ export function Launch() {
                     <strong>{b.name}</strong>
                     <span className="launch-card-actions">
                       <button className="small primary" onClick={() => run(b)}>
-                        ▶ Avvia ({b.steps.length})
+                        {t("tool.launch.runBundle", { count: b.steps.length })}
                       </button>
                       <button className="small" onClick={() => setEditing(b)}>
-                        Modifica
+                        {t("common.edit")}
                       </button>
                       <button className="small danger" onClick={() => del(b)}>
-                        Elimina
+                        {t("common.delete")}
                       </button>
                     </span>
                   </div>
                   <ul className="launch-card-steps">
                     {b.steps.map((s, i) => (
                       <li key={i}>
-                        <span className="launch-step-label">{s.label || "step"}</span>
+                        <span className="launch-step-label">{s.label || t("tool.launch.stepFallback")}</span>
                         <code>{s.command}</code>
                         <span className="dim launch-step-cwd">{s.cwd}</span>
                       </li>
@@ -203,16 +205,18 @@ export function Launch() {
           {runTasks && (
             <div className="launch-run">
               <div className="section-header">
-                <h3>Avviato: {runTasks.bundle}</h3>
+                <h3>{t("tool.launch.started", { name: runTasks.bundle })}</h3>
                 <button className="small" onClick={() => setRunTasks(null)}>
-                  Chiudi
+                  {t("common.close")}
                 </button>
               </div>
-              {runTasks.tasks.length === 0 && <div className="dim">Nessun task avviato.</div>}
-              {runTasks.tasks.map((t) => (
-                <div key={t.id} className="launch-run-task">
-                  <div className="dim">{t.label}</div>
-                  <TaskLog key={t.id} task={t} />
+              {runTasks.tasks.length === 0 && (
+                <div className="dim">{t("tool.launch.noTasksStarted")}</div>
+              )}
+              {runTasks.tasks.map((task) => (
+                <div key={task.id} className="launch-run-task">
+                  <div className="dim">{task.label}</div>
+                  <TaskLog key={task.id} task={task} />
                 </div>
               ))}
             </div>

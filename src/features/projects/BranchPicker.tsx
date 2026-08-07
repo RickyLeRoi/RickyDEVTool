@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
+import { getLang } from "../../lib/i18n";
 import { DeleteBranchDialog } from "./DeleteBranchDialog";
 import type { ApiError, GitBranch, GitRepoInfo } from "../../lib/types";
 
@@ -12,7 +14,7 @@ interface BranchPickerProps {
 }
 
 function fmtDate(ms: number) {
-  return new Date(ms).toLocaleDateString("it-IT", {
+  return new Date(ms).toLocaleDateString(getLang(), {
     day: "2-digit",
     month: "short",
     year: "2-digit",
@@ -26,6 +28,7 @@ export function BranchPicker({
   selectedRef,
   onSelectBranch,
 }: BranchPickerProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<GitBranch[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -67,7 +70,8 @@ export function BranchPicker({
   return (
     <div className="branch-picker">
       <button onClick={toggle}>
-        {open ? "▾" : "▸"} Branch{current ? `: ${current}` : ""}
+        {open ? "▾" : "▸"} {t("projects.branches.branch")}
+        {current ? `: ${current}` : ""}
       </button>
       {error && (
         <div className="banner banner-error">
@@ -77,7 +81,7 @@ export function BranchPicker({
       )}
       {open && (
         <div className="branch-list">
-          {!branches && <div className="empty">Carico i branch…</div>}
+          {!branches && <div className="empty">{t("projects.branches.loading")}</div>}
           {branches?.map((b) => (
             <div key={b.name} className="branch-row">
               <div className="git-row-actions">
@@ -86,10 +90,10 @@ export function BranchPicker({
                   disabled={b.isCurrent || dirty || busy !== null}
                   title={
                     b.isCurrent
-                      ? "branch corrente"
+                      ? t("projects.branches.current")
                       : dirty
-                        ? "working tree non pulito"
-                        : "Checkout di questo branch"
+                        ? t("projects.branches.dirtyTree")
+                        : t("projects.branches.checkoutBranch")
                   }
                   onClick={() => checkout(b)}
                 >
@@ -100,7 +104,9 @@ export function BranchPicker({
                     className="git-act danger"
                     disabled={b.isCurrent || busy !== null}
                     title={
-                      b.isCurrent ? "non puoi eliminare il branch corrente" : "Elimina branch"
+                      b.isCurrent
+                        ? t("projects.branches.cantDeleteCurrent")
+                        : t("projects.branches.deleteBranch")
                     }
                     onClick={() => setDeleting(b)}
                   >
@@ -110,20 +116,20 @@ export function BranchPicker({
               </div>
               <button
                 className={`branch-main branch-select ${selectedRef === b.name ? "active" : ""}`}
-                title="Mostra i commit di questo branch"
+                title={t("projects.branches.showCommits")}
                 onClick={() => onSelectBranch(b.name)}
               >
                 <span
                   className={`branch-name ${b.staleWeeks >= 4 ? "stale" : ""}`}
                   title={
                     b.staleWeeks >= 4
-                      ? `ultima commit remota ${b.staleWeeks} settimane fa`
+                      ? t("projects.branches.lastRemoteCommit", { weeks: b.staleWeeks })
                       : undefined
                   }
                 >
                   {b.isCurrent && "● "}
                   {b.name}
-                  {b.isRemoteOnly && <span className="badge"> remote</span>}
+                  {b.isRemoteOnly && <span className="badge"> {t("projects.branches.remote")}</span>}
                 </span>
                 <span className="branch-sub">
                   {b.lastCommit.shortHash} · {fmtDate(b.lastCommit.date)} ·{" "}
@@ -132,7 +138,7 @@ export function BranchPicker({
               </button>
             </div>
           ))}
-          {branches?.length === 0 && <div className="empty">Nessun branch.</div>}
+          {branches?.length === 0 && <div className="empty">{t("projects.branches.none")}</div>}
         </div>
       )}
 

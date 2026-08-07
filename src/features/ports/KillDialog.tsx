@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { Modal } from "../../components/Modal";
 import { post } from "../../lib/api";
 import { useSubmit } from "../../lib/useSubmit";
@@ -10,6 +11,7 @@ interface KillDialogProps {
 }
 
 export function KillDialog({ process, onClose }: KillDialogProps) {
+  const { t } = useTranslation();
   const needsTyped = process.killProtection === "typed-confirm";
   const [typed, setTyped] = useState("");
   const [force, setForce] = useState(false);
@@ -32,25 +34,27 @@ export function KillDialog({ process, onClose }: KillDialogProps) {
 
   return (
     <Modal
-      title="Termina processo"
+      title={t("kill.title")}
       onCancel={() => onClose(false)}
       error={error}
       busy={busy}
       confirm={{
-        label: busy ? "Termino…" : force ? "Force kill" : "Termina",
+        label: busy ? t("kill.submitting") : force ? t("kill.submitForce") : t("kill.submit"),
         onClick: confirm,
         danger: true,
         disabled: !typedOk,
       }}
     >
       <p>
-        <strong>{process.name}</strong> (PID {process.pid}
-        {process.user ? `, utente ${process.user}` : ""})
+        <strong>{process.name}</strong>{" "}
+        {process.user
+          ? t("kill.pidUser", { pid: process.pid, user: process.user })
+          : t("kill.pid", { pid: process.pid })}
       </p>
       {needsTyped && (
         <>
           <p className="hint">
-            Processo protetto: digita <code>{process.name}</code> per confermare.
+            <Trans i18nKey="kill.protectedHint" values={{ name: process.name }} components={{ code: <code /> }} />
           </p>
           <input
             value={typed}
@@ -62,7 +66,7 @@ export function KillDialog({ process, onClose }: KillDialogProps) {
       )}
       <label className="checkbox">
         <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
-        Force kill (immediato, senza chiusura pulita)
+        {t("kill.forceLabel")}
       </label>
     </Modal>
   );

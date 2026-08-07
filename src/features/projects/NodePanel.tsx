@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
 import type { ApiError, NodeProject, TaskInfo } from "../../lib/types";
@@ -6,6 +7,7 @@ import type { ApiError, NodeProject, TaskInfo } from "../../lib/types";
 const PMS = ["npm", "yarn", "pnpm"] as const;
 
 export function NodePanel({ path }: { path: string }) {
+  const { t } = useTranslation();
   const [project, setProject] = useState<NodeProject | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [task, setTask] = useState<TaskInfo | null>(null);
@@ -39,7 +41,7 @@ export function NodePanel({ path }: { path: string }) {
     if (r.ok) setProject(r.data);
   };
 
-  if (!project && !error) return <div className="empty">Leggo package.json…</div>;
+  if (!project && !error) return <div className="empty">{t("projects.node.reading")}</div>;
 
   const otherScripts = project
     ? Object.keys(project.scripts).filter((s) => s !== project.primaryStart)
@@ -55,11 +57,11 @@ export function NodePanel({ path }: { path: string }) {
               {project.packageManager} ▾
             </button>
             {project.pmSource === "default" && (
-              <span className="badge badge-warn" title="nessun lockfile: npm assunto">
-                assunto
+              <span className="badge badge-warn" title={t("projects.node.assumedTitle")}>
+                {t("projects.node.assumed")}
               </span>
             )}
-            {project.pmSource === "userOverride" && <span className="badge">manuale</span>}
+            {project.pmSource === "userOverride" && <span className="badge">{t("projects.node.manual")}</span>}
             {pmMenuOpen && (
               <span className="pm-menu">
                 {PMS.map((pm) => (
@@ -68,13 +70,13 @@ export function NodePanel({ path }: { path: string }) {
                   </button>
                 ))}
                 <button className="small" onClick={() => setPm(null)}>
-                  auto
+                  {t("projects.node.auto")}
                 </button>
               </span>
             )}
           </span>
           <button onClick={() => run(null)} disabled={task?.state === "running"}>
-            Install
+            {t("projects.node.install")}
           </button>
           {project.primaryStart && (
             <button
@@ -82,7 +84,7 @@ export function NodePanel({ path }: { path: string }) {
               disabled={task?.state === "running"}
               title={project.scripts[project.primaryStart]}
             >
-              Start ({project.primaryStart})
+              {t("projects.node.start", { script: project.primaryStart })}
             </button>
           )}
           {}
@@ -98,7 +100,7 @@ export function NodePanel({ path }: { path: string }) {
             </button>
           ))}
           {!project.nodeModulesPresent && (
-            <span className="badge badge-warn">node_modules assente</span>
+            <span className="badge badge-warn">{t("projects.node.nodeModulesMissing")}</span>
           )}
         </div>
       )}

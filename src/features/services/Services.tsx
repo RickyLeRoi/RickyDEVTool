@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import type { ServiceDef, ServiceState, ServiceStatus } from "../../lib/types";
@@ -8,21 +9,27 @@ function StateDot({ state }: { state: ServiceState }) {
 }
 
 function CertBadge({ daysLeft }: { daysLeft: number | null }) {
+  const { t } = useTranslation();
   if (daysLeft === null) return null;
   if (daysLeft > 21) return null;
   if (daysLeft < 0) {
-    return <span className="badge badge-cert-expired" title="Certificato TLS scaduto">cert scaduto</span>;
+    return (
+      <span className="badge badge-cert-expired" title={t("services.certExpiredTitle")}>
+        {t("services.certExpired")}
+      </span>
+    );
   }
   return (
-    <span className="badge badge-warn" title="Certificato TLS in scadenza">
-      cert {daysLeft}g
+    <span className="badge badge-warn" title={t("services.certExpiringTitle")}>
+      {t("services.certExpiring", { days: daysLeft })}
     </span>
   );
 }
 
 function HistoryBar({ history }: { history: ServiceState[] }) {
+  const { t } = useTranslation();
   return (
-    <span className="history-bar" title="ultimi check">
+    <span className="history-bar" title={t("services.lastChecks")}>
       {history.map((s, i) => (
         <span key={i} className={`history-cell ${s}`} />
       ))}
@@ -31,6 +38,7 @@ function HistoryBar({ history }: { history: ServiceState[] }) {
 }
 
 export function Services() {
+  const { t } = useTranslation();
   const [statuses, setStatuses] = useState<ServiceStatus[] | null>(null);
   const [defs, setDefs] = useState<ServiceDef[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -101,16 +109,18 @@ export function Services() {
     <div>
       <div className="section-header">
         <h2>
-          Servizi online
-          <span className="live-dot" title="monitoraggio attivo (solo con sezione aperta)" />
+          {t("services.title")}
+          <span className="live-dot" title={t("services.live")} />
         </h2>
         <button onClick={() => setShowConfig(!showConfig)}>
-          {showConfig ? "Chiudi" : "Configura"}
+          {showConfig ? t("common.close") : t("services.configure")}
         </button>
       </div>
 
-      {error && <div className="banner banner-error">Errore nei check: {error}</div>}
-      {!statuses && !error && <div className="empty">Primo check in corso…</div>}
+      {error && (
+        <div className="banner banner-error">{t("services.checkError", { message: error })}</div>
+      )}
+      {!statuses && !error && <div className="empty">{t("services.firstCheck")}</div>}
 
       {statuses && (
         <table className="proc-table">
@@ -124,7 +134,7 @@ export function Services() {
                     <CertBadge daysLeft={s?.certDaysLeft ?? null} />
                   </td>
                   <td className="num dim">
-                    {s?.latencyMs != null ? `${s.latencyMs} ms` : s?.error ?? "—"}
+                    {s?.latencyMs != null ? `${s.latencyMs} ms` : s?.error ?? t("common.none")}
                   </td>
                   <td className="num">
                     <HistoryBar history={s?.history ?? []} />
@@ -138,19 +148,19 @@ export function Services() {
 
       {showConfig && (
         <div className="services-config">
-          <h3>Configurazione</h3>
+          <h3>{t("services.configuration")}</h3>
           <table className="proc-table">
             <tbody>
               {defs.map((d) => (
                 <tr
                   key={d.id}
-                  title={d.builtin ? d.target : `${d.target} (clicca per modificare)`}
+                  title={d.builtin ? d.target : t("services.editTitle", { target: d.target })}
                   className={d.id === editingId ? "row-editing" : d.builtin ? undefined : "row-clickable"}
                   onClick={() => startEdit(d)}
                 >
                   <td>
                     {d.label}
-                    {d.builtin && <span className="badge">preset</span>}
+                    {d.builtin && <span className="badge">{t("services.preset")}</span>}
                     <span className="dim"> · {d.kind}</span>
                   </td>
                   <td className="num">
@@ -161,7 +171,7 @@ export function Services() {
                         toggle(d.id);
                       }}
                     >
-                      {d.enabled ? "Disattiva" : "Attiva"}
+                      {d.enabled ? t("services.deactivate") : t("services.activate")}
                     </button>{" "}
                     {!d.builtin && (
                       <button
@@ -171,7 +181,7 @@ export function Services() {
                           remove(d.id);
                         }}
                       >
-                        Elimina
+                        {t("common.delete")}
                       </button>
                     )}
                   </td>
@@ -181,7 +191,7 @@ export function Services() {
           </table>
           <form className="service-form" onSubmit={submitForm}>
             <input
-              placeholder="Nome (es. Server casa)"
+              placeholder={t("services.namePlaceholder")}
               value={form.label}
               onChange={(e) => setForm({ ...form, label: e.target.value })}
               required
@@ -194,23 +204,23 @@ export function Services() {
               <option value="tcp">TCP</option>
             </select>
             <input
-              placeholder={form.kind === "http" ? "https://esempio.tuodominio.dev/healthz" : "192.168.1.10:22"}
+              placeholder={
+                form.kind === "http"
+                  ? t("services.httpPlaceholder")
+                  : t("services.tcpPlaceholder")
+              }
               value={form.target}
               onChange={(e) => setForm({ ...form, target: e.target.value })}
               required
             />
-            <button type="submit">{editingId ? "Salva" : "Aggiungi"}</button>
+            <button type="submit">{editingId ? t("common.save") : t("common.add")}</button>
             {editingId && (
               <button type="button" className="small" onClick={cancelEdit}>
-                Annulla
+                {t("common.cancel")}
               </button>
             )}
           </form>
-          <p className="hint">
-            Per i servizi dietro cloudflared usa l'hostname pubblico (meglio un endpoint
-            /healthz): il check verifica tunnel + origine insieme. Per distinguerli, aggiungi
-            anche un check TCP verso l'IP LAN del server.
-          </p>
+          <p className="hint">{t("services.cloudflaredHint")}</p>
         </div>
       )}
     </div>

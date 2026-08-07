@@ -1,7 +1,9 @@
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useUpdateStore } from "../../stores/updateStore";
 
 export function UpdateBanner() {
+  const { t } = useTranslation();
   const phase = useUpdateStore((s) => s.phase);
   const progress = useUpdateStore((s) => s.progress);
   const error = useUpdateStore((s) => s.error);
@@ -21,11 +23,11 @@ export function UpdateBanner() {
     <div className="update-banner" role="alert">
       <div className="update-banner-body">
         {phase === "available" && (
-          <div className="update-banner-title">È disponibile un aggiornamento</div>
+          <div className="update-banner-title">{t("update.available")}</div>
         )}
         {phase === "downloading" && (
           <div className="update-banner-title">
-            Download in corso… {progress}%
+            {t("update.downloading", { progress })}
             <div className="update-progress">
               <div className="update-progress-fill" style={{ width: `${progress}%` }} />
             </div>
@@ -33,7 +35,7 @@ export function UpdateBanner() {
         )}
         {phase === "error" && (
           <div className="update-banner-title">
-            Aggiornamento fallito: <span className="update-banner-dim">{error}</span>
+            {t("update.failed")} <span className="update-banner-dim">{error}</span>
           </div>
         )}
       </div>
@@ -41,20 +43,20 @@ export function UpdateBanner() {
         {phase === "available" && (
           <>
             <button className="primary small" onClick={install}>
-              Installa e riavvia
+              {t("update.installRestart")}
             </button>
             <button className="small ghost-on-accent" onClick={dismiss}>
-              Più tardi
+              {t("update.later")}
             </button>
           </>
         )}
         {phase === "error" && (
           <>
             <button className="small" onClick={install}>
-              Riprova
+              {t("update.retry")}
             </button>
             <button className="small ghost-on-accent" onClick={dismiss}>
-              Chiudi
+              {t("common.close")}
             </button>
           </>
         )}

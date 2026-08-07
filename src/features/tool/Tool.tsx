@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Tabs, usePageTab, type TabDef } from "../../components/Tabs";
 import { Clipboard } from "../clipboard/Clipboard";
 import { Launch } from "../launch/Launch";
@@ -7,27 +8,18 @@ import { Cron } from "../cron/Cron";
 import { Compare } from "../compare/Compare";
 import { ToolsPanel } from "../settings/ToolsPanel";
 
-const TABS: TabDef[] = [
-  { id: "clipboard", label: "📋 Appunti" },
-  { id: "launch", label: "🚀 Avvii" },
-  { id: "calc", label: "🧮 Calcolatrice" },
-  { id: "color", label: "🎨 Colorimetro" },
-  { id: "cron", label: "⏱ Cron" },
-  { id: "compare", label: "🔀 Confronta cartelle" },
-  { id: "tools", label: "🔧 Strumenti" },
-];
+const TAB_IDS = ["clipboard", "launch", "calc", "color", "cron", "compare", "tools"] as const;
 
 export function Tool() {
-  const [tab, setTab] = usePageTab(
-    "tool",
-    TABS.map((t) => t.id),
-    "clipboard",
-  );
+  const { t } = useTranslation();
+  const [tab, setTab] = usePageTab("tool", [...TAB_IDS], "clipboard");
+
+  const tabs: TabDef[] = TAB_IDS.map((id) => ({ id, label: t(`tool.tabs.${id}`) }));
 
   return (
     <div className="tool-page">
       <div className="tool-tabbar">
-        <Tabs tabs={TABS} active={tab} onChange={setTab} />
+        <Tabs tabs={tabs} active={tab} onChange={setTab} />
       </div>
       {tab === "clipboard" && <Clipboard />}
       {tab === "launch" && <Launch />}

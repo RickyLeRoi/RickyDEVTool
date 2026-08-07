@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../lib/api";
 import { ws } from "../lib/ws";
 import type { TaskEvent, TaskInfo } from "../lib/types";
@@ -9,6 +10,7 @@ interface TaskLogProps {
 }
 
 export function TaskLog({ task, onDone }: TaskLogProps) {
+  const { t } = useTranslation();
   const [lines, setLines] = useState<{ stream: string; line: string }[]>([]);
   const [running, setRunning] = useState(task.state === "running");
   const [exitCode, setExitCode] = useState<number | null>(task.exitCode);
@@ -54,11 +56,13 @@ export function TaskLog({ task, onDone }: TaskLogProps) {
         </span>
         {running ? (
           <button className="danger small" onClick={() => post(`/api/tasks/${task.id}/stop`, {})}>
-            Stop
+            {t("taskLog.stop")}
           </button>
         ) : (
           <span className={`badge ${exitCode === 0 ? "badge-ok" : "badge-warn"}`}>
-            {exitCode === 0 ? "completato" : `uscito con codice ${exitCode ?? "?"}`}
+            {exitCode === 0
+              ? t("taskLog.completed")
+              : t("taskLog.exitedWithCode", { code: exitCode ?? "?" })}
           </span>
         )}
       </div>
@@ -68,7 +72,7 @@ export function TaskLog({ task, onDone }: TaskLogProps) {
             {l.line}
           </div>
         ))}
-        {lines.length === 0 && <span className="dim">in attesa di output…</span>}
+        {lines.length === 0 && <span className="dim">{t("taskLog.waitingOutput")}</span>}
       </pre>
     </div>
   );

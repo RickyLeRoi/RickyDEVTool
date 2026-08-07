@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { post } from "../../lib/api";
 import { useNavStore } from "../../stores/navStore";
 import { useNetScanStore } from "../../stores/netScanStore";
@@ -9,16 +10,16 @@ import { Docker } from "../docker/Docker";
 import { TaskLog } from "../../components/TaskLog";
 import type { DnsRecordSet, LanHost, PingResult, PortCheckResult, TaskInfo } from "../../lib/types";
 
-const TOOLS: TabDef[] = [
-  { id: "listen", label: "Porte in ascolto" },
-  { id: "services", label: "Servizi" },
-  { id: "ping", label: "Ping" },
-  { id: "dns", label: "DNS" },
-  { id: "portcheck", label: "Port check" },
-  { id: "traceroute", label: "Traceroute" },
-  { id: "scan", label: "Scan LAN" },
-  { id: "docker", label: "🐳 Docker" },
-];
+const TOOL_IDS = [
+  "listen",
+  "services",
+  "ping",
+  "dns",
+  "portcheck",
+  "traceroute",
+  "scan",
+  "docker",
+] as const;
 
 const PING_ATTEMPTS = 10;
 
@@ -32,6 +33,7 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
 }
 
 function Ping() {
+  const { t } = useTranslation();
   const [host, setHost] = useState("1.1.1.1");
   const [attempts, setAttempts] = useState<{ ms: number | null }[]>([]);
   const [busy, setBusy] = useState(false);
@@ -74,9 +76,15 @@ function Ping() {
           run();
         }}
       >
-        <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="host o IP" />
+        <input
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          placeholder={t("net.hostPlaceholder")}
+        />
         <button disabled={busy}>
-          {busy ? `Ping… (${attempts.length}/${PING_ATTEMPTS})` : "Ping"}
+          {busy
+            ? t("net.pingBusy", { done: attempts.length, total: PING_ATTEMPTS })
+            : t("net.pingBtn")}
         </button>
       </form>
       {busy && <ProgressBar done={attempts.length} total={PING_ATTEMPTS} />}
@@ -84,8 +92,8 @@ function Ping() {
       {attempts.length > 0 && (
         <div className="net-result">
           <div>
-            {received}/{attempts.length} risposte
-            {avg != null && <> · media {avg.toFixed(1)} ms</>}
+            {t("net.responses", { received, total: attempts.length })}
+            {avg != null && t("net.avg", { avg: avg.toFixed(1) })}
           </div>
           <div className="dim ping-attempts">
             {attempts.map((a, i) => (
@@ -101,6 +109,7 @@ function Ping() {
 }
 
 function Dns() {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [records, setRecords] = useState<DnsRecordSet[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -122,8 +131,14 @@ function Dns() {
           run();
         }}
       >
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="esempio.com" />
-        <button disabled={busy || !name.trim()}>{busy ? "Risolvo…" : "Risolvi"}</button>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("net.dnsPlaceholder")}
+        />
+        <button disabled={busy || !name.trim()}>
+          {busy ? t("net.resolving") : t("net.resolve")}
+        </button>
       </form>
       {error && <div className="banner banner-error">{error}</div>}
       {records && (
@@ -137,7 +152,7 @@ function Dns() {
             ))}
             {records.length === 0 && (
               <tr>
-                <td className="dim">Nessun record</td>
+                <td className="dim">{t("net.noRecords")}</td>
               </tr>
             )}
           </tbody>
@@ -274,6 +289,7 @@ function parsePortsInput(input: string): number[] {
 }
 
 function Ports() {
+  const { t } = useTranslation();
   const [host, setHost] = useState("");
   const [portsStr, setPortsStr] = useState("22, 80, 443, 3000, 8080");
   const [results, setResults] = useState<PortCheckResult[] | null>(null);
@@ -319,11 +335,11 @@ function Ports() {
   };
   const runKnown = () => {
     setPortsStr(WELL_KNOWN_PORTS.join(", "));
-    scan(WELL_KNOWN_PORTS, "porte note");
+    scan(WELL_KNOWN_PORTS, t("net.historyKnownPorts"));
   };
   const runAll = () => {
-    setPortsStr("tutte le porte (1-65535)");
-    scan(ALL_PORTS, "tutte le porte (1-65535)");
+    setPortsStr(t("net.historyAllPorts"));
+    scan(ALL_PORTS, t("net.historyAllPorts"));
   };
   const stop = () => {
     cancelRef.current = true;
@@ -341,18 +357,26 @@ function Ports() {
   return (
     <div className="net-tool">
       <form className="net-form" onSubmit={runManual}>
-        <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="host o IP" />
-        <input value={portsStr} onChange={(e) => setPortsStr(e.target.value)} placeholder="22, 80, 443" />
-        <button disabled={busy || !host.trim()}>{busy ? "Controllo…" : "Controlla"}</button>
+        <input
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          placeholder={t("net.hostPlaceholder")}
+        />
+        <input
+          value={portsStr}
+          onChange={(e) => setPortsStr(e.target.value)}
+          placeholder={t("net.portsPlaceholder")}
+        />
+        <button disabled={busy || !host.trim()}>{busy ? t("net.checking") : t("net.check")}</button>
         <button type="button" className="small" disabled={busy || !host.trim()} onClick={runKnown}>
-          Porte note
+          {t("net.knownPorts")}
         </button>
         <button type="button" className="small" disabled={busy || !host.trim()} onClick={runAll}>
-          Tutte le porte
+          {t("net.allPorts")}
         </button>
         {busy && (
           <button type="button" className="small danger" onClick={stop}>
-            Ferma
+            {t("net.stop")}
           </button>
         )}
       </form>
@@ -371,14 +395,14 @@ function Ports() {
         <>
           <ProgressBar done={progress.done} total={progress.total} />
           <div className="dim">
-            {progress.done}/{progress.total} porte testate…
+            {t("net.portsTestedProgress", { done: progress.done, total: progress.total })}
           </div>
         </>
       )}
       {error && <div className="banner banner-error">{error}</div>}
       {results && !busy && (
         <div className="dim">
-          {openCount} porte aperte su {results.length} testate
+          {t("net.openOfTested", { open: openCount, total: results.length })}
         </div>
       )}
       {displayResults && displayResults.length > 0 && (
@@ -387,7 +411,7 @@ function Ports() {
             <span key={r.port} className={`port-pill ${r.open ? "open" : "closed"}`}>
               {r.port}
               {r.open && PORT_SERVICE_NAMES[r.port] && <> · {PORT_SERVICE_NAMES[r.port]}</>}{" "}
-              {r.open ? `· ${r.latencyMs}ms` : "chiusa"}
+              {r.open ? `· ${r.latencyMs}ms` : t("net.closed")}
             </span>
           ))}
         </div>
@@ -397,6 +421,7 @@ function Ports() {
 }
 
 function Traceroute() {
+  const { t } = useTranslation();
   const [host, setHost] = useState("");
   const [resolveHostnames, setResolveHostnames] = useState(false);
   const [task, setTask] = useState<TaskInfo | null>(null);
@@ -421,8 +446,14 @@ function Traceroute() {
           run();
         }}
       >
-        <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="host o IP" />
-        <button disabled={busy || !host.trim()}>{busy ? "Avvio…" : "Traccia percorso"}</button>
+        <input
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          placeholder={t("net.hostPlaceholder")}
+        />
+        <button disabled={busy || !host.trim()}>
+          {busy ? t("net.starting") : t("net.traceBtn")}
+        </button>
       </form>
       <label className="checkbox">
         <input
@@ -430,7 +461,7 @@ function Traceroute() {
           checked={resolveHostnames}
           onChange={(e) => setResolveHostnames(e.target.checked)}
         />
-        Risolvi hostname per ogni hop (più lento)
+        {t("net.resolveHops")}
       </label>
       {error && <div className="banner banner-error">{error}</div>}
       {task && <TaskLog key={task.id} task={task} />}
@@ -460,6 +491,7 @@ function shortHostname(hostname: string | null, domain: string | null): string {
 }
 
 function Scan({ autoRunSeq }: { autoRunSeq: number }) {
+  const { t } = useTranslation();
   const hosts = useNetScanStore((s) => s.hosts);
   const setHosts = useNetScanStore((s) => s.setHosts);
   const [error, setError] = useState<string | null>(null);
@@ -483,7 +515,7 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
   return (
     <div className="net-tool">
       <button disabled={busy} onClick={run}>
-        {busy ? "Scansione in corso…" : "Scansiona la rete locale"}
+        {busy ? t("net.scanning") : t("net.scanBtn")}
       </button>
       {error && <div className="banner banner-error">{error}</div>}
       {hosts && (
@@ -492,11 +524,11 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
             <tr>
               <th>IP</th>
               <th>
-                Hostname
+                {t("net.colHostname")}
                 {domain && <span className="dim th-note"> · .{domain}</span>}
               </th>
               <th>MAC</th>
-              <th className="num">Ping</th>
+              <th className="num">{t("net.colPing")}</th>
             </tr>
           </thead>
           <tbody>
@@ -504,13 +536,13 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
               <tr key={h.ip}>
                 <td>
                   {h.ip}
-                  {h.isSelf && <span className="badge">questo PC</span>}
+                  {h.isSelf && <span className="badge">{t("net.thisPc")}</span>}
                 </td>
                 <td className="dim" title={h.hostname ?? undefined}>
                   {shortHostname(h.hostname, domain)}
                 </td>
-                <td className="dim">{h.mac ?? "—"}</td>
-                <td className="num dim">{h.latencyMs != null ? `${h.latencyMs.toFixed(0)}ms` : "—"}</td>
+                <td className="dim">{h.mac ?? t("common.none")}</td>
+                <td className="num dim">{h.latencyMs != null ? `${h.latencyMs.toFixed(0)}ms` : t("common.none")}</td>
               </tr>
             ))}
           </tbody>
@@ -520,22 +552,35 @@ function Scan({ autoRunSeq }: { autoRunSeq: number }) {
   );
 }
 
+const TAB_LABEL_KEYS: Record<(typeof TOOL_IDS)[number], string> = {
+  listen: "net.tabListen",
+  services: "net.tabServices",
+  ping: "net.tabPing",
+  dns: "net.tabDns",
+  portcheck: "net.tabPortcheck",
+  traceroute: "net.tabTraceroute",
+  scan: "net.tabScan",
+  docker: "net.tabDocker",
+};
+
 export function NetTools() {
-  const [tool, setTool] = usePageTab(
-    "net",
-    TOOLS.map((t) => t.id),
-    "listen",
-  );
+  const { t } = useTranslation();
+  const [tool, setTool] = usePageTab("net", [...TOOL_IDS], "listen");
   const page = useNavStore((s) => s.page);
   const reqTab = useNavStore((s) => s.tab);
   const seq = useNavStore((s) => s.seq);
   const scanSeq = page === "net" && reqTab === "scan" ? seq : 0;
 
+  const tabs: TabDef[] = TOOL_IDS.map((id) => ({
+    id,
+    label: t(TAB_LABEL_KEYS[id] as "net.tabListen"),
+  }));
+
   return (
     <div>
       <div className="section-header">
-        <h2>Rete</h2>
-        <Tabs tabs={TOOLS} active={tool} onChange={setTool} />
+        <h2>{t("net.title")}</h2>
+        <Tabs tabs={tabs} active={tool} onChange={setTool} />
       </div>
       {tool === "listen" && <ListeningPorts />}
       {tool === "services" && <Services />}

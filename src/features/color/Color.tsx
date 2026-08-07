@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { post } from "../../lib/api";
 import {
   hsvToRgb,
@@ -58,6 +59,7 @@ const FORMATS = [
 ] as const;
 
 export function Color() {
+  const { t } = useTranslation();
   const [hsva, setHsva] = useState<HSVA>({ h: 210, s: 75, v: 90, a: 1 });
   const [input, setInput] = useState("");
   const [inputErr, setInputErr] = useState(false);
@@ -88,13 +90,13 @@ export function Color() {
   };
 
   const applyLoose = (text: string): boolean => {
-    const t = text.trim();
-    const parsed = parseColor(t);
+    const trimmed = text.trim();
+    const parsed = parseColor(trimmed);
     if (parsed) {
       setFromRgba(parsed);
       return true;
     }
-    const nums = (t.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+    const nums = (trimmed.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
     if (nums.length >= 3 && nums.slice(0, 3).every((n) => n <= 255)) {
       const [r, g, b, a] = nums;
       setFromRgba({
@@ -116,14 +118,14 @@ export function Color() {
     try {
       text = await navigator.clipboard.readText();
     } catch {
-      setMeterMsg("Non riesco a leggere gli appunti (permesso negato).");
+      setMeterMsg(t("tool.color.clipReadError"));
       return;
     }
     if (applyLoose(text)) {
       setInput(text.trim());
       setInputErr(false);
     } else {
-      setMeterMsg("Negli appunti non c'è un colore riconoscibile.");
+      setMeterMsg(t("tool.color.clipNoColor"));
     }
   };
 
@@ -148,39 +150,37 @@ export function Color() {
   return (
     <div>
       <div className="section-header">
-        <h2>Color picker</h2>
+        <h2>{t("tool.color.title")}</h2>
         {HAS_EYEDROPPER ? (
-          <button className="small" onClick={pickScreen} title="Preleva un colore dallo schermo">
-            🎯 Preleva dallo schermo
+          <button className="small" onClick={pickScreen} title={t("tool.color.pickScreenTitle")}>
+            {t("tool.color.pickScreen")}
           </button>
         ) : USE_COLOR_METER ? (
           <div className="color-meter-actions">
-            <button
-              className="small"
-              onClick={openColorMeter}
-              title="Apri il Colorimetro digitale di macOS"
-            >
-              🔬 Colorimetro digitale
+            <button className="small" onClick={openColorMeter} title={t("tool.color.colorMeterTitle")}>
+              {t("tool.color.colorMeter")}
             </button>
             <button
               className="small ghost"
               onClick={readFromClipboard}
-              title="Applica il colore copiato (⇧⌘C dal Colorimetro)"
+              title={t("tool.color.readClipboardTitle")}
             >
-              Leggi dagli appunti
+              {t("tool.color.readClipboard")}
             </button>
           </div>
         ) : (
-          <span className="dim" title="Disponibile su Windows; WKWebView (macOS) non espone l'API">
-            eyedropper non supportato qui
+          <span className="dim" title={t("tool.color.notSupportedTitle")}>
+            {t("tool.color.notSupported")}
           </span>
         )}
       </div>
 
       {USE_COLOR_METER && (
         <div className="color-meter-hint hint">
-          macOS non espone l'eyedropper: apri il <strong>Colorimetro digitale</strong>, punta il
-          colore, premi <kbd>⇧⌘C</kbd> per copiarlo, poi <em>Leggi dagli appunti</em>.
+          <Trans
+            i18nKey="tool.color.meterHint"
+            components={{ b: <strong />, kbd: <kbd />, em: <em /> }}
+          />
           {meterMsg && <span className="banner-error-text"> {meterMsg}</span>}
         </div>
       )}
@@ -236,7 +236,7 @@ export function Color() {
           </div>
 
           <label className="color-input-row">
-            <span className="dim">Incolla un colore</span>
+            <span className="dim">{t("tool.color.pasteColor")}</span>
             <input
               className={inputErr ? "err" : ""}
               value={input}
@@ -254,7 +254,7 @@ export function Color() {
                   <span className="color-format-label">{f.label}</span>
                   <code className="color-format-value">{value}</code>
                   <button className="small ghost" onClick={() => copy(value)}>
-                    {copied === value ? "✓" : "copia"}
+                    {copied === value ? "✓" : t("tool.color.copy")}
                   </button>
                 </div>
               );

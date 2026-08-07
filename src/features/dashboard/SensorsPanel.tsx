@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ws } from "../../lib/ws";
 import type { SensorsSnapshot } from "../../lib/types";
 
@@ -14,6 +15,7 @@ function Bar({ pct, warn }: { pct: number; warn?: boolean }) {
 }
 
 export function SensorsPanel() {
+  const { t } = useTranslation();
   const [s, setS] = useState<SensorsSnapshot | null>(null);
 
   useEffect(() => {
@@ -30,23 +32,20 @@ export function SensorsPanel() {
   if (!hasTemp && !hasBattery && !hasGpu) {
     return (
       <div className="sensors">
-        <h3>Sensori</h3>
-        <div className="dim">
-          Nessun sensore esposto da questa piattaforma (comune su Apple Silicon senza permessi
-          elevati e sui desktop senza batteria).
-        </div>
+        <h3>{t("dashboard.sensors.title")}</h3>
+        <div className="dim">{t("dashboard.sensors.none")}</div>
       </div>
     );
   }
 
   return (
     <div className="sensors">
-      <h3>Sensori</h3>
+      <h3>{t("dashboard.sensors.title")}</h3>
       <div className="sensor-grid">
         {hasBattery && s.battery && (
           <div className="sensor-card">
             <div className="sensor-head">
-              <span>{s.battery.charging ? "🔌" : "🔋"} Batteria</span>
+              <span>{s.battery.charging ? "🔌" : "🔋"} {t("dashboard.sensors.battery")}</span>
               <span className="sensor-value">{s.battery.percent.toFixed(0)}%</span>
             </div>
             <Bar pct={s.battery.percent} warn={!s.battery.charging && s.battery.percent <= 20} />
@@ -57,18 +56,18 @@ export function SensorsPanel() {
         {hasTemp && (
           <div className="sensor-card">
             <div className="sensor-head">
-              <span>🌡 Temperatura</span>
+              <span>🌡 {t("dashboard.sensors.temperature")}</span>
               {s.maxTempC != null && (
                 <span className="sensor-value">{s.maxTempC.toFixed(0)}°C</span>
               )}
             </div>
             <div className="sensor-list">
-              {s.temps.slice(0, 5).map((t) => (
-                <div key={t.label} className="sensor-row">
-                  <span className="dim sensor-row-label" title={t.label}>
-                    {t.label}
+              {s.temps.slice(0, 5).map((temp) => (
+                <div key={temp.label} className="sensor-row">
+                  <span className="dim sensor-row-label" title={temp.label}>
+                    {temp.label}
                   </span>
-                  <span>{t.celsius.toFixed(0)}°C</span>
+                  <span>{temp.celsius.toFixed(0)}°C</span>
                 </div>
               ))}
             </div>
@@ -78,7 +77,7 @@ export function SensorsPanel() {
         {s.gpus.map((g, i) => (
           <div key={`${g.name}-${i}`} className="sensor-card">
             <div className="sensor-head">
-              <span title={`fonte: ${g.source}`}>🎮 {g.name}</span>
+              <span title={t("dashboard.sensors.gpuSource", { source: g.source })}>🎮 {g.name}</span>
               {g.utilizationPct != null && (
                 <span className="sensor-value">{g.utilizationPct.toFixed(0)}%</span>
               )}
@@ -86,7 +85,7 @@ export function SensorsPanel() {
             {g.utilizationPct != null ? (
               <Bar pct={g.utilizationPct} />
             ) : (
-              <div className="dim">Utilizzo live non disponibile su questa piattaforma</div>
+              <div className="dim">{t("dashboard.sensors.gpuLiveUnavailable")}</div>
             )}
             <div className="dim sensor-gpu-sub">
               {g.memUsedMb != null && g.memTotalMb != null && (

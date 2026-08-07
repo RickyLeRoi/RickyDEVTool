@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { PairGate } from "./app/PairGate";
 import { VitalsPanel } from "./app/VitalsPanel";
 import { Dashboard } from "./features/dashboard/Dashboard";
@@ -28,30 +29,40 @@ import { useTrayIntentStore } from "./stores/trayIntentStore";
 import { useTasksStore } from "./stores/tasksStore";
 import type { AiStatus, DiskInfo, MachineStats, TaskInfo } from "./lib/types";
 
-const SECTIONS: { id: Page; icon: string; label: string; position: "top" | "bottom" }[] = [
-  { id: "dashboard", icon: "🖥", label: "Dashboard", position: "top" },
-  { id: "projects", icon: "📁", label: "Progetti", position: "top" },
-  { id: "net", icon: "🌐", label: "Rete", position: "top" },
-  { id: "tool", icon: "🧰", label: "Tool", position: "top" },
-  { id: "log", icon: "📜", label: "Log", position: "top" },
-  { id: "snippets", icon: "⌨️", label: "Snippet", position: "top" },
-  { id: "ssh", icon: "🔑", label: "SSH", position: "top" },
-  { id: "drop", icon: "📤", label: "Drop", position: "top" },
-  { id: "tasks", icon: "🧾", label: "Task", position: "bottom" },
-  { id: "rickyai", icon: "🤖", label: "RickyAI", position: "bottom" },
-  { id: "about", icon: "ℹ️", label: "About", position: "bottom" },
-  { id: "settings", icon: "⚙️", label: "Impostazioni", position: "bottom" },
+const SECTIONS: { id: Page; icon: string; position: "top" | "bottom" }[] = [
+  { id: "dashboard", icon: "🖥", position: "top" },
+  { id: "projects", icon: "📁", position: "top" },
+  { id: "net", icon: "🌐", position: "top" },
+  { id: "tool", icon: "🧰", position: "top" },
+  { id: "log", icon: "📜", position: "top" },
+  { id: "snippets", icon: "⌨️", position: "top" },
+  { id: "ssh", icon: "🔑", position: "top" },
+  { id: "drop", icon: "📤", position: "top" },
+  { id: "tasks", icon: "🧾", position: "bottom" },
+  { id: "rickyai", icon: "🤖", position: "bottom" },
+  { id: "about", icon: "ℹ️", position: "bottom" },
+  { id: "settings", icon: "⚙️", position: "bottom" },
 ];
 
-const QUICK_NAV: { id: string; title: string; icon: string }[] = [
-  { id: "ports", title: "Porte in ascolto", icon: "🔌" },
-  { id: "docker", title: "Docker", icon: "🐳" },
-  { id: "clipboard", title: "Appunti", icon: "📋" },
-  { id: "launch", title: "Avvii compositi", icon: "🚀" },
-  { id: "calc", title: "Calcolatrice", icon: "🧮" },
-  { id: "color", title: "Colorimetro", icon: "🎨" },
-  { id: "compare", title: "Confronta cartelle", icon: "🔀" },
-  { id: "services", title: "Servizi (ping)", icon: "📡" },
+type QuickId =
+  | "ports"
+  | "docker"
+  | "clipboard"
+  | "launch"
+  | "calc"
+  | "color"
+  | "compare"
+  | "services";
+
+const QUICK_NAV: { id: QuickId; icon: string }[] = [
+  { id: "ports", icon: "🔌" },
+  { id: "docker", icon: "🐳" },
+  { id: "clipboard", icon: "📋" },
+  { id: "launch", icon: "🚀" },
+  { id: "calc", icon: "🧮" },
+  { id: "color", icon: "🎨" },
+  { id: "compare", icon: "🔀" },
+  { id: "services", icon: "📡" },
 ];
 
 function idFromHash(): string | null {
@@ -60,6 +71,7 @@ function idFromHash(): string | null {
 }
 
 export default function App() {
+  const { t } = useTranslation();
   const page = useNavStore((s) => s.page);
   const go = useNavStore((s) => s.go);
   const push = useStatsStore((s) => s.push);
@@ -170,55 +182,53 @@ export default function App() {
   const commands = useMemo<Command[]>(() => {
     const nav: Command[] = SECTIONS.filter(isVisible).map((s) => ({
       id: `nav:${s.id}`,
-      title: s.label,
-      hint: "Vai a",
+      title: t(`nav.${s.id}`),
+      hint: t("common.goTo"),
       icon: s.icon,
       run: () => go(s.id),
     }));
     const quick: Command[] = QUICK_NAV.map((q) => ({
       id: `quick:${q.id}`,
-      title: q.title,
-      hint: "Apri",
+      title: t(`quickNav.${q.id}`),
+      hint: t("common.open"),
       icon: q.icon,
       keywords: "tool",
       run: () => go(q.id),
     }));
-    const themes: Command[] = [
-      { key: "auto", label: "Auto (sistema)" },
-      { key: "light", label: "Chiaro" },
-      { key: "dark", label: "Scuro" },
-    ].map((t) => ({
-      id: `theme:${t.key}`,
-      title: `Tema: ${t.label}`,
-      hint: "Aspetto",
+    const themes: Command[] = (["auto", "light", "dark"] as const).map((key) => ({
+      id: `theme:${key}`,
+      title: t("theme.label", { name: t(`theme.${key}`) }),
+      hint: t("theme.appearance"),
       icon: "🌓",
-      run: () => applyTheme(t.key as "auto" | "light" | "dark", true),
+      run: () => applyTheme(key, true),
     }));
     return [...nav, ...quick, ...themes];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [go, taskCount, aiEnabled]);
+  }, [go, taskCount, aiEnabled, t]);
 
   const railDot = (id: Page): { count: number; title: string } | undefined => {
-    if (id === "drop") return { count: peerCount, title: `${peerCount} dispositivi online` };
-    if (id === "tasks") return { count: taskCount, title: `${taskCount} task` };
+    if (id === "drop")
+      return { count: peerCount, title: t("nav.devicesOnline", { count: peerCount }) };
+    if (id === "tasks") return { count: taskCount, title: t("nav.taskCount", { count: taskCount }) };
     return undefined;
   };
 
   const railButton = (s: (typeof SECTIONS)[number]) => {
     const dot = railDot(s.id);
     const showDot = (dot?.count ?? 0) > 0;
+    const label = t(`nav.${s.id}`);
     return (
       <button
         key={s.id}
         className={`rail-btn ${page === s.id ? "active" : ""}`}
-        title={showDot ? `${s.label} (${dot?.count})` : s.label}
+        title={showDot ? `${label} (${dot?.count})` : label}
         onClick={() => go(s.id)}
       >
         <span className="rail-icon">
           {s.icon}
           {showDot && <span className="rail-dot" title={dot?.title} />}
         </span>
-        <span className="rail-label">{s.label}</span>
+        <span className="rail-label">{label}</span>
       </button>
     );
   };

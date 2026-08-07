@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
+import { getLang } from "../../lib/i18n";
 import type { MetricSample } from "../../lib/types";
 
 const RANGES = [
@@ -9,12 +11,18 @@ const RANGES = [
 ];
 
 const SERIES = [
-  { key: "cpuPct", label: "CPU", color: "var(--accent)" },
-  { key: "memPct", label: "RAM", color: "var(--accent2)" },
-  { key: "diskPct", label: "Disco", color: "var(--ok)" },
+  { key: "cpuPct", color: "var(--accent)" },
+  { key: "memPct", color: "var(--accent2)" },
+  { key: "diskPct", color: "var(--ok)" },
 ] as const;
 
 type SeriesKey = (typeof SERIES)[number]["key"];
+
+const SERIES_LABEL_KEYS: Record<SeriesKey, "dashboard.metrics.seriesCpu"> = {
+  cpuPct: "dashboard.metrics.seriesCpu",
+  memPct: "dashboard.metrics.seriesRam" as "dashboard.metrics.seriesCpu",
+  diskPct: "dashboard.metrics.seriesDisk" as "dashboard.metrics.seriesCpu",
+};
 
 const HIDDEN_KEY = "rdt-metrics-hidden";
 
@@ -65,10 +73,11 @@ function downsample(samples: MetricSample[]): MetricSample[] {
 }
 
 function fmtTime(ms: number) {
-  return new Date(ms).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString(getLang(), { hour: "2-digit", minute: "2-digit" });
 }
 
 export function MetricsHistory() {
+  const { t } = useTranslation();
   const [hours, setHours] = useState(24);
   const [samples, setSamples] = useState<MetricSample[] | null>(null);
   const [hidden, setHidden] = useState<SeriesKey[]>(loadHidden);
@@ -112,7 +121,7 @@ export function MetricsHistory() {
   return (
     <section className="metrics-history">
       <div className="metrics-head">
-        <span className="gauge-title">Storico {hours}h</span>
+        <span className="gauge-title">{t("dashboard.metrics.range", { hours })}</span>
         <div className="segmented">
           {RANGES.map((r) => (
             <button
@@ -131,17 +140,18 @@ export function MetricsHistory() {
         {SERIES.map((s) => {
           const v = last ? (last[s.key] as number | null) : null;
           const off = hidden.includes(s.key);
+          const label = t(SERIES_LABEL_KEYS[s.key]);
           return (
             <button
               key={s.key}
               type="button"
               className={`metrics-legend-item ${off ? "off" : ""}`}
               aria-pressed={!off}
-              title={off ? `Mostra ${s.label}` : `Nascondi ${s.label}`}
+              title={off ? t("dashboard.metrics.show", { label }) : t("dashboard.metrics.hide", { label })}
               onClick={() => toggleSeries(s.key)}
             >
               <span className="metrics-swatch" style={{ background: s.color }} />
-              {s.label}
+              {label}
               {v != null && <span className="dim"> {v.toFixed(0)}%</span>}
             </button>
           );
@@ -150,9 +160,7 @@ export function MetricsHistory() {
 
       {!geometry ? (
         <div className="empty">
-          {samples === null
-            ? "Carico lo storico…"
-            : "Lo storico si popola man mano (un campione ogni 30s)."}
+          {samples === null ? t("dashboard.metrics.loading") : t("dashboard.metrics.filling")}
         </div>
       ) : (
         <>
@@ -168,7 +176,7 @@ export function MetricsHistory() {
               className="metrics-chart"
               viewBox={`0 0 ${W} ${H}`}
               role="img"
-              aria-label={`Storico metriche ${hours} ore`}
+              aria-label={t("dashboard.metrics.chartAria", { hours })}
             >
               {[0, 25, 50, 75, 100].map((g) => (
                 <line
@@ -224,7 +232,7 @@ export function MetricsHistory() {
         </>
       )}
       {visible.length === 0 && (
-        <div className="dim metrics-empty-note">Tutte le serie sono nascoste.</div>
+        <div className="dim metrics-empty-note">{t("dashboard.metrics.allHidden")}</div>
       )}
     </section>
   );

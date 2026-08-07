@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
+import { getLang } from "../../lib/i18n";
 import { cronNextRun } from "./cronParse";
 import type { SchedEntry, SchedListing } from "../../lib/types";
 
 function CronRow({ entry }: { entry: SchedEntry }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [lines, setLines] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,15 +47,13 @@ function CronRow({ entry }: { entry: SchedEntry }) {
             {isCron ? (
               next ? (
                 <div>
-                  Prossima esecuzione: <strong>{next.toLocaleString()}</strong>
+                  {t("cron.nextRun")} <strong>{next.toLocaleString(getLang())}</strong>
                 </div>
               ) : (
-                <div className="dim">
-                  Espressione non a orario fisso (es. @reboot) o non interpretabile.
-                </div>
+                <div className="dim">{t("cron.notFixed")}</div>
               )
             ) : loading ? (
-              <div className="dim">Carico i dettagli…</div>
+              <div className="dim">{t("cron.loadingDetails")}</div>
             ) : lines && lines.length > 0 ? (
               <ul className="cron-detail-list">
                 {lines.map((l, i) => (
@@ -60,7 +61,7 @@ function CronRow({ entry }: { entry: SchedEntry }) {
                 ))}
               </ul>
             ) : (
-              <div className="dim">Nessun dettaglio disponibile.</div>
+              <div className="dim">{t("cron.noDetails")}</div>
             )}
           </td>
         </tr>
@@ -70,6 +71,7 @@ function CronRow({ entry }: { entry: SchedEntry }) {
 }
 
 export function Cron() {
+  const { t } = useTranslation();
   const [listing, setListing] = useState<SchedListing | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -93,18 +95,15 @@ export function Cron() {
   return (
     <div className="cron">
       <div className="section-header">
-        <h2>Pianificazioni</h2>
+        <h2>{t("cron.title")}</h2>
         <button className="small" onClick={load} disabled={loading}>
-          {loading ? "…" : "Aggiorna"}
+          {loading ? "…" : t("common.refresh")}
         </button>
       </div>
-      <p className="hint">
-        Sola lettura: cron dell'utente, LaunchAgent (macOS) o attività pianificate (Windows).
-        Clicca una voce per vederne i dettagli e quando è programmata.
-      </p>
+      <p className="hint">{t("cron.intro")}</p>
 
       {listing && listing.entries.length === 0 && (
-        <div className="empty">{listing.note ?? "Nessuna voce pianificata."}</div>
+        <div className="empty">{listing.note ?? t("cron.noEntries")}</div>
       )}
 
       {listing && listing.entries.length > 0 && (
@@ -112,9 +111,9 @@ export function Cron() {
           <table className="proc-table cron-table">
             <thead>
               <tr>
-                <th>Pianificazione</th>
-                <th>Comando / attività</th>
-                <th>Sorgente</th>
+                <th>{t("cron.colSchedule")}</th>
+                <th>{t("cron.colCommand")}</th>
+                <th>{t("cron.colSource")}</th>
               </tr>
             </thead>
             <tbody>

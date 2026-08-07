@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { GitPanel } from "./GitPanel";
 import { NodePanel } from "./NodePanel";
@@ -19,27 +20,29 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 function CommonActions({ path }: { path: string }) {
+  const { t } = useTranslation();
   const launch = (id: string) => post(`/api/tools/${id}/launch`, { target: path });
   return (
     <div className="common-actions">
-      <button className="small" title="Apri in VS Code" onClick={() => launch("vscode")}>
+      <button className="small" title={t("projects.vscodeTitle")} onClick={() => launch("vscode")}>
         VS Code
       </button>
-      <button className="small" title="Apri terminale qui" onClick={() => launch("terminal")}>
-        Terminale
+      <button className="small" title={t("projects.terminalTitle")} onClick={() => launch("terminal")}>
+        {t("projects.terminal")}
       </button>
       <button
         className="small"
-        title="Copia percorso"
+        title={t("projects.copyPathTitle")}
         onClick={() => navigator.clipboard.writeText(path)}
       >
-        Copia path
+        {t("projects.copyPath")}
       </button>
     </div>
   );
 }
 
 export function Projects() {
+  const { t } = useTranslation();
   const [pinned, setPinned] = useState<string[]>([]);
   const [listing, setListing] = useState<DirListing | null>(null);
   const [scan, setScan] = useState<FolderScan | null>(null);
@@ -88,9 +91,9 @@ export function Projects() {
   return (
     <div>
       <div className="section-header">
-        <h2>Progetti</h2>
+        <h2>{t("nav.projects")}</h2>
         <button onClick={() => setBrowsing(!browsing)}>
-          {browsing ? "Chiudi" : "Apri cartella…"}
+          {browsing ? t("common.close") : t("projects.openFolder")}
         </button>
       </div>
 
@@ -105,7 +108,7 @@ export function Projects() {
               <button className="chip-label" onClick={() => doScan(p)}>
                 {shortName(p)}
               </button>
-              <button className="chip-x" title="Rimuovi pin" onClick={() => togglePin(p)}>
+              <button className="chip-x" title={t("projects.removePin")} onClick={() => togglePin(p)}>
                 ✕
               </button>
             </span>
@@ -121,10 +124,10 @@ export function Projects() {
             <code>{listing.path}</code>
             <span className="browser-actions">
               <button className="small" onClick={() => doScan(listing.path)} disabled={scanning}>
-                {scanning ? "Scansiono…" : "Usa questa cartella"}
+                {scanning ? t("projects.scanning") : t("projects.useThisFolder")}
               </button>{" "}
               <button className="small" onClick={() => togglePin(listing.path)}>
-                {pinned.includes(listing.path) ? "Unpin" : "Pin"}
+                {pinned.includes(listing.path) ? t("projects.unpin") : t("projects.pin")}
               </button>
             </span>
           </div>
@@ -139,7 +142,7 @@ export function Projects() {
                 <button onClick={() => browse(d.path)}>📁 {d.name}</button>
               </li>
             ))}
-            {listing.dirs.length === 0 && <li className="dim">nessuna sottocartella</li>}
+            {listing.dirs.length === 0 && <li className="dim">{t("projects.noSubfolders")}</li>}
           </ul>
         </div>
       )}
@@ -149,14 +152,11 @@ export function Projects() {
           <div className="scan-header">
             <code>{scan.path}</code>
             {scan.truncated && (
-              <span className="badge badge-warn">scansione parziale (cartella enorme)</span>
+              <span className="badge badge-warn">{t("projects.partialScan")}</span>
             )}
           </div>
           {scan.projects.length === 0 && (
-            <div className="empty">
-              Nessun progetto riconosciuto (git, Node.js, .NET, Python, Rust, Tauri, Flutter)
-              entro 3 livelli.
-            </div>
+            <div className="empty">{t("projects.noProjects")}</div>
           )}
           <div className="project-layout">
             {scan.projects.length > 0 && (
@@ -211,10 +211,7 @@ export function Projects() {
       )}
 
       {!scan && !browsing && pinned.length === 0 && (
-        <div className="empty">
-          Nessuna cartella aperta: usa "Apri cartella…" per iniziare, poi pinna quelle che usi
-          spesso.
-        </div>
+        <div className="empty">{t("projects.noFolderOpen")}</div>
       )}
     </div>
   );

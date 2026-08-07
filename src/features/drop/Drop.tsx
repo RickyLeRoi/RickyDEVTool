@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, API_BASE, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
 import { getDeviceName, setDeviceName } from "../../lib/device";
@@ -7,6 +8,7 @@ import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { DropPeer, ReceivedFile } from "../../lib/types";
 
 function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
+  const { t } = useTranslation();
   const cardRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -20,7 +22,7 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
   }, [focusSeq]);
 
   const sendFile = async (file: File) => {
-    setStatus(`Invio ${file.name}…`);
+    setStatus(t("drop.sendingFile", { name: file.name }));
     const form = new FormData();
     form.append("to", peer.deviceId);
     form.append("fromName", getDeviceName());
@@ -28,9 +30,13 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
     try {
       const res = await fetch(`${API_BASE}/api/drop/send`, { method: "POST", body: form });
       const json = await res.json();
-      setStatus(json.ok ? `Inviato: ${file.name}` : `Errore: ${json.error?.message ?? "invio fallito"}`);
+      setStatus(
+        json.ok
+          ? t("drop.sentFile", { name: file.name })
+          : t("drop.sendError", { message: json.error?.message ?? t("drop.sendFailed") }),
+      );
     } catch {
-      setStatus("Errore di rete durante l'invio");
+      setStatus(t("drop.networkError"));
     }
     setTimeout(() => setStatus(null), 4000);
   };
@@ -42,7 +48,7 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
       fromName: getDeviceName(),
       text,
     });
-    setStatus(r.ok ? "Testo inviato" : "Errore invio testo");
+    setStatus(r.ok ? t("drop.textSent") : t("drop.textError"));
     if (r.ok) {
       setText("");
       setShowText(false);
@@ -56,19 +62,19 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
         <span className="peer-icon">{peer.remote ? "🌐" : peer.isDesktop ? "🖥" : "📱"}</span>
         <span className="peer-name">{peer.name}</span>
         {peer.remote ? (
-          <span className="badge" title="Altro computer scoperto in rete locale">
-            altra rete
+          <span className="badge" title={t("drop.otherNetworkTitle")}>
+            {t("drop.otherNetwork")}
           </span>
         ) : (
-          peer.isDesktop && <span className="badge">questo PC</span>
+          peer.isDesktop && <span className="badge">{t("drop.thisPc")}</span>
         )}
       </div>
       <div className="peer-actions">
         <button className="small" onClick={() => fileInput.current?.click()}>
-          Invia file
+          {t("drop.sendFile")}
         </button>
         <button className="small" onClick={() => setShowText(!showText)}>
-          Invia testo
+          {t("drop.sendText")}
         </button>
         <input
           ref={fileInput}
@@ -86,11 +92,11 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Testo o link da inviare…"
+            placeholder={t("drop.textPlaceholder")}
             rows={2}
           />
           <button className="small" onClick={sendText}>
-            Invia
+            {t("drop.send")}
           </button>
         </div>
       )}
@@ -100,6 +106,7 @@ function PeerCard({ peer, focusSeq }: { peer: DropPeer; focusSeq: number }) {
 }
 
 function ReceivedPanel() {
+  const { t } = useTranslation();
   const [files, setFiles] = useState<ReceivedFile[] | null>(null);
   const [folder, setFolder] = useState<string>("");
   const [remote, setRemote] = useState(false);
@@ -124,18 +131,18 @@ function ReceivedPanel() {
   return (
     <section className="received">
       <div className="section-header">
-        <h3>File ricevuti su questo PC</h3>
+        <h3>{t("drop.receivedTitle")}</h3>
         <div>
           <button className="small" onClick={() => post("/api/drop/open-folder", {})}>
-            Apri cartella
+            {t("drop.openFolder")}
           </button>{" "}
           <button className="small" onClick={load}>
-            Aggiorna
+            {t("common.refresh")}
           </button>
         </div>
       </div>
       {folder && <div className="dim received-folder">{folder}</div>}
-      {files && files.length === 0 && <div className="empty">Nessun file ricevuto.</div>}
+      {files && files.length === 0 && <div className="empty">{t("drop.noReceived")}</div>}
       {files && files.length > 0 && (
         <table className="proc-table">
           <tbody>
@@ -148,13 +155,13 @@ function ReceivedPanel() {
                     className="small"
                     onClick={() => post(`/api/drop/open/${encodeURIComponent(f.name)}`, {})}
                   >
-                    Apri
+                    {t("common.open")}
                   </button>
                   <button
                     className="small"
                     onClick={() => post(`/api/drop/reveal/${encodeURIComponent(f.name)}`, {})}
                   >
-                    Mostra
+                    {t("drop.reveal")}
                   </button>
                   <button
                     className="small danger"
@@ -165,7 +172,7 @@ function ReceivedPanel() {
                       load();
                     }}
                   >
-                    Elimina
+                    {t("common.delete")}
                   </button>
                 </td>
               </tr>
@@ -178,6 +185,7 @@ function ReceivedPanel() {
 }
 
 export function Drop() {
+  const { t } = useTranslation();
   const peers = useDropStore((s) => s.peers);
   const [name, setName] = useState(getDeviceName());
   const traySection = useTrayIntentStore((s) => s.section);
@@ -189,23 +197,17 @@ export function Drop() {
   return (
     <div className="drop">
       <div className="section-header">
-        <h2>Drop</h2>
+        <h2>{t("nav.drop")}</h2>
         <label className="device-name">
-          Il mio nome:{" "}
+          {t("drop.myName")}{" "}
           <input value={name} onChange={(e) => setName(e.target.value)} onBlur={saveName} />
         </label>
       </div>
 
-      <p className="hint">
-        Condividi file e testo con gli altri dispositivi collegati (stessa rete, con la UI
-        aperta), stile AirDrop. I file inviati a questo PC finiscono in Download/RickyDEVTool.
-      </p>
+      <p className="hint">{t("drop.intro")}</p>
 
       {peers.length === 0 ? (
-        <div className="empty">
-          Nessun altro dispositivo online. Apri RickyDEVTool su un altro device (o il telefono
-          via QR) per vederlo qui.
-        </div>
+        <div className="empty">{t("drop.noPeers")}</div>
       ) : (
         <div className="peer-grid">
           {peers.map((p) => (

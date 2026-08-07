@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { API_BASE, post } from "../../lib/api";
 import { getDeviceSecret } from "../../lib/device";
 import { fmtBytes } from "../../lib/format";
@@ -6,14 +8,14 @@ import { useDropStore } from "../../stores/dropStore";
 
 // 20260806 ++ RG #Security il segreto del device viaggia in un header, non nella URL: un <a href>
 // finirebbe nella cronologia e nei log. Quindi fetch + blob.
-async function scarica(transferId: string, name: string): Promise<string | null> {
+async function scarica(transferId: string, name: string, t: TFunction): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/api/drop/download/${transferId}`, {
       headers: { "X-RickyDev-Device-Secret": getDeviceSecret() },
     });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      return body?.error?.message ?? `download fallito (HTTP ${res.status})`;
+      return body?.error?.message ?? t("drop.downloadFailedHttp", { status: res.status });
     }
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
@@ -23,11 +25,12 @@ async function scarica(transferId: string, name: string): Promise<string | null>
     URL.revokeObjectURL(url);
     return null;
   } catch (e) {
-    return e instanceof Error ? e.message : "download fallito";
+    return e instanceof Error ? e.message : t("drop.downloadFailed");
   }
 }
 
 export function DropToasts() {
+  const { t } = useTranslation();
   const { incoming, dismiss } = useDropStore();
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -44,7 +47,7 @@ export function DropToasts() {
             </button>
             {d.kind === "file" ? (
               <>
-                <div className="drop-toast-title">📎 {d.fromName} ti ha inviato un file</div>
+                <div className="drop-toast-title">{t("drop.toastFile", { from: d.fromName })}</div>
                 <div className="drop-toast-body">
                   <strong>{d.name}</strong> <span className="dim">{fmtBytes(d.sizeBytes)}</span>
                 </div>
@@ -58,13 +61,13 @@ export function DropToasts() {
                         className="drop-toast-action"
                         onClick={() => post(`/api/drop/open/${encodeURIComponent(d.name)}`, {})}
                       >
-                        Apri
+                        {t("common.open")}
                       </button>
                       <button
                         className="drop-toast-action ghost"
                         onClick={() => post(`/api/drop/reveal/${encodeURIComponent(d.name)}`, {})}
                       >
-                        Mostra nella cartella
+                        {t("drop.openInFolder")}
                       </button>
                     </div>
                   </>
@@ -76,12 +79,12 @@ export function DropToasts() {
                     <button
                       className="drop-toast-action"
                       onClick={async () => {
-                        const error = await scarica(d.transferId, d.name);
+                        const error = await scarica(d.transferId, d.name, t);
                         if (error) setErrors((e) => ({ ...e, [item.id]: error }));
                         else dismiss(item.id);
                       }}
                     >
-                      Scarica
+                      {t("drop.download")}
                     </button>
                   </>
                 )}
@@ -90,12 +93,12 @@ export function DropToasts() {
               <>
                 <div className="drop-toast-title">
                   {d.kind === "clipboard"
-                    ? `📋 Appunti da ${d.fromName}`
-                    : `💬 Testo da ${d.fromName}`}
+                    ? t("drop.toastClipboard", { from: d.fromName })
+                    : t("drop.toastText", { from: d.fromName })}
                 </div>
                 <div className="drop-toast-body drop-text">{d.text}</div>
                 {d.kind === "clipboard" && (
-                  <div className="hint">Aggiunto allo storico appunti.</div>
+                  <div className="hint">{t("drop.addedToClipboard")}</div>
                 )}
                 <button
                   className="drop-toast-action"
@@ -104,7 +107,7 @@ export function DropToasts() {
                     dismiss(item.id);
                   }}
                 >
-                  Copia
+                  {t("common.copy")}
                 </button>
               </>
             )}

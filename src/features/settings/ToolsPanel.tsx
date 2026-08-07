@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import type { DiscoveredTool } from "../../lib/types";
 
@@ -12,20 +13,19 @@ const TOOL_LABELS: Record<string, string> = {
   pnpm: "pnpm",
   dotnet: ".NET SDK",
   docker: "Docker",
-  terminal: "Terminale",
 };
 
 const LAUNCHABLE = new Set(["vscode", "visualstudio", "terminal"]);
 
-const SOURCE_LABELS: Record<string, string> = {
-  wellKnownPath: "path noto",
-  registry: "registro",
-  PATH: "PATH",
-  userConfig: "manuale",
-  none: "",
+const SOURCE_KEYS: Record<string, string> = {
+  wellKnownPath: "tools.sourceWellKnownPath",
+  registry: "tools.sourceRegistry",
+  PATH: "tools.sourcePath",
+  userConfig: "tools.sourceUserConfig",
 };
 
 export function ToolsPanel() {
+  const { t } = useTranslation();
   const [tools, setTools] = useState<DiscoveredTool[] | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [editPath, setEditPath] = useState("");
@@ -54,67 +54,77 @@ export function ToolsPanel() {
 
   const launch = (id: string) => post(`/api/tools/${id}/launch`, {});
 
+  const toolLabel = (tool: DiscoveredTool) =>
+    tool.id === "terminal" ? t("tools.terminal") : TOOL_LABELS[tool.id] ?? tool.id;
+
   return (
     <section>
       <div className="section-header">
-        <h3>Strumenti rilevati</h3>
+        <h3>{t("tools.title")}</h3>
         <button onClick={() => load(true)} disabled={busy}>
-          {busy ? "Rilevo…" : "Rileva di nuovo"}
+          {busy ? t("tools.detectingBusy") : t("tools.detectAgain")}
         </button>
       </div>
-      {!tools && <div className="empty">Rilevamento…</div>}
+      {!tools && <div className="empty">{t("tools.detecting")}</div>}
       {tools && (
         <table className="proc-table">
           <tbody>
-            {tools.map((t) => (
-              <tr key={t.id} title={t.path ?? undefined}>
-                <td>{TOOL_LABELS[t.id] ?? t.id}</td>
+            {tools.map((tool) => (
+              <tr key={tool.id} title={tool.path ?? undefined}>
+                <td>{toolLabel(tool)}</td>
                 <td>
-                  {t.found ? (
-                    <span className="badge badge-ok">trovato</span>
+                  {tool.found ? (
+                    <span className="badge badge-ok">{t("tools.found")}</span>
                   ) : (
-                    <span className="badge">assente</span>
+                    <span className="badge">{t("tools.absent")}</span>
                   )}
-                  {t.source !== "none" && (
-                    <span className="dim"> · {SOURCE_LABELS[t.source]}</span>
+                  {tool.source !== "none" && SOURCE_KEYS[tool.source] && (
+                    <span className="dim">
+                      {" "}
+                      · {t(SOURCE_KEYS[tool.source] as "tools.sourcePath")}
+                    </span>
                   )}
                 </td>
                 <td className="dim">
-                  {t.version ?? t.platformNote ?? ""}
-                  {t.editions && t.editions.length > 1 && (
-                    <span> · {t.editions.length} edizioni</span>
+                  {tool.version ?? tool.platformNote ?? ""}
+                  {tool.editions && tool.editions.length > 1 && (
+                    <span> · {t("tools.editions", { count: tool.editions.length })}</span>
                   )}
                 </td>
                 <td className="num">
-                  {editing === t.id ? (
+                  {editing === tool.id ? (
                     <span className="tool-edit">
                       <input
                         value={editPath}
                         onChange={(e) => setEditPath(e.target.value)}
-                        placeholder="/percorso/eseguibile"
+                        placeholder={t("tools.pathPlaceholder")}
                         autoFocus
                       />
-                      <button onClick={() => saveOverride(t.id, editPath)}>Salva</button>
-                      {t.source === "userConfig" && (
-                        <button onClick={() => saveOverride(t.id, null)}>Auto</button>
+                      <button onClick={() => saveOverride(tool.id, editPath)}>
+                        {t("common.save")}
+                      </button>
+                      {tool.source === "userConfig" && (
+                        <button onClick={() => saveOverride(tool.id, null)}>
+                          {t("tools.auto")}
+                        </button>
                       )}
                       <button onClick={() => setEditing(null)}>✕</button>
                     </span>
                   ) : (
                     <>
-                      {t.found && LAUNCHABLE.has(t.id) && (
-                        <button className="small" onClick={() => launch(t.id)}>
-                          Apri
+                      {tool.found && LAUNCHABLE.has(tool.id) && (
+                        <button className="small" onClick={() => launch(tool.id)}>
+                          {t("common.open")}
                         </button>
                       )}{" "}
                       <button
                         className="small"
                         onClick={() => {
-                          setEditing(t.id);
-                          setEditPath(t.path ?? "");
+                          setEditing(tool.id);
+                          setEditPath(tool.path ?? "");
                         }}
                       >
-                        Path…
+                        {t("tools.pathBtn")}
                       </button>
                     </>
                   )}

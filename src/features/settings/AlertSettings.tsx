@@ -1,115 +1,116 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { Toggle } from "../../components/Toggle";
 import type { AlertThresholds } from "../../lib/types";
 
 export function AlertSettings() {
-  const [t, setT] = useState<AlertThresholds | null>(null);
+  const { t } = useTranslation();
+  const [cfg, setCfg] = useState<AlertThresholds | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api<AlertThresholds>("/api/alerts/config").then((r) => {
-      if (r.ok && typeof r.data.cpuPct === "number") setT(r.data);
+      if (r.ok && typeof r.data.cpuPct === "number") setCfg(r.data);
     });
   }, []);
 
   const save = async (next: AlertThresholds) => {
-    const prev = t;
-    setT(next);
+    const prev = cfg;
+    setCfg(next);
     setError(null);
     const r = await post<AlertThresholds>("/api/alerts/config", next);
     if (r.ok) {
-      setT(r.data);
+      setCfg(r.data);
       setSaved(true);
       setTimeout(() => setSaved(false), 1200);
     } else {
-      if (prev) setT(prev);
+      if (prev) setCfg(prev);
       setError(r.error.message);
     }
   };
 
   return (
     <section>
-      <h3>Alert {saved && <span className="badge badge-ok">salvato</span>}</h3>
+      <h3>
+        {t("alerts.title")} {saved && <span className="badge badge-ok">{t("alerts.saved")}</span>}
+      </h3>
       {error && <div className="banner banner-error">{error}</div>}
-      {!t && <div className="empty">Caricamento…</div>}
-      {t && (
+      {!cfg && <div className="empty">{t("common.loading")}</div>}
+      {cfg && (
         <div className="alert-settings">
           <label className="form-row alert-field">
-            <span>CPU sostenuta oltre</span>
+            <span>{t("alerts.cpuOver")}</span>
             <input
               type="number"
               min={10}
               max={100}
-              value={t.cpuPct}
-              onChange={(e) => save({ ...t, cpuPct: Number(e.target.value) })}
+              value={cfg.cpuPct}
+              onChange={(e) => save({ ...cfg, cpuPct: Number(e.target.value) })}
             />
-            <span className="dim">% per &gt;60s</span>
+            <span className="dim">{t("alerts.cpuUnit")}</span>
           </label>
 
           <label className="form-row alert-field">
-            <span>RAM oltre</span>
+            <span>{t("alerts.ramOver")}</span>
             <input
               type="number"
               min={10}
               max={100}
-              value={t.memPct}
-              onChange={(e) => save({ ...t, memPct: Number(e.target.value) })}
+              value={cfg.memPct}
+              onChange={(e) => save({ ...cfg, memPct: Number(e.target.value) })}
             />
-            <span className="dim">%</span>
+            <span className="dim">{t("alerts.pctUnit")}</span>
           </label>
 
           <div className="setting-row">
             <div className="setting-text">
-              <div className="setting-title">Temperatura alta</div>
-              <div className="hint">
-                Avvisa quando un sensore supera la soglia (solo dove la piattaforma espone le
-                temperature).
-              </div>
+              <div className="setting-title">{t("alerts.highTemp")}</div>
+              <div className="hint">{t("alerts.highTempHint")}</div>
             </div>
             <Toggle
-              checked={t.tempEnabled}
-              onChange={(v) => save({ ...t, tempEnabled: v })}
-              label="Alert temperatura"
+              checked={cfg.tempEnabled}
+              onChange={(v) => save({ ...cfg, tempEnabled: v })}
+              label={t("alerts.tempAlertLabel")}
             />
           </div>
-          {t.tempEnabled && (
+          {cfg.tempEnabled && (
             <label className="form-row alert-field">
-              <span>Soglia temperatura</span>
+              <span>{t("alerts.tempThreshold")}</span>
               <input
                 type="number"
                 min={30}
                 max={120}
-                value={t.tempC}
-                onChange={(e) => save({ ...t, tempC: Number(e.target.value) })}
+                value={cfg.tempC}
+                onChange={(e) => save({ ...cfg, tempC: Number(e.target.value) })}
               />
-              <span className="dim">°C</span>
+              <span className="dim">{t("alerts.tempUnit")}</span>
             </label>
           )}
 
           <div className="setting-row">
             <div className="setting-text">
-              <div className="setting-title">Batteria scarica</div>
-              <div className="hint">Avvisa quando la batteria scende sotto la soglia e non è in carica.</div>
+              <div className="setting-title">{t("alerts.lowBattery")}</div>
+              <div className="hint">{t("alerts.lowBatteryHint")}</div>
             </div>
             <Toggle
-              checked={t.batteryEnabled}
-              onChange={(v) => save({ ...t, batteryEnabled: v })}
-              label="Alert batteria"
+              checked={cfg.batteryEnabled}
+              onChange={(v) => save({ ...cfg, batteryEnabled: v })}
+              label={t("alerts.batteryAlertLabel")}
             />
           </div>
-          {t.batteryEnabled && (
+          {cfg.batteryEnabled && (
             <label className="form-row alert-field">
-              <span>Soglia batteria</span>
+              <span>{t("alerts.batteryThreshold")}</span>
               <input
                 type="number"
                 min={1}
                 max={100}
-                value={t.batteryPct}
-                onChange={(e) => save({ ...t, batteryPct: Number(e.target.value) })}
+                value={cfg.batteryPct}
+                onChange={(e) => save({ ...cfg, batteryPct: Number(e.target.value) })}
               />
-              <span className="dim">%</span>
+              <span className="dim">{t("alerts.pctUnit")}</span>
             </label>
           )}
         </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { Modal } from "../../components/Modal";
 import { post } from "../../lib/api";
 import { useSubmit } from "../../lib/useSubmit";
@@ -17,6 +18,7 @@ export function DeleteBranchDialog({
   path: string;
   onClose: (branches: GitBranch[] | null) => void;
 }) {
+  const { t } = useTranslation();
   const hasRemote = !!branch.remoteRef;
   const [alsoRemote, setAlsoRemote] = useState(false);
   const [confirmRemote, setConfirmRemote] = useState(false);
@@ -43,18 +45,18 @@ export function DeleteBranchDialog({
 
   return (
     <Modal
-      title={`Elimina branch «${branch.name}»`}
+      title={t("projects.deleteBranch.title", { name: branch.name })}
       onCancel={() => onClose(null)}
       error={needForce ? null : error}
       busy={busy}
       confirm={{
         label: busy
-          ? "Elimino…"
+          ? t("projects.deleteBranch.deleting")
           : needForce
-            ? "Forza eliminazione"
+            ? t("projects.deleteBranch.forceDelete")
             : alsoRemote
-              ? "Elimina locale e remoto"
-              : "Elimina",
+              ? t("projects.deleteBranch.deleteLocalRemote")
+              : t("common.delete"),
         onClick: () => submit(needForce),
         danger: true,
         disabled: blocked,
@@ -62,7 +64,7 @@ export function DeleteBranchDialog({
     >
       {hasRemote ? (
         <>
-          <p className="dim">Questo branch esiste anche sul remoto ({branch.remoteRef}).</p>
+          <p className="dim">{t("projects.deleteBranch.alsoOnRemote", { ref: branch.remoteRef })}</p>
           <label className="radio-row">
             <input
               type="radio"
@@ -73,7 +75,7 @@ export function DeleteBranchDialog({
                 setConfirmRemote(false);
               }}
             />
-            Elimina solo il branch <strong>locale</strong>
+            <Trans i18nKey="projects.deleteBranch.onlyLocal" components={{ b: <strong /> }} />
           </label>
           <label className="radio-row">
             <input
@@ -82,31 +84,33 @@ export function DeleteBranchDialog({
               checked={alsoRemote}
               onChange={() => setAlsoRemote(true)}
             />
-            Elimina <strong>anche dal remoto</strong> ({branch.remoteRef})
+            <Trans
+              i18nKey="projects.deleteBranch.alsoRemote"
+              values={{ ref: branch.remoteRef }}
+              components={{ b: <strong /> }}
+            />
           </label>
 
           {alsoRemote && (
             <div className="banner banner-error delete-remote-confirm">
-              ⚠ L'eliminazione dal remoto è irreversibile e visibile a tutti.
+              {t("projects.deleteBranch.remoteWarn")}
               <label className="checkbox">
                 <input
                   type="checkbox"
                   checked={confirmRemote}
                   onChange={(e) => setConfirmRemote(e.target.checked)}
                 />
-                Confermo di voler eliminare anche il branch remoto
+                {t("projects.deleteBranch.confirmRemote")}
               </label>
             </div>
           )}
         </>
       ) : (
-        <p className="dim">Il branch locale «{branch.name}» verrà eliminato.</p>
+        <p className="dim">{t("projects.deleteBranch.localWillDelete", { name: branch.name })}</p>
       )}
 
       {needForce && (
-        <div className="banner banner-warn">
-          Il branch non è stato unito: forzando l'eliminazione perderai i commit non mergiati.
-        </div>
+        <div className="banner banner-warn">{t("projects.deleteBranch.notMerged")}</div>
       )}
     </Modal>
   );

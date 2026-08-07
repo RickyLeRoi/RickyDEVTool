@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ws } from "../../lib/ws";
 import { API_BASE, post } from "../../lib/api";
 import { usePortsStore } from "../../stores/portsStore";
@@ -24,26 +25,59 @@ const KNOWN_LABELS: Record<string, string> = {
   chrome: "chrome",
 };
 
+type Grouping = "port" | "process";
+const GROUP_KEY = "rdt-ports-group";
+
+function initialGrouping(): Grouping {
+  return localStorage.getItem(GROUP_KEY) === "process" ? "process" : "port";
+}
+
+function openPortInBrowser(port: number) {
+  const base = API_BASE || window.location.origin;
+  const hostname = new URL(base).hostname;
+  const host = hostname === "127.0.0.1" ? "localhost" : hostname;
+  const url = `http://${host}:${port}`;
+  if ("__TAURI_INTERNALS__" in window) {
+    post("/api/system/open-url", { url });
+  } else {
+    window.open(url, "_blank");
+  }
+}
+
 function AppBadge({ app }: { app: string | null }) {
   if (!app) return null;
   return <span className="badge badge-app">{KNOWN_LABELS[app] ?? app}</span>;
 }
 
+interface ProcessPorts {
+  pid: number;
+  proc: PortProcess;
+  ports: PortEntry[];
+  hasZombie: boolean;
+}
+
+function groupByProcess(ports: PortEntry[]): ProcessPorts[] {
+  const map = new Map<number, ProcessPorts>();
+  for (const entry of ports) {
+    for (const p of entry.processes) {
+      let g = map.get(p.pid);
+      if (!g) {
+        g = { pid: p.pid, proc: p, ports: [], hasZombie: false };
+        map.set(p.pid, g);
+      }
+      g.ports.push(entry);
+      if (p.zombie) g.hasZombie = true;
+    }
+  }
+  return [...map.values()].sort(
+    (a, b) => a.proc.name.localeCompare(b.proc.name) || a.pid - b.pid,
+  );
+}
+
 function PortRow({ entry }: { entry: PortEntry }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [killing, setKilling] = useState<PortProcess | null>(null);
-
-  const openInBrowser = () => {
-    const base = API_BASE || window.location.origin;
-    const hostname = new URL(base).hostname;
-    const host = hostname === "127.0.0.1" ? "localhost" : hostname;
-    const url = `http://${host}:${entry.port}`;
-    if ("__TAURI_INTERNALS__" in window) {
-      post("/api/system/open-url", { url });
-    } else {
-      window.open(url, "_blank");
-    }
-  };
 
   return (
     <>
@@ -57,11 +91,8 @@ function PortRow({ entry }: { entry: PortEntry }) {
               {p.name}
               <AppBadge app={p.knownApp} />
               {p.zombie && (
-                <span
-                  className="badge badge-warn"
-                  title="Porta zombie: il processo che l'ha avviata non è più attivo (probabile dev server rimasto appeso)."
-                >
-                  zombie
+                <span className="badge badge-warn" title={t("ports.zombieTitle")}>
+                  {t("ports.zombie")}
                 </span>
               )}
             </span>
@@ -74,9 +105,11 @@ function PortRow({ entry }: { entry: PortEntry }) {
           <td colSpan={5}>
             <div className="port-actions">
               <button onClick={() => navigator.clipboard.writeText(`localhost:${entry.port}`)}>
-                Copia localhost:{entry.port}
+                {t("ports.copyLocalhost", { port: entry.port })}
               </button>
-              <button onClick={openInBrowser}>Apri nel browser</button>
+              <button onClick={() => openPortInBrowser(entry.port)}>
+                {t("common.openInBrowser")}
+              </button>
             </div>
             <table className="proc-table inner">
               <tbody>
@@ -86,22 +119,19 @@ function PortRow({ entry }: { entry: PortEntry }) {
                       {p.name}
                       <AppBadge app={p.knownApp} />
                       {p.killProtection === "typed-confirm" && (
-                        <span className="badge badge-warn">protetto</span>
+                        <span className="badge badge-warn">{t("ports.protected")}</span>
                       )}
                       {p.zombie && (
-                        <span
-                          className="badge badge-warn"
-                          title="Porta zombie: il processo padre non è più attivo. Probabile dev server orfano da terminare."
-                        >
-                          zombie
+                        <span className="badge badge-warn" title={t("ports.zombieTitleDetail")}>
+                          {t("ports.zombie")}
                         </span>
                       )}
                     </td>
                     <td className="num">PID {p.pid}</td>
-                    <td>{p.user ?? "—"}</td>
+                    <td>{p.user ?? t("common.none")}</td>
                     <td className="num">
                       <button className="danger small" onClick={() => setKilling(p)}>
-                        Kill
+                        {t("ports.kill")}
                       </button>
                     </td>
                   </tr>
@@ -116,8 +146,88 @@ function PortRow({ entry }: { entry: PortEntry }) {
   );
 }
 
+function ProcessRow({ group }: { group: ProcessPorts }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const [killing, setKilling] = useState<PortProcess | null>(null);
+  const p = group.proc;
+
+  return (
+    <>
+      <tr className="port-row" onClick={() => setExpanded(!expanded)} title={p.exePath ?? undefined}>
+        <td>
+          {p.name}
+          <AppBadge app={p.knownApp} />
+          {p.killProtection === "typed-confirm" && (
+            <span className="badge badge-warn">{t("ports.protected")}</span>
+          )}
+          {group.hasZombie && (
+            <span className="badge badge-warn" title={t("ports.zombieTitleDetail")}>
+              {t("ports.zombie")}
+            </span>
+          )}
+        </td>
+        <td className="num">PID {p.pid}</td>
+        <td>{p.user ?? t("common.none")}</td>
+        <td>
+          {group.ports.map((entry) => (
+            <span key={`${entry.protocol}-${entry.port}`} className="proc-chip">
+              {entry.port}
+            </span>
+          ))}
+        </td>
+        <td className="num dim">{expanded ? "▾" : "▸"}</td>
+      </tr>
+      {expanded && (
+        <tr className="port-detail">
+          <td colSpan={5}>
+            <table className="proc-table inner">
+              <tbody>
+                {group.ports.map((entry) => (
+                  <tr key={`${entry.protocol}-${entry.port}`}>
+                    <td className="num port-number">{entry.port}</td>
+                    <td>{entry.protocol}</td>
+                    <td className="dim">{entry.addresses.join(", ")}</td>
+                    <td className="num">
+                      <div className="port-actions">
+                        <button
+                          onClick={() =>
+                            navigator.clipboard.writeText(`localhost:${entry.port}`)
+                          }
+                        >
+                          {t("ports.copyLocalhost", { port: entry.port })}
+                        </button>
+                        <button onClick={() => openPortInBrowser(entry.port)}>
+                          {t("common.openInBrowser")}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="port-actions">
+              <button className="danger small" onClick={() => setKilling(p)}>
+                {t("ports.kill")}
+              </button>
+            </div>
+          </td>
+        </tr>
+      )}
+      {killing && <KillDialog process={killing} onClose={() => setKilling(null)} />}
+    </>
+  );
+}
+
 export function Ports() {
+  const { t } = useTranslation();
   const { scan, error, setScan, setError } = usePortsStore();
+  const [grouping, setGrouping] = useState<Grouping>(initialGrouping);
+
+  const chooseGrouping = (g: Grouping) => {
+    localStorage.setItem(GROUP_KEY, g);
+    setGrouping(g);
+  };
 
   useEffect(() => {
     return ws.subscribe("ports", (event) => {
@@ -127,40 +237,82 @@ export function Ports() {
     });
   }, [setScan, setError]);
 
+  const processes = useMemo(
+    () => (scan ? groupByProcess(scan.ports) : []),
+    [scan],
+  );
+
   return (
     <div>
       <div className="section-header">
         <h2>
-          Porte in ascolto
-          <span className="live-dot" title="monitoraggio attivo" />
+          {t("ports.title")}
+          <span className="live-dot" title={t("ports.live")} />
         </h2>
         {scan && (
           <span className="dim">
-            {scan.ports.length} porte · {scan.hiddenSystem} di sistema nascoste
+            {t("ports.summary", { count: scan.ports.length, hidden: scan.hiddenSystem })}
           </span>
         )}
       </div>
 
-      {error && <div className="banner banner-error">Errore scansione porte: {error}</div>}
-      {!scan && !error && <div className="empty">Scansione in corso…</div>}
+      <div className="ports-toolbar">
+        <span className="dim">{t("ports.groupBy")}</span>
+        <div className="segmented">
+          <button
+            className={grouping === "port" ? "active" : ""}
+            onClick={() => chooseGrouping("port")}
+          >
+            {t("ports.groupByPort")}
+          </button>
+          <button
+            className={grouping === "process" ? "active" : ""}
+            onClick={() => chooseGrouping("process")}
+          >
+            {t("ports.groupByProcess")}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="banner banner-error">{t("ports.scanError", { message: error })}</div>}
+      {!scan && !error && <div className="empty">{t("ports.scanning")}</div>}
       {scan && scan.ports.length === 0 && (
-        <div className="empty">Nessuna porta non di sistema in ascolto.</div>
+        <div className="empty">{t("ports.emptyNonSystem")}</div>
       )}
 
-      {scan && scan.ports.length > 0 && (
+      {scan && scan.ports.length > 0 && grouping === "port" && (
         <table className="proc-table">
           <thead>
             <tr>
-              <th className="num">Porta</th>
-              <th>Proto</th>
-              <th>Bind</th>
-              <th>Processi</th>
+              <th className="num">{t("ports.colPort")}</th>
+              <th>{t("ports.colProto")}</th>
+              <th>{t("ports.colBind")}</th>
+              <th>{t("ports.colProcesses")}</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {scan.ports.map((entry) => (
               <PortRow key={`${entry.protocol}-${entry.port}`} entry={entry} />
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {scan && scan.ports.length > 0 && grouping === "process" && (
+        <table className="proc-table">
+          <thead>
+            <tr>
+              <th>{t("ports.colProcess")}</th>
+              <th className="num">PID</th>
+              <th>{t("ports.colUser")}</th>
+              <th>{t("ports.colPorts")}</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {processes.map((group) => (
+              <ProcessRow key={group.pid} group={group} />
             ))}
           </tbody>
         </table>

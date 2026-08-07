@@ -1,25 +1,28 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { api, post } from "../../lib/api";
 import { BranchPicker } from "./BranchPicker";
 import { CommitList } from "./CommitList";
 import type { ApiError, GitRepoInfo, GitWarning } from "../../lib/types";
 
-function warningText(w: GitWarning): string {
+function warningText(w: GitWarning, t: TFunction): string {
   switch (w.kind) {
     case "no-upstream":
-      return "nessun upstream configurato";
+      return t("projects.git.warnNoUpstream");
     case "diverged":
-      return `diverged: ↑${w.ahead} ↓${w.behind}`;
+      return t("projects.git.warnDiverged", { ahead: w.ahead, behind: w.behind });
     case "detached-head":
-      return "detached HEAD";
+      return t("projects.git.warnDetached");
     case "merge-in-progress":
-      return "merge in corso";
+      return t("projects.git.warnMerge");
     case "stale-fetch":
-      return `ultimo fetch ${w.days} giorni fa`;
+      return t("projects.git.warnStaleFetch", { days: w.days });
   }
 }
 
 export function GitPanel({ path }: { path: string }) {
+  const { t } = useTranslation();
   const [info, setInfo] = useState<GitRepoInfo | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState<"fetch" | "pull" | null>(null);
@@ -49,7 +52,7 @@ export function GitPanel({ path }: { path: string }) {
     if (r.ok) {
       setInfo(r.data);
       setError(null);
-      setSummary("Fetch completato");
+      setSummary(t("projects.git.fetchDone"));
     } else setError(r.error);
   };
 
@@ -61,20 +64,20 @@ export function GitPanel({ path }: { path: string }) {
     if (r.ok) {
       setInfo(r.data.info);
       setError(null);
-      setSummary(r.data.summary || "Pull completato");
+      setSummary(r.data.summary || t("projects.git.pullDone"));
     } else setError(r.error);
   };
 
-  if (!info && !error) return <div className="empty">Leggo lo stato git…</div>;
+  if (!info && !error) return <div className="empty">{t("projects.git.reading")}</div>;
 
   return (
     <div className="git-panel">
-      <h3>Git</h3>
+      <h3>{t("projects.git.title")}</h3>
       {info && (
         <>
           <div className="git-status-line">
             <span className="badge badge-branch">
-              {info.currentBranch ?? `detached @ ${info.detachedAt ?? "?"}`}
+              {info.currentBranch ?? t("projects.git.detachedAt", { at: info.detachedAt ?? "?" })}
             </span>
             {info.ahead !== null && (
               <span className="dim">
@@ -82,29 +85,29 @@ export function GitPanel({ path }: { path: string }) {
               </span>
             )}
             {info.dirty ? (
-              <span className="badge badge-warn">● {info.dirtyFiles} file modificati</span>
+              <span className="badge badge-warn">{t("projects.git.dirtyFiles", { count: info.dirtyFiles })}</span>
             ) : (
-              <span className="badge badge-ok">pulito</span>
+              <span className="badge badge-ok">{t("projects.git.clean")}</span>
             )}
           </div>
           {info.warnings.length > 0 && (
             <div className="git-warnings">
               {info.warnings.map((w, i) => (
                 <span key={i} className="badge badge-warn">
-                  ⚠ {warningText(w)}
+                  ⚠ {warningText(w, t)}
                 </span>
               ))}
             </div>
           )}
           <div className="git-actions">
             <button onClick={doFetch} disabled={busy !== null}>
-              {busy === "fetch" ? "Fetch…" : "Fetch"}
+              {busy === "fetch" ? t("projects.git.fetching") : t("projects.git.fetch")}
             </button>
             <button onClick={doPull} disabled={busy !== null || info.dirty}>
-              {busy === "pull" ? "Pull…" : "Pull origin"}
+              {busy === "pull" ? t("projects.git.pulling") : t("projects.git.pull")}
             </button>
             {info.dirty && (
-              <span className="dim">pull disabilitato: working tree non pulito</span>
+              <span className="dim">{t("projects.git.pullDisabled")}</span>
             )}
           </div>
           <BranchPicker
@@ -115,7 +118,11 @@ export function GitPanel({ path }: { path: string }) {
             onCheckout={(updated) => {
               setInfo(updated);
               setCommitsRef(null);
-              setSummary(`Checkout su ${updated.currentBranch ?? "detached"}`);
+              setSummary(
+                t("projects.git.checkoutTo", {
+                  branch: updated.currentBranch ?? t("projects.git.detached"),
+                }),
+              );
             }}
           />
           <CommitList
@@ -127,8 +134,8 @@ export function GitPanel({ path }: { path: string }) {
               setCommitsRef(null);
               setSummary(
                 updated.currentBranch
-                  ? `Checkout su ${updated.currentBranch}`
-                  : `Detached HEAD @ ${updated.detachedAt ?? "?"}`,
+                  ? t("projects.git.checkoutTo", { branch: updated.currentBranch })
+                  : t("projects.git.detachedAt", { at: updated.detachedAt ?? "?" }),
               );
             }}
           />

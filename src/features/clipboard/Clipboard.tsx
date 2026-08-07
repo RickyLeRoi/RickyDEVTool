@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post, API_BASE } from "../../lib/api";
 import { getDeviceName } from "../../lib/device";
+import { getLang } from "../../lib/i18n";
 import { useDropStore } from "../../stores/dropStore";
 import type { ClipboardHistory, ClipEntry } from "../../lib/types";
 
@@ -8,7 +10,7 @@ const REFRESH_MS = 2000;
 const PREVIEW_CHARS = 280;
 
 function fmtTime(ms: number) {
-  return new Date(ms).toLocaleTimeString("it-IT", {
+  return new Date(ms).toLocaleTimeString(getLang(), {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -27,6 +29,7 @@ function blobUrl(id: number, index?: number) {
 }
 
 function TextBody({ entry }: { entry: ClipEntry }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const long = entry.text.length > PREVIEW_CHARS;
   const shown = expanded || !long ? entry.text : entry.text.slice(0, PREVIEW_CHARS) + "…";
@@ -37,7 +40,7 @@ function TextBody({ entry }: { entry: ClipEntry }) {
       </pre>
       {long && (
         <button className="small ghost clip-expand" onClick={() => setExpanded(!expanded)}>
-          {expanded ? "comprimi" : `mostra tutto (${entry.text.length} caratteri)`}
+          {expanded ? t("tool.clipboard.collapse") : t("tool.clipboard.showAll", { count: entry.text.length })}
         </button>
       )}
     </>
@@ -45,6 +48,7 @@ function TextBody({ entry }: { entry: ClipEntry }) {
 }
 
 function ImageBody({ entry }: { entry: ClipEntry }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="clip-media">
@@ -52,7 +56,7 @@ function ImageBody({ entry }: { entry: ClipEntry }) {
         className={`clip-image ${expanded ? "expanded" : ""}`}
         src={blobUrl(entry.id)}
         alt={entry.text}
-        title={expanded ? "Riduci" : "Ingrandisci"}
+        title={expanded ? t("tool.clipboard.reduce") : t("tool.clipboard.enlarge")}
         onClick={() => setExpanded(!expanded)}
       />
     </div>
@@ -60,6 +64,7 @@ function ImageBody({ entry }: { entry: ClipEntry }) {
 }
 
 function FilesBody({ entry }: { entry: ClipEntry }) {
+  const { t } = useTranslation();
   const files = entry.files ?? [];
   return (
     <ul className="clip-files">
@@ -74,11 +79,11 @@ function FilesBody({ entry }: { entry: ClipEntry }) {
           <span className="dim clip-file-size">{fmtBytes(f.size)}</span>
           {f.hasBlob ? (
             <a className="small ghost" href={blobUrl(entry.id, i)} download={f.name}>
-              Salva
+              {t("common.save")}
             </a>
           ) : (
-            <span className="badge" title="Troppo grande o non copiabile: salvato solo il nome">
-              solo nome
+            <span className="badge" title={t("tool.clipboard.onlyNameTitle")}>
+              {t("tool.clipboard.onlyName")}
             </span>
           )}
         </li>
@@ -94,6 +99,7 @@ function Entry({
   entry: ClipEntry;
   onChanged: (h: ClipboardHistory) => void;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const peers = useDropStore((s) => s.peers);
@@ -134,22 +140,24 @@ function Entry({
       <div className="clip-meta">
         <span className="dim">{fmtTime(entry.copiedAt)}</span>
         {entry.kind !== "text" && (
-          <span className="badge clip-kind">{entry.kind === "image" ? "immagine" : "file"}</span>
+          <span className="badge clip-kind">
+            {entry.kind === "image" ? t("tool.clipboard.image") : t("tool.clipboard.file")}
+          </span>
         )}
         <span className="dim">{fmtBytes(entry.bytes)}</span>
         <span className="clip-actions">
-          <button className="small" onClick={copy} title="Copia negli appunti">
-            {copied ? "Copiato ✓" : "Copia"}
+          <button className="small" onClick={copy} title={t("tool.clipboard.copyTitle")}>
+            {copied ? t("tool.clipboard.copied") : t("tool.clipboard.copy")}
           </button>
           {entry.kind === "text" &&
             peers.length > 0 &&
             (sentTo ? (
-              <span className="badge badge-ok">inviato a {sentTo}</span>
+              <span className="badge badge-ok">{t("tool.clipboard.sentTo", { name: sentTo })}</span>
             ) : (
               <select
                 className="clip-send small"
                 defaultValue=""
-                title="Invia questi appunti a un dispositivo"
+                title={t("tool.clipboard.sendTitle")}
                 onChange={(e) => {
                   const p = peers.find((x) => x.deviceId === e.target.value);
                   if (p) send(p.deviceId, p.name);
@@ -157,7 +165,7 @@ function Entry({
                 }}
               >
                 <option value="" disabled>
-                  Invia a…
+                  {t("tool.clipboard.sendTo")}
                 </option>
                 {peers.map((p) => (
                   <option key={p.deviceId} value={p.deviceId}>
@@ -169,11 +177,11 @@ function Entry({
           <button
             className={`small ${entry.pinned ? "" : "ghost"}`}
             onClick={pin}
-            title={entry.pinned ? "Rimuovi dai fissati" : "Fissa"}
+            title={entry.pinned ? t("tool.clipboard.unpin") : t("tool.clipboard.pin")}
           >
             {entry.pinned ? "📌" : "📍"}
           </button>
-          <button className="small ghost" onClick={del} title="Elimina">
+          <button className="small ghost" onClick={del} title={t("tool.clipboard.deleteTitle")}>
             ✕
           </button>
         </span>
@@ -186,6 +194,7 @@ function Entry({
 }
 
 export function Clipboard() {
+  const { t } = useTranslation();
   const [hist, setHist] = useState<ClipboardHistory | null>(null);
 
   const load = useCallback(async () => {
@@ -215,42 +224,37 @@ export function Clipboard() {
   return (
     <div>
       <div className="section-header">
-        <h2>Storico appunti</h2>
+        <h2>{t("tool.clipboard.title")}</h2>
         {hist && (
           <div className="clip-toolbar">
             <button
               className={hist.enabled ? "small" : "small danger"}
               onClick={toggleEnabled}
-              title={hist.enabled ? "Metti in pausa la cattura" : "Riprendi la cattura"}
+              title={hist.enabled ? t("tool.clipboard.pauseTitle") : t("tool.clipboard.resumeTitle")}
             >
-              {hist.enabled ? "⏸ In pausa" : "▶ Riprendi"}
+              {hist.enabled ? t("tool.clipboard.paused") : t("tool.clipboard.resume")}
             </button>
-            <button className="small" onClick={() => clear(true)} title="Svuota, tieni i fissati">
-              Svuota
+            <button className="small" onClick={() => clear(true)} title={t("tool.clipboard.clearKeepTitle")}>
+              {t("tool.clipboard.clear")}
             </button>
-            <button className="small danger" onClick={() => clear(false)} title="Svuota tutto">
-              Svuota tutto
+            <button className="small danger" onClick={() => clear(false)} title={t("tool.clipboard.clearAllTitle")}>
+              {t("tool.clipboard.clearAll")}
             </button>
           </div>
         )}
       </div>
 
       <p className="hint">
-        Il testo vive solo in memoria; le immagini e i file copiati sono tenuti in una cache
-        temporanea su disco. Tutto sparisce a ogni riavvio: niente è salvato in modo permanente.
-        {hist && !hist.enabled && " — cattura in pausa."}
+        {t("tool.clipboard.intro")}
+        {hist && !hist.enabled && t("tool.clipboard.capturePaused")}
       </p>
 
       {hist && !hist.supported && (
-        <div className="banner banner-error">
-          Gli appunti di sistema non sono accessibili su questo sistema operativo.
-        </div>
+        <div className="banner banner-error">{t("tool.clipboard.notSupported")}</div>
       )}
 
       {hist && hist.supported && hist.entries.length === 0 && (
-        <div className="empty">
-          Nessuna copia registrata: copia qualcosa (testo, un file o un'immagine) e comparirà qui.
-        </div>
+        <div className="empty">{t("tool.clipboard.empty")}</div>
       )}
 
       {hist && hist.entries.length > 0 && (

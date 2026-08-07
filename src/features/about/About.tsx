@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { useUpdateStore } from "../../stores/updateStore";
 
@@ -14,19 +15,22 @@ function openExternal(url: string) {
 }
 
 function UpdateFeedback() {
+  const { t } = useTranslation();
   const phase = useUpdateStore((s) => s.phase);
   const error = useUpdateStore((s) => s.error);
-  if (phase === "checking") return <span className="dim"> Controllo in corso…</span>;
+  if (phase === "checking") return <span className="dim"> {t("about.checking")}</span>;
   if (phase === "uptodate")
-    return <span className="badge badge-ok">Sei alla versione più recente</span>;
+    return <span className="badge badge-ok">{t("about.upToDate")}</span>;
   if (phase === "available")
-    return <span className="badge badge-branch">Aggiornamento disponibile ↑ (vedi banner)</span>;
-  if (phase === "downloading") return <span className="dim"> Download in corso…</span>;
-  if (phase === "error") return <span className="banner-error-text">Errore: {error}</span>;
+    return <span className="badge badge-branch">{t("about.updateAvailable")}</span>;
+  if (phase === "downloading") return <span className="dim"> {t("about.downloading")}</span>;
+  if (phase === "error")
+    return <span className="banner-error-text">{t("about.errorLabel", { message: error })}</span>;
   return null;
 }
 
 export function About() {
+  const { t } = useTranslation();
   const [version, setVersion] = useState<string | null>(null);
   const check = useUpdateStore((s) => s.check);
 
@@ -38,18 +42,18 @@ export function About() {
 
   return (
     <div className="settings about">
-      <h2>About</h2>
+      <h2>{t("nav.about")}</h2>
 
       <section>
         <h3>RickyDEVTool</h3>
         <div className="about-version-row">
           <div>
-            <span className="dim">Versione attuale</span>{" "}
-            <span className="about-version">{version ?? "—"}</span>
+            <span className="dim">{t("about.currentVersion")}</span>{" "}
+            <span className="about-version">{version ?? t("common.none")}</span>
           </div>
           {isTauri && (
             <button className="small" onClick={() => check(true)}>
-              Verifica aggiornamenti
+              {t("about.checkUpdates")}
             </button>
           )}
         </div>
@@ -59,9 +63,9 @@ export function About() {
       </section>
 
       <section>
-        <h3>Autore</h3>
+        <h3>{t("about.author")}</h3>
         <div className="about-line">
-          <span className="dim">Owner</span>
+          <span className="dim">{t("about.owner")}</span>
           <span>{OWNER}</span>
         </div>
         <div className="about-line">
@@ -74,7 +78,7 @@ export function About() {
           </button>
         </div>
         <div className="about-line">
-          <span className="dim">Repository</span>
+          <span className="dim">{t("about.repository")}</span>
           <button className="linklike" onClick={() => openExternal(REPO_URL)}>
             {REPO_URL}
           </button>

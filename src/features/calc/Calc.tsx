@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   evaluate,
   formatBases,
@@ -58,16 +59,17 @@ const KEYS: { label: string; insert?: string; act?: "eq" | "clear" | "back" }[][
   ],
 ];
 
-const BASES: { key: Base; label: string; hint: string }[] = [
-  { key: "dec", label: "DEC", hint: "base 10" },
-  { key: "hex", label: "HEX", hint: "base 16" },
-  { key: "oct", label: "OCT", hint: "base 8" },
-  { key: "bin", label: "BIN", hint: "base 2" },
+const BASES: { key: Base; label: string; base: number }[] = [
+  { key: "dec", label: "DEC", base: 10 },
+  { key: "hex", label: "HEX", base: 16 },
+  { key: "oct", label: "OCT", base: 8 },
+  { key: "bin", label: "BIN", base: 2 },
 ];
 
 const EMPTY_BASES: Record<Base, string> = { dec: "", hex: "", oct: "", bin: "" };
 
 function Calculator() {
+  const { t } = useTranslation();
   const [expr, setExpr] = useState("");
   const [angle, setAngle] = useState<AngleMode>("rad");
   const [history, setHistory] = useState<{ expr: string; result: string }[]>([]);
@@ -77,7 +79,7 @@ function Calculator() {
     try {
       return { value: evaluate(expr, angle), error: null };
     } catch (e) {
-      return { value: null, error: e instanceof Error ? e.message : "errore" };
+      return { value: null, error: e instanceof Error ? e.message : t("tool.calc.error") };
     }
   }, [expr, angle]);
 
@@ -109,7 +111,7 @@ function Calculator() {
               commit();
             }
           }}
-          placeholder="digita o usa i tasti…"
+          placeholder={t("tool.calc.exprPlaceholder")}
           spellCheck={false}
           autoFocus
         />
@@ -126,7 +128,11 @@ function Calculator() {
             </button>
           ))}
         </div>
-        <span className="dim">funzioni trig in {angle === "deg" ? "gradi" : "radianti"}</span>
+        <span className="dim">
+          {t("tool.calc.trigIn", {
+            mode: angle === "deg" ? t("tool.calc.degrees") : t("tool.calc.radians"),
+          })}
+        </span>
       </div>
 
       <div className="calc-keys">
@@ -150,9 +156,9 @@ function Calculator() {
       {history.length > 0 && (
         <div className="calc-history">
           <div className="section-header">
-            <h4>Cronologia</h4>
+            <h4>{t("tool.calc.history")}</h4>
             <button className="small ghost" onClick={() => setHistory([])}>
-              pulisci
+              {t("tool.calc.clear")}
             </button>
           </div>
           <ul>
@@ -177,6 +183,7 @@ function fmtNum(n: number): string {
 }
 
 function BaseConverter() {
+  const { t } = useTranslation();
   const [fields, setFields] = useState<Record<Base, string>>(EMPTY_BASES);
   const [error, setError] = useState<string | null>(null);
 
@@ -189,7 +196,7 @@ function BaseConverter() {
     const value = parseInBase(text, base);
     if (value == null) {
       setFields((f) => ({ ...f, [base]: text }));
-      setError(`"${text}" non è un numero valido in ${base.toUpperCase()}`);
+      setError(t("tool.calc.invalidInBase", { text, base: base.toUpperCase() }));
       return;
     }
     setError(null);
@@ -198,12 +205,12 @@ function BaseConverter() {
 
   return (
     <div className="base-conv">
-      <h4>Convertitore basi</h4>
+      <h4>{t("tool.calc.baseConverter")}</h4>
       <div className="base-grid">
         {BASES.map((b) => (
           <label key={b.key} className="base-field">
             <span className="base-label">
-              {b.label} <span className="dim">{b.hint}</span>
+              {b.label} <span className="dim">{t("tool.calc.baseHint", { n: b.base })}</span>
             </span>
             <input
               value={fields[b.key]}
@@ -216,16 +223,17 @@ function BaseConverter() {
         ))}
       </div>
       {error && <div className="banner banner-error">{error}</div>}
-      <p className="hint">Interi a precisione arbitraria (anche oltre i 64 bit). Prefissi 0x/0o/0b ammessi.</p>
+      <p className="hint">{t("tool.calc.bigIntHint")}</p>
     </div>
   );
 }
 
 export function Calc() {
+  const { t } = useTranslation();
   return (
     <div>
       <div className="section-header">
-        <h2>Calcolatrice</h2>
+        <h2>{t("tool.calc.title")}</h2>
       </div>
       <div className="calc-layout">
         <Calculator />

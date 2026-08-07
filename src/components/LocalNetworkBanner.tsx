@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../lib/api";
 import type { LocalNetworkStatus } from "../lib/types";
 
@@ -6,6 +7,7 @@ const isTauri = "__TAURI_INTERNALS__" in window;
 
 // 20260805 RG il popup di macOS si vede una volta sola.
 export function LocalNetworkBanner({ what }: { what: string }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<LocalNetworkStatus | null>(null);
   const [recheckedStillOff, setRecheckedStillOff] = useState(false);
 
@@ -34,26 +36,21 @@ export function LocalNetworkBanner({ what }: { what: string }) {
   return (
     <div className="banner banner-warn">
       <div>
-        <strong>Permesso Rete locale richiesto.</strong> Per raggiungere {what} su un altro
-        computer, macOS chiede di autorizzare RickyDEVTool in Impostazioni di Sistema → Privacy e
-        sicurezza → Rete locale. Finché non lo concedi il servizio risulta irraggiungibile, anche
-        se è acceso e configurato bene.
+        <Trans i18nKey="localNetwork.required" values={{ what }} components={{ b: <strong /> }} />
         {recheckedStillOff && (
           <div className="banner-subnote">
-            Risulta ancora non concesso. Se l'hai appena attivato, macOS applica il permesso solo
-            dopo aver <strong>riavviato l'app</strong>. Se RickyDEVTool non compare proprio
-            nell'elenco, l'app non è firmata: ricompilala con la versione aggiornata.
+            <Trans i18nKey="localNetwork.stillOff" components={{ b: <strong /> }} />
           </div>
         )}
       </div>
       <div className="banner-actions">
         <button onClick={() => post("/api/system/open-local-network", {})}>
-          Apri Rete locale
+          {t("localNetwork.open")}
         </button>
-        <button onClick={recheck}>Ho attivato, ricontrolla</button>
+        <button onClick={recheck}>{t("localNetwork.recheck")}</button>
         {recheckedStillOff && isTauri && (
           <button className="primary" onClick={relaunchApp}>
-            Riavvia RickyDEVTool
+            {t("localNetwork.relaunch")}
           </button>
         )}
       </div>

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
+import { getLang } from "../../lib/i18n";
 import type { ApiError, GitCommit, GitRepoInfo } from "../../lib/types";
 
 interface CommitListProps {
@@ -12,7 +14,7 @@ interface CommitListProps {
 const PAGE = 50;
 
 function fmtDate(ms: number) {
-  return new Date(ms).toLocaleDateString("it-IT", {
+  return new Date(ms).toLocaleDateString(getLang(), {
     day: "2-digit",
     month: "short",
     year: "2-digit",
@@ -20,6 +22,7 @@ function fmtDate(ms: number) {
 }
 
 export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [commits, setCommits] = useState<GitCommit[] | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -113,17 +116,17 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
   };
 
   const revert = (c: GitCommit) =>
-    runAndReload("/api/git/revert", c, `Creare un commit che annulla «${c.subject}»?`);
+    runAndReload("/api/git/revert", c, t("projects.commits.revertConfirm", { subject: c.subject }));
   const cherryPick = (c: GitCommit) =>
-    runAndReload("/api/git/cherry-pick", c, `Applicare (cherry-pick) «${c.subject}» su HEAD?`);
+    runAndReload("/api/git/cherry-pick", c, t("projects.commits.cherryPickConfirm", { subject: c.subject }));
 
   const rowDisabled = dirty || busy !== null;
-  const dirtyTitle = dirty ? "working tree non pulito" : undefined;
+  const dirtyTitle = dirty ? t("projects.commits.dirtyTree") : undefined;
 
   return (
     <div className="commit-list-wrap">
       <button onClick={toggle}>
-        {open ? "▾" : "▸"} Cronologia commit
+        {open ? "▾" : "▸"} {t("projects.commits.history")}
         {refName && <span className="dim"> — {refName}</span>}
       </button>
       {error && (
@@ -134,14 +137,14 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
       )}
       {open && (
         <div className="commit-list">
-          {!commits && <div className="empty">Carico i commit…</div>}
+          {!commits && <div className="empty">{t("projects.commits.loading")}</div>}
           {commits?.map((c) => (
             <div key={c.hash} className="commit-row">
               <div className="git-row-actions">
                 <button
                   className="git-act"
                   disabled={rowDisabled}
-                  title={dirtyTitle ?? "Checkout (detached HEAD) su questo commit"}
+                  title={dirtyTitle ?? t("projects.commits.checkoutDetached")}
                   onClick={() => checkout(c)}
                 >
                   {busy === c.hash ? "…" : "⤓"}
@@ -149,7 +152,7 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
                 <button
                   className="git-act"
                   disabled={rowDisabled}
-                  title={dirtyTitle ?? "Revert: crea un commit che annulla questo"}
+                  title={dirtyTitle ?? t("projects.commits.revertTitle")}
                   onClick={() => revert(c)}
                 >
                   ↩
@@ -157,7 +160,7 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
                 <button
                   className="git-act"
                   disabled={rowDisabled}
-                  title={dirtyTitle ?? "Cherry-pick: applica questo commit su HEAD"}
+                  title={dirtyTitle ?? t("projects.commits.cherryPickTitle")}
                   onClick={() => cherryPick(c)}
                 >
                   🍒
@@ -178,17 +181,13 @@ export function CommitList({ path, dirty, onCheckout, refName }: CommitListProps
               </div>
             </div>
           ))}
-          {commits && commits.length === 0 && <div className="empty">Nessun commit.</div>}
+          {commits && commits.length === 0 && <div className="empty">{t("projects.commits.none")}</div>}
           {commits && commits.length > 0 && !atEnd && (
             <button className="small ghost commit-more" disabled={loadingMore} onClick={loadMore}>
-              {loadingMore ? "Carico…" : "Carica altri"}
+              {loadingMore ? t("projects.commits.loadingMore") : t("projects.commits.loadMore")}
             </button>
           )}
-          {dirty && (
-            <div className="hint">
-              Azioni git disabilitate: working tree non pulito (committa o stasha prima).
-            </div>
-          )}
+          {dirty && <div className="hint">{t("projects.commits.gitDisabledDirty")}</div>}
         </div>
       )}
     </div>

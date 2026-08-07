@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import { TaskLog } from "../../components/TaskLog";
@@ -15,6 +16,7 @@ const REFRESH_MS = 5000;
 const STAT_INTERVALS = [2000, 3000, 5000, 10000];
 
 function ImagesPanel() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [images, setImages] = useState<DockerImage[] | null>(null);
   const [pruning, setPruning] = useState(false);
@@ -35,20 +37,15 @@ function ImagesPanel() {
   const toggle = () => setOpen((v) => !v);
 
   const prune = async () => {
-    if (
-      !confirm(
-        "Rimuovere tutte le immagini non usate da nessun container (docker image prune -a)?\nLe immagini in uso non vengono toccate.",
-      )
-    )
-      return;
+    if (!confirm(t("docker.pruneConfirm"))) return;
     setPruning(true);
     setMsg(null);
     const r = await post<{ summary: string }>("/api/docker/images/prune", {});
     setPruning(false);
     if (r.ok) {
-      setMsg(r.data.summary?.trim() || "Prune completato.");
+      setMsg(r.data.summary?.trim() || t("docker.pruneDone"));
       fetchImages();
-    } else setMsg(`Errore: ${r.error.message}`);
+    } else setMsg(t("docker.pruneError", { message: r.error.message }));
   };
 
   const unusedCount = images?.filter((i) => i.unused).length ?? 0;
@@ -57,11 +54,16 @@ function ImagesPanel() {
     <div className="docker-images-wrap">
       <div className="docker-images-head">
         <button className="small" onClick={toggle}>
-          {open ? "▾" : "▸"} Immagini{images ? ` (${images.length})` : ""}
+          {open ? "▾" : "▸"} {t("docker.images")}
+          {images ? ` (${images.length})` : ""}
         </button>
         {open && images && images.length > 0 && (
           <button className="small danger" onClick={prune} disabled={pruning}>
-            {pruning ? "Prune…" : unusedCount ? `Prune (${unusedCount} non usate)` : "Prune"}
+            {pruning
+              ? t("docker.pruneBusy")
+              : unusedCount
+                ? t("docker.pruneUnused", { count: unusedCount })
+                : t("docker.prune")}
           </button>
         )}
       </div>
@@ -72,7 +74,7 @@ function ImagesPanel() {
           <tbody>
             {images.length === 0 && (
               <tr>
-                <td className="dim">Nessuna immagine.</td>
+                <td className="dim">{t("docker.noImages")}</td>
               </tr>
             )}
             {images.map((img) => (
@@ -81,8 +83,8 @@ function ImagesPanel() {
                   {img.repository}
                   <span className="dim">:{img.tag}</span>
                   {img.unused && (
-                    <span className="badge badge-warn" title="Non usata da nessun container">
-                      non usata
+                    <span className="badge badge-warn" title={t("docker.imgUnusedTitle")}>
+                      {t("docker.imgUnused")}
                     </span>
                   )}
                 </td>
@@ -123,6 +125,7 @@ function HostBar({
   health: HostHealth;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   const [value, setValue] = useState(host ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,37 +152,33 @@ function HostBar({
   return (
     <div className="docker-host">
       <label className="form-row">
-        <span title="Vuoto = daemon locale">Host Docker</span>
+        <span title={t("docker.hostDockerTitle")}>{t("docker.hostDocker")}</span>
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="ssh://user@host  ·  tcp://ip:2375  (vuoto = locale)"
+          placeholder={t("docker.hostPlaceholder")}
           onKeyDown={(e) => {
             if (e.key === "Enter") save();
           }}
         />
         <button className="small" onClick={save} disabled={saving || !dirty}>
-          {saving ? "Provo…" : "Salva"}
+          {saving ? t("docker.testing") : t("common.save")}
         </button>
       </label>
       {error && <div className="banner banner-error">{error}</div>}
-      {host && <LocalNetworkBanner what="il motore Docker" />}
+      {host && <LocalNetworkBanner what={t("docker.whatEngine")} />}
       <div className={`hint ${health === "down" ? "hint-error" : ""}`}>
-        {health === "missing" ? (
-          "La CLI docker non è installata su questo computer: nemmeno un host remoto può essere contattato senza."
-        ) : host ? (
-          health === "loading" ? (
-            <>Contatto l'host remoto {host}…</>
-          ) : health === "down" ? (
-            <>⚠ Host remoto non raggiungibile: {host}</>
-          ) : (
-            <>✓ Collegato all'host remoto: {host}</>
-          )
-        ) : health === "down" ? (
-          <>⚠ Il daemon Docker locale non risponde.</>
-        ) : (
-          "Daemon locale. Per un Docker su un'altra macchina (es. VM Proxmox) inserisci ssh:// o tcp:// (serve comunque la CLI docker su questo computer)."
-        )}
+        {health === "missing"
+          ? t("docker.missingCli")
+          : host
+            ? health === "loading"
+              ? t("docker.contactingRemote", { host })
+              : health === "down"
+                ? t("docker.remoteUnreachable", { host })
+                : t("docker.remoteConnected", { host })
+            : health === "down"
+              ? t("docker.localDown")
+              : t("docker.localHint")}
       </div>
     </div>
   );
@@ -196,6 +195,7 @@ function ContainerRow({
   onChanged: () => void;
   onLogs: (task: TaskInfo, name: string) => void;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -245,8 +245,8 @@ function ContainerRow({
                 <button
                   className="docker-btn restart"
                   disabled={busy}
-                  title="Restart"
-                  aria-label="Restart"
+                  title={t("docker.restart")}
+                  aria-label={t("docker.restart")}
                   onClick={() => act("restart")}
                 >
                   ↻
@@ -254,8 +254,8 @@ function ContainerRow({
                 <button
                   className="docker-btn stop"
                   disabled={busy}
-                  title="Stop"
-                  aria-label="Stop"
+                  title={t("docker.stop")}
+                  aria-label={t("docker.stop")}
                   onClick={() => act("stop")}
                 >
                   ◼
@@ -265,14 +265,19 @@ function ContainerRow({
               <button
                 className="docker-btn start"
                 disabled={busy}
-                title="Start"
-                aria-label="Start"
+                title={t("docker.start")}
+                aria-label={t("docker.start")}
                 onClick={() => act("start")}
               >
                 ▶
               </button>
             )}
-            <button className="docker-btn logs" title="Logs" aria-label="Logs" onClick={showLogs}>
+            <button
+              className="docker-btn logs"
+              title={t("docker.logsBtn")}
+              aria-label={t("docker.logsBtn")}
+              onClick={showLogs}
+            >
               ≣
             </button>
           </div>
@@ -286,24 +291,24 @@ function ContainerRow({
           <td colSpan={2}>
             <dl className="docker-detail-grid">
               <div>
-                <dt>Immagine</dt>
+                <dt>{t("docker.image")}</dt>
                 <dd className="docker-image" title={container.image}>
                   {container.image}
                 </dd>
               </div>
               <div>
-                <dt>Stato</dt>
+                <dt>{t("docker.statusLabel")}</dt>
                 <dd className="dim">{container.status}</dd>
               </div>
               <div>
-                <dt>Porte</dt>
+                <dt>{t("docker.portsLabel")}</dt>
                 <dd className="dim">
-                  {container.ports.length > 0 ? container.ports.join(", ") : "—"}
+                  {container.ports.length > 0 ? container.ports.join(", ") : t("common.none")}
                 </dd>
               </div>
               {running && stat && (
                 <div>
-                  <dt>Risorse</dt>
+                  <dt>{t("docker.resources")}</dt>
                   <dd className="dim">
                     CPU {stat.cpuPct.toFixed(1)}% · MEM {stat.memPct.toFixed(1)}% ({stat.memUsage})
                   </dd>
@@ -325,6 +330,7 @@ function ContainerRow({
 }
 
 export function Docker() {
+  const { t } = useTranslation();
   const [state, setState] = useState<DockerState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<{ task: TaskInfo; name: string } | null>(null);
@@ -383,7 +389,7 @@ export function Docker() {
   return (
     <div className="docker-tool">
       <div className="docker-toolbar">
-        <div className="segmented" title="Intervallo aggiornamento stats live">
+        <div className="segmented" title={t("docker.statsInterval")}>
           {STAT_INTERVALS.map((ms) => (
             <button
               key={ms}
@@ -395,23 +401,21 @@ export function Docker() {
           ))}
         </div>
         <button className="small" onClick={load}>
-          Aggiorna
+          {t("common.refresh")}
         </button>
       </div>
 
       <HostBar host={state?.host ?? null} health={health} onSaved={load} />
 
       {loadError && (
-        <div className="banner banner-error">
-          Non riesco a leggere lo stato di Docker: {loadError}
-        </div>
+        <div className="banner banner-error">{t("docker.readError", { message: loadError })}</div>
       )}
 
-      {!state && !loadError && <div className="empty">Controllo Docker…</div>}
+      {!state && !loadError && <div className="empty">{t("docker.checking")}</div>}
 
       {state && !state.available && (
         <div className="empty">
-          Docker non è installato (o la CLI <code>docker</code> non è nel PATH).
+          <Trans i18nKey="docker.notInstalled" components={{ code: <code /> }} />
         </div>
       )}
 
@@ -422,11 +426,11 @@ export function Docker() {
           <div>
             {state.daemonDown
               ? state.host
-                ? `Non riesco a contattare il Docker remoto (${state.host}). Verifica che l'host sia raggiungibile e che il daemon sia attivo.`
-                : "Docker è installato ma il demone non risponde. Avvia Docker Desktop (o il tuo runtime) e riprova."
+                ? t("docker.remoteDaemonDown", { host: state.host })
+                : t("docker.localDaemonDown")
               : state.host
-                ? `Non riesco a leggere il Docker remoto (${state.host}).`
-                : "Errore nel contattare Docker."}
+                ? t("docker.remoteReadError", { host: state.host })
+                : t("docker.contactError")}
           </div>
           {state.error && (
             <pre className="docker-error-detail">
@@ -437,15 +441,15 @@ export function Docker() {
       )}
 
       {state && state.available && !state.daemonDown && !state.error && state.containers.length === 0 && (
-        <div className="empty">Nessun container (né attivo né fermo).</div>
+        <div className="empty">{t("docker.noContainers")}</div>
       )}
 
       {state && state.containers.length > 0 && (
         <table className="proc-table docker-table">
           <thead>
             <tr>
-              <th>Container</th>
-              <th className="num">Azioni</th>
+              <th>{t("docker.container")}</th>
+              <th className="num">{t("docker.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -467,10 +471,9 @@ export function Docker() {
       {logsFor && (
         <div className="docker-logs">
           <div className="section-header">
-            <h3>Log · {logsFor.name}</h3>
+            <h3>{t("docker.logs", { name: logsFor.name })}</h3>
             <button className="small" onClick={() => setLogsFor(null)}>
-              {}
-              Chiudi
+              {t("common.close")}
             </button>
           </div>
           <TaskLog key={logsFor.task.id} task={logsFor.task} />

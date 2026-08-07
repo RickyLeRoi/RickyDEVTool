@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import type { ApiError, TailInfo } from "../../lib/types";
@@ -10,6 +11,7 @@ interface TailEvent {
 }
 
 export function LogTail({ projectPath }: { projectPath: string }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState("");
   const [tail, setTail] = useState<TailInfo | null>(null);
@@ -49,7 +51,7 @@ export function LogTail({ projectPath }: { projectPath: string }) {
   return (
     <div className="logtail">
       <button className="link-btn" onClick={() => setOpen(!open)}>
-        {open ? "▾" : "▸"} Segui un log
+        {open ? "▾" : "▸"} {t("projects.logtail.followLog")}
       </button>
       {open && (
         <div className="logtail-body">
@@ -64,23 +66,23 @@ export function LogTail({ projectPath }: { projectPath: string }) {
               <input
                 value={file}
                 onChange={(e) => setFile(e.target.value)}
-                placeholder="es. logs/app.log oppure /var/log/…"
+                placeholder={t("projects.logtail.filePlaceholder")}
               />
-              <button disabled={!file.trim()}>Avvia</button>
+              <button disabled={!file.trim()}>{t("projects.logtail.start")}</button>
             </form>
           ) : (
             <div className="task-log">
               <div className="task-log-header">
                 <span className="dim">{tail.path}</span>
                 <button className="danger small" onClick={stop}>
-                  Stop
+                  {t("projects.logtail.stop")}
                 </button>
               </div>
               <pre ref={boxRef} className="task-log-box">
                 {lines.map((l, i) => (
                   <div key={i}>{l}</div>
                 ))}
-                {lines.length === 0 && <span className="dim">in attesa di nuove righe…</span>}
+                {lines.length === 0 && <span className="dim">{t("projects.logtail.waitingLines")}</span>}
               </pre>
             </div>
           )}

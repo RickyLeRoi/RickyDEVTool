@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, API_BASE, post } from "../../lib/api";
 import { Modal } from "../../components/Modal";
 import { Toggle } from "../../components/Toggle";
@@ -6,25 +7,25 @@ import { AlertSettings } from "./AlertSettings";
 import { AiSettings } from "./AiSettings";
 import { AntiIdlePanel } from "./AntiIdlePanel";
 import { applyTheme, getTheme, type Theme } from "../../lib/theme";
+import { getLang, setLang, LANGS, type Lang } from "../../lib/i18n";
 import { useTrayIntentStore } from "../../stores/trayIntentStore";
 import type { LanInfo, PairedDevice } from "../../lib/types";
 
-const THEMES: { id: Theme; label: string }[] = [
-  { id: "auto", label: "Auto (sistema)" },
-  { id: "light", label: "Chiaro" },
-  { id: "dark", label: "Scuro" },
-];
+const THEMES: Theme[] = ["auto", "light", "dark"];
+const LANG_LABELS: Record<Lang, string> = { it: "Italiano", en: "English" };
 
 export function Settings() {
+  const { t } = useTranslation();
   const [lan, setLan] = useState<LanInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
   const [theme, setTheme] = useState<Theme>(getTheme());
+  const [lang, setLangState] = useState<Lang>(getLang());
   const [hubCode, setHubCode] = useState<string | null>(null);
   const [hubCodeDraft, setHubCodeDraft] = useState("");
   const [hubCodeError, setHubCodeError] = useState<string | null>(null);
   const [devices, setDevices] = useState<PairedDevice[]>([]);
-  // 20260806 ++ RG #Security il QR è un <img>: dopo una rotazione va rifatta la richiesta, non letta la cache.
+  // 20260806 RG il QR è un <img>: dopo una rotazione va rifatta la richiesta, non letta la cache.
   const [qrSeq, setQrSeq] = useState(0);
 
   const loadDevices = () =>
@@ -78,6 +79,11 @@ export function Settings() {
     applyTheme(t, true);
   };
 
+  const chooseLang = (l: Lang) => {
+    setLangState(l);
+    setLang(l);
+  };
+
   const toggleRemote = async (enabled: boolean) => {
     if (!lan) return;
     const r = await post<{ remoteControlEnabled: boolean }>("/api/config/remote-control", {
@@ -88,18 +94,29 @@ export function Settings() {
 
   return (
     <div className="settings">
-      <h2>Impostazioni</h2>
+      <h2>{t("settings.title")}</h2>
 
       <section>
-        <h3>Aspetto</h3>
+        <h3>{t("settings.language")}</h3>
         <div className="segmented">
-          {THEMES.map((t) => (
+          {LANGS.map((l) => (
+            <button key={l} className={lang === l ? "active" : ""} onClick={() => chooseLang(l)}>
+              {LANG_LABELS[l]}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3>{t("theme.appearance")}</h3>
+        <div className="segmented">
+          {THEMES.map((id) => (
             <button
-              key={t.id}
-              className={theme === t.id ? "active" : ""}
-              onClick={() => chooseTheme(t.id)}
+              key={id}
+              className={theme === id ? "active" : ""}
+              onClick={() => chooseTheme(id)}
             >
-              {t.label}
+              {t(`theme.${id}` as const)}
             </button>
           ))}
         </div>
@@ -112,17 +129,17 @@ export function Settings() {
       <AntiIdlePanel />
 
       <section>
-        <h3>Accesso da smartphone (LAN)</h3>
+        <h3>{t("settings.lanSection")}</h3>
         {error && <div className="banner banner-error">{error}</div>}
-        {!lan && !error && <div className="empty">Caricamento…</div>}
+        {!lan && !error && <div className="empty">{t("common.loading")}</div>}
         {lan && (
           <>
             <div className="lan-status">
-              Stato:{" "}
+              {t("settings.lanStatus")}{" "}
               {lan.lanEnabled ? (
-                <span className="badge badge-ok">attivo su porta {lan.port}</span>
+                <span className="badge badge-ok">{t("settings.lanActive", { port: lan.port })}</span>
               ) : (
-                <span className="badge">solo localhost</span>
+                <span className="badge">{t("settings.lanLocalhostOnly")}</span>
               )}
             </div>
             <ul className="lan-urls">
@@ -131,23 +148,21 @@ export function Settings() {
                   <code>{u}</code>
                 </li>
               ))}
-              {lan.urls.length === 0 && <li>Nessun IP LAN rilevato</li>}
+              {lan.urls.length === 0 && <li>{t("settings.noLanIp")}</li>}
             </ul>
 
             {lan.lanEnabled && lan.urls.length > 0 && (
-              <button onClick={() => setShowQr(true)}>Mostra QR di abbinamento</button>
+              <button onClick={() => setShowQr(true)}>{t("settings.showQr")}</button>
             )}
 
             <div className="setting-row">
               <div className="setting-text">
-                <div className="setting-title">Dispositivi abbinati</div>
-                <div className="hint">
-                  Ogni abbinamento è una sessione a sé: revocarne una non tocca le altre.
-                </div>
+                <div className="setting-title">{t("settings.pairedDevices")}</div>
+                <div className="hint">{t("settings.pairedDevicesHint")}</div>
               </div>
             </div>
             {devices.length === 0 ? (
-              <div className="empty">Nessun dispositivo abbinato.</div>
+              <div className="empty">{t("settings.noPairedDevices")}</div>
             ) : (
               <ul className="paired-devices">
                 {devices.map((d) => (
@@ -155,14 +170,18 @@ export function Settings() {
                     <div className="paired-device-text">
                       <strong>{d.name}</strong>
                       <span className="dim">
-                        abbinato il {new Date(d.createdAt).toLocaleDateString()}
+                        {t("settings.pairedOn", {
+                          date: new Date(d.createdAt).toLocaleDateString(getLang()),
+                        })}
                         {d.lastSeen
-                          ? ` · visto ${new Date(d.lastSeen).toLocaleTimeString()}`
-                          : " · mai connesso da questo avvio"}
+                          ? t("settings.lastSeen", {
+                              time: new Date(d.lastSeen).toLocaleTimeString(getLang()),
+                            })
+                          : t("settings.neverSeen")}
                       </span>
                     </div>
                     <button className="ghost" onClick={() => revoke(d)}>
-                      Revoca
+                      {t("settings.revoke")}
                     </button>
                   </li>
                 ))}
@@ -171,17 +190,13 @@ export function Settings() {
 
             <div className="setting-row">
               <div className="setting-text">
-                <div className="setting-title">Controllo remoto</div>
-                <div className="hint">
-                  Consenti azioni (kill, run, git) dai device abbinati. Se spento, il telefono è
-                  in sola lettura. Espulsione e formattazione dischi restano sempre solo da questo
-                  computer.
-                </div>
+                <div className="setting-title">{t("settings.remoteControl")}</div>
+                <div className="hint">{t("settings.remoteControlHint")}</div>
               </div>
               <Toggle
                 checked={lan.remoteControlEnabled}
                 onChange={toggleRemote}
-                label="Controllo remoto"
+                label={t("settings.remoteControl")}
               />
             </div>
           </>
@@ -189,26 +204,22 @@ export function Settings() {
       </section>
 
       <section>
-        <h3>Invio tra i tuoi computer (Drop)</h3>
+        <h3>{t("settings.dropSection")}</h3>
         <p className="hint">
-          Perché due computer si vedano e possano scambiarsi file, devono avere lo{" "}
-          <strong>stesso codice hub</strong>. Senza codice la funzione è spenta e gli altri PC
-          devono abbinarsi come un normale dispositivo LAN.
+          <Trans i18nKey="settings.dropIntro" components={{ b: <strong /> }} />
         </p>
         {hubCodeError && <div className="banner banner-error">{hubCodeError}</div>}
         <div className="setting-row">
           <div className="setting-text">
-            <div className="setting-title">Codice hub</div>
+            <div className="setting-title">{t("settings.hubCode")}</div>
             <div className="hint">
-              {hubCode
-                ? "Copialo e incollalo nelle Impostazioni dell'altro computer."
-                : "Nessun codice impostato: l'invio tra computer è disattivato."}
+              {hubCode ? t("settings.hubCodeHintSet") : t("settings.hubCodeHintUnset")}
             </div>
           </div>
           <input
             className="input-mono"
             value={hubCodeDraft}
-            placeholder="es. k7f2-9m4x-tq81"
+            placeholder={t("settings.hubCodePlaceholder")}
             onChange={(e) => setHubCodeDraft(e.target.value)}
             spellCheck={false}
           />
@@ -218,14 +229,14 @@ export function Settings() {
             disabled={hubCodeDraft === (hubCode ?? "")}
             onClick={() => saveHubCode({ code: hubCodeDraft })}
           >
-            Salva
+            {t("common.save")}
           </button>
           <button className="ghost" onClick={() => saveHubCode({})}>
-            Genera nuovo
+            {t("settings.generateNew")}
           </button>
           {hubCode && (
             <button className="ghost" onClick={() => saveHubCode({ code: "" })}>
-              Disattiva
+              {t("settings.deactivate")}
             </button>
           )}
         </div>
@@ -233,29 +244,25 @@ export function Settings() {
 
       {showQr && (
         <Modal
-          title="Abbina uno smartphone"
+          title={t("settings.qrTitle")}
           onCancel={() => setShowQr(false)}
           className="qr-dialog"
         >
           <img
             className="qr"
             src={`${API_BASE}/api/lan/qr.svg?v=${qrSeq}`}
-            alt="QR di abbinamento"
+            alt={t("settings.qrAlt")}
             width={220}
             height={220}
           />
-          <p className="hint">
-            Scansiona dal telefono: contiene indirizzo e token di abbinamento. Il telefono resta
-            in sola lettura finché non attivi il controllo remoto.
-          </p>
+          <p className="hint">{t("settings.qrHint")}</p>
           <div className="setting-actions">
             <button className="ghost" onClick={rotateToken}>
-              Genera nuovo QR
+              {t("settings.qrRegenerate")}
             </button>
           </div>
           <p className="hint">
-            Rigenerare il QR invalida quello vecchio (utile se ne è girato uno screenshot), ma{" "}
-            <strong>non scollega</strong> i dispositivi già abbinati: per quelli usa Revoca.
+            <Trans i18nKey="settings.qrRegenerateHint" components={{ b: <strong /> }} />
           </p>
         </Modal>
       )}

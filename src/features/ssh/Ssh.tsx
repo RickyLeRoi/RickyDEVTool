@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
 import type { ApiError, SshHost, TaskInfo } from "../../lib/types";
@@ -27,40 +28,41 @@ function HostForm({
   onCancel: () => void;
   busy: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="snippet-form">
       <label className="form-row">
-        <span>Nome</span>
+        <span>{t("ssh.name")}</span>
         <input
           value={draft.name}
           onChange={(e) => onChange({ ...draft, name: e.target.value })}
-          placeholder="es. Homelab"
+          placeholder={t("ssh.namePlaceholder")}
         />
       </label>
       <label className="form-row">
-        <span>Host</span>
+        <span>{t("ssh.host")}</span>
         <input
           value={draft.host}
           onChange={(e) => onChange({ ...draft, host: e.target.value })}
-          placeholder="user@host, host o alias ssh"
+          placeholder={t("ssh.hostPlaceholder")}
         />
       </label>
       <label className="form-row">
-        <span title="Proposto nel campo comando">Comando iniziale</span>
+        <span title={t("ssh.initialCommandTitle")}>{t("ssh.initialCommand")}</span>
         <input
           value={draft.defaultCommand}
           onChange={(e) => onChange({ ...draft, defaultCommand: e.target.value })}
-          placeholder="opzionale — es. uptime"
+          placeholder={t("ssh.initialCommandPlaceholder")}
         />
       </label>
       <div className="dialog-actions">
-        <button onClick={onCancel}>Annulla</button>
+        <button onClick={onCancel}>{t("common.cancel")}</button>
         <button
           className="primary"
           onClick={onSave}
           disabled={busy || !draft.name.trim() || !draft.host.trim()}
         >
-          {busy ? "Salvo…" : "Salva"}
+          {busy ? t("ssh.saving") : t("common.save")}
         </button>
       </div>
     </div>
@@ -78,6 +80,7 @@ function HostCard({
   onDelete: () => void;
   onRun: (command: string) => void;
 }) {
+  const { t } = useTranslation();
   const [command, setCommand] = useState(host.defaultCommand || "uptime");
 
   return (
@@ -96,10 +99,10 @@ function HostCard({
           <input
             value={command}
             onChange={(e) => setCommand(e.target.value)}
-            placeholder="comando da eseguire via ssh"
+            placeholder={t("ssh.commandPlaceholder")}
           />
           <button className="primary" disabled={!command.trim()}>
-            ▶ Esegui
+            {t("ssh.run")}
           </button>
         </form>
         <div className="ssh-presets">
@@ -112,10 +115,10 @@ function HostCard({
       </div>
       <div className="snippet-actions">
         <button className="small" onClick={onEdit}>
-          Modifica
+          {t("common.edit")}
         </button>
         <button className="small danger" onClick={onDelete}>
-          Elimina
+          {t("common.delete")}
         </button>
       </div>
     </div>
@@ -123,6 +126,7 @@ function HostCard({
 }
 
 export function Ssh() {
+  const { t } = useTranslation();
   const [hosts, setHosts] = useState<SshHost[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -151,7 +155,7 @@ export function Ssh() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm("Eliminare questo host?")) return;
+    if (!confirm(t("ssh.deleteConfirm"))) return;
     const r = await post<{ hosts: SshHost[] }>("/api/ssh/hosts/delete", { id });
     if (r.ok) setHosts(r.data.hosts);
   };
@@ -166,17 +170,15 @@ export function Ssh() {
   return (
     <div className="ssh">
       <div className="section-header">
-        <h2>SSH</h2>
+        <h2>{t("nav.ssh")}</h2>
         {!draft && (
           <button className="small" onClick={() => setDraft({ ...EMPTY })}>
-            + Nuovo host
+            {t("ssh.newHost")}
           </button>
         )}
       </div>
       <p className="hint">
-        Esegue comandi non interattivi sugli host salvati (uptime, df, restart di servizi, docker
-        ps…), con output in streaming. Serve accesso <strong>a chiave senza password</strong>
-        (BatchMode), come per il Docker remoto <code>ssh://</code>.
+        <Trans i18nKey="ssh.intro" components={{ b: <strong />, code: <code /> }} />
       </p>
 
       {error && (
@@ -197,7 +199,7 @@ export function Ssh() {
       )}
 
       {hosts.length === 0 && !draft && (
-        <div className="empty">Nessun host. Aggiungine uno con “+ Nuovo host”.</div>
+        <div className="empty">{t("ssh.empty")}</div>
       )}
 
       <div className="snippet-list">
@@ -215,9 +217,9 @@ export function Ssh() {
       {task && (
         <div className="snippet-output">
           <div className="section-header">
-            <h3>Output · {task.name}</h3>
+            <h3>{t("ssh.output", { name: task.name })}</h3>
             <button className="small" onClick={() => setTask(null)}>
-              Chiudi
+              {t("common.close")}
             </button>
           </div>
           <TaskLog key={task.info.id} task={task.info} />

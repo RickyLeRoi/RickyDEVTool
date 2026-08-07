@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
 import type { ApiError, HeavyProcessesResult, ProcessGroup } from "../../lib/types";
 
@@ -27,6 +28,7 @@ function fmtMem(bytes: number) {
 }
 
 function GroupRow({ group }: { group: ProcessGroup }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const multi = group.count > 1;
 
@@ -42,11 +44,11 @@ function GroupRow({ group }: { group: ProcessGroup }) {
           {group.knownApp && (
             <span className="badge badge-app">{KNOWN_LABELS[group.knownApp] ?? group.knownApp}</span>
           )}
-          {group.isSystem && <span className="badge">sistema</span>}
-          {multi && <span className="dim"> · {group.count} processi</span>}
+          {group.isSystem && <span className="badge">{t("dashboard.system")}</span>}
+          {multi && <span className="dim"> · {t("dashboard.heavy.procCount", { count: group.count })}</span>}
         </td>
-        <td className="num">{multi ? "—" : group.members[0]?.pid}</td>
-        <td>{multi ? "—" : group.members[0]?.user ?? "—"}</td>
+        <td className="num">{multi ? t("common.none") : group.members[0]?.pid}</td>
+        <td>{multi ? t("common.none") : group.members[0]?.user ?? t("common.none")}</td>
         <td className="num">{group.cpuPct.toFixed(1)}%</td>
         <td className="num">{group.memPct.toFixed(1)}%</td>
         <td className="num">
@@ -62,7 +64,7 @@ function GroupRow({ group }: { group: ProcessGroup }) {
                 {group.members.map((p) => (
                   <tr key={p.pid} title={p.exePath ?? undefined}>
                     <td className="dim">PID {p.pid}</td>
-                    <td>{p.user ?? "—"}</td>
+                    <td>{p.user ?? t("common.none")}</td>
                     <td className="num">{p.cpuPct.toFixed(1)}%</td>
                     <td className="num">{p.memPct.toFixed(1)}%</td>
                     <td className="num">{fmtMem(p.memBytes)}</td>
@@ -78,6 +80,7 @@ function GroupRow({ group }: { group: ProcessGroup }) {
 }
 
 export function HeavyProcesses() {
+  const { t } = useTranslation();
   const [cpuMin, setCpuMin] = useState(20);
   const [memMin, setMemMin] = useState(10);
   const [result, setResult] = useState<HeavyProcessesResult | null>(null);
@@ -98,7 +101,7 @@ export function HeavyProcesses() {
   return (
     <section className="heavy">
       <div className="heavy-header">
-        <h3>Processi pesanti</h3>
+        <h3>{t("dashboard.heavy.title")}</h3>
         <div className="heavy-controls">
           <label>
             CPU &gt;
@@ -123,15 +126,16 @@ export function HeavyProcesses() {
             %
           </label>
           <button onClick={load} disabled={loading}>
-            {loading ? "Campiono…" : result ? "Aggiorna" : "Analizza"}
+            {loading
+              ? t("dashboard.heavy.sampling")
+              : result
+                ? t("common.refresh")
+                : t("dashboard.heavy.analyze")}
           </button>
         </div>
       </div>
 
-      <p className="hint">
-        Le app multi-processo (VS Code, Chrome, Docker…) sono aggregate per nome: la soglia si
-        applica al totale del gruppo, non al singolo processo.
-      </p>
+      <p className="hint">{t("dashboard.heavy.multiProcHint")}</p>
 
       {error && (
         <div className="banner banner-error">
@@ -142,7 +146,10 @@ export function HeavyProcesses() {
 
       {result && result.groups.length === 0 && (
         <div className="empty">
-          Nessun processo sopra soglia ({result.cpuMinPct}% CPU / {result.memMinPct}% RAM).
+          {t("dashboard.heavy.noneAboveThreshold", {
+            cpu: result.cpuMinPct,
+            mem: result.memMinPct,
+          })}
         </div>
       )}
 
@@ -150,9 +157,9 @@ export function HeavyProcesses() {
         <table className="proc-table">
           <thead>
             <tr>
-              <th>Processo</th>
+              <th>{t("dashboard.heavy.colProcess")}</th>
               <th>PID</th>
-              <th>Utente</th>
+              <th>{t("dashboard.heavy.colUser")}</th>
               <th className="num">CPU</th>
               <th className="num">RAM</th>
               <th className="num">Mem</th>

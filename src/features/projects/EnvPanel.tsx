@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { fmtBytes } from "../../lib/format";
 import type { EnvContent, EnvFile } from "../../lib/types";
 
 function EnvValues({ path, file }: { path: string; file: string }) {
+  const { t } = useTranslation();
   const [content, setContent] = useState<EnvContent | null>(null);
   const [reveal, setReveal] = useState(false);
 
@@ -17,12 +19,12 @@ function EnvValues({ path, file }: { path: string; file: string }) {
     );
   }, [path, file]);
 
-  if (!content) return <div className="dim">Lettura…</div>;
+  if (!content) return <div className="dim">{t("projects.env.reading")}</div>;
 
   return (
     <div className="env-values">
       <button className="small" onClick={() => setReveal(!reveal)}>
-        {reveal ? "Nascondi valori" : "Mostra valori"}
+        {reveal ? t("projects.env.hideValues") : t("projects.env.showValues")}
       </button>
       <table className="proc-table">
         <tbody>
@@ -47,6 +49,7 @@ function EnvValues({ path, file }: { path: string; file: string }) {
 }
 
 export function EnvPanel({ path }: { path: string }) {
+  const { t } = useTranslation();
   const [files, setFiles] = useState<EnvFile[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
@@ -68,7 +71,7 @@ export function EnvPanel({ path }: { path: string }) {
 
   return (
     <div className="env-panel">
-      <h3>File .env</h3>
+      <h3>{t("projects.env.title")}</h3>
       <table className="proc-table">
         <tbody>
           {files.map((f) => (
@@ -77,13 +80,13 @@ export function EnvPanel({ path }: { path: string }) {
                 <button className="link-btn" onClick={() => setOpen(open === f.name ? null : f.name)}>
                   {f.name}
                 </button>
-                {f.isActive && <span className="badge badge-ok">attivo</span>}
+                {f.isActive && <span className="badge badge-ok">{t("projects.env.active")}</span>}
               </td>
               <td className="num dim">{fmtBytes(f.sizeBytes)}</td>
               <td className="num">
                 {!f.isActive && f.name !== ".env" && (
-                  <button className="small" onClick={() => activate(f.name)} title="Copia su .env (con backup)">
-                    Attiva
+                  <button className="small" onClick={() => activate(f.name)} title={t("projects.env.activateTitle")}>
+                    {t("projects.env.activate")}
                   </button>
                 )}
               </td>

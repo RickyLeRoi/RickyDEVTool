@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../lib/api";
 import { getDeviceName } from "../lib/device";
 
 type GateState = "checking" | "ok" | "needs-pairing";
 
 export function PairGate({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const [state, setState] = useState<GateState>("checking");
   const [token, setToken] = useState("");
   const [failed, setFailed] = useState(false);
@@ -28,13 +30,13 @@ export function PairGate({ children }: { children: ReactNode }) {
   }, []);
 
   if (state === "checking") {
-    return <div className="fullscreen-msg">Connessione…</div>;
+    return <div className="fullscreen-msg">{t("pairGate.connecting")}</div>;
   }
   if (state === "needs-pairing") {
     return (
       <div className="fullscreen-msg">
-        <h2>Abbina questo dispositivo</h2>
-        <p>Scansiona il QR nelle Impostazioni del desktop, oppure inserisci il token:</p>
+        <h2>{t("pairGate.title")}</h2>
+        <p>{t("pairGate.intro")}</p>
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -49,12 +51,12 @@ export function PairGate({ children }: { children: ReactNode }) {
           <input
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder="token di abbinamento"
+            placeholder={t("pairGate.tokenPlaceholder")}
             autoFocus
           />
-          <button type="submit">Abbina</button>
+          <button type="submit">{t("pairGate.pair")}</button>
         </form>
-        {failed && <p className="banner-error-text">Token non valido.</p>}
+        {failed && <p className="banner-error-text">{t("pairGate.invalidToken")}</p>}
       </div>
     );
   }

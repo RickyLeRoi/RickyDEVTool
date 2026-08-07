@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { useDisksStore } from "../../stores/disksStore";
 import { FormatDialog } from "./FormatDialog";
@@ -14,6 +15,7 @@ async function refreshDisksNow() {
 }
 
 function DiskRow({ disk }: { disk: DiskInfo }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [formatting, setFormatting] = useState(false);
@@ -35,16 +37,16 @@ function DiskRow({ disk }: { disk: DiskInfo }) {
       <div className="disk-head">
         <span className="disk-name">
           {disk.name}
-          {disk.isRemovable && <span className="badge badge-app">rimovibile</span>}
-          {disk.isSystem && <span className="badge">sistema</span>}
+          {disk.isRemovable && <span className="badge badge-app">{t("dashboard.disks.removable")}</span>}
+          {disk.isSystem && <span className="badge">{t("dashboard.system")}</span>}
         </span>
         {disk.isRemovable && !disk.isSystem && (
           <span className="disk-actions">
             <button className="small" onClick={eject} disabled={busy}>
-              Espelli
+              {t("dashboard.disks.eject")}
             </button>
             <button className="small danger" onClick={() => setFormatting(true)} disabled={busy}>
-              Formatta
+              {t("dashboard.disks.format")}
             </button>
           </span>
         )}
@@ -53,7 +55,11 @@ function DiskRow({ disk }: { disk: DiskInfo }) {
         <div className="disk-bar-fill" style={{ width: `${disk.usedPct}%`, background: barColor }} />
       </div>
       <div className="disk-meta">
-        {fmtGb(disk.availableBytes)} GB liberi di {fmtGb(disk.totalBytes)} GB · {disk.fileSystem}
+        {t("dashboard.disks.freeOfTotal", {
+          free: fmtGb(disk.availableBytes),
+          total: fmtGb(disk.totalBytes),
+          fs: disk.fileSystem,
+        })}
       </div>
       {error && (
         <div className="banner banner-error">
@@ -75,13 +81,14 @@ function DiskRow({ disk }: { disk: DiskInfo }) {
 }
 
 export function Disks() {
+  const { t } = useTranslation();
   const disks = useDisksStore((s) => s.disks);
 
   return (
     <section className="disks">
-      <h3>Dischi</h3>
-      {!disks && <div className="empty">Lettura dischi…</div>}
-      {disks && disks.length === 0 && <div className="empty">Nessun disco rilevato.</div>}
+      <h3>{t("dashboard.disks.title")}</h3>
+      {!disks && <div className="empty">{t("dashboard.disks.reading")}</div>}
+      {disks && disks.length === 0 && <div className="empty">{t("dashboard.disks.none")}</div>}
       {disks?.map((d) => (
         <DiskRow key={d.mountPoint} disk={d} />
       ))}

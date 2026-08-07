@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import type { ApiError, TailInfo } from "../../lib/types";
@@ -14,6 +15,7 @@ function baseName(path: string): string {
 }
 
 export function LogViewer() {
+  const { t } = useTranslation();
   const [tails, setTails] = useState<TailInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [path, setPath] = useState("");
@@ -28,7 +30,7 @@ export function LogViewer() {
       const list = r.data.tails ?? [];
       setTails(list);
       setActiveId((cur) => {
-        if (cur && list.some((t) => t.id === cur)) return cur;
+        if (cur && list.some((tail) => tail.id === cur)) return cur;
         return list[0]?.id ?? null;
       });
     }
@@ -49,7 +51,7 @@ export function LogViewer() {
       if (p.event === "line" && p.line !== undefined) {
         setLines((prev) => [...prev.slice(-1999), p.line as string]);
       } else if (p.event === "rotated") {
-        setLines((prev) => [...prev.slice(-1999), "— file ruotato, riparto dall'inizio —"]);
+        setLines((prev) => [...prev.slice(-1999), t("log.rotated")]);
       } else if (p.event === "error" && p.message) {
         setError({ code: "TAIL", message: p.message, retryable: false });
       }
@@ -85,17 +87,17 @@ export function LogViewer() {
   return (
     <div className="logviewer">
       <div className="section-header">
-        <h2>Log</h2>
-        <span className="dim">{tails.length}/5 in ascolto</span>
+        <h2>{t("nav.log")}</h2>
+        <span className="dim">{t("log.listening", { count: tails.length })}</span>
       </div>
 
       <form className="net-form" onSubmit={start}>
         <input
           value={path}
           onChange={(e) => setPath(e.target.value)}
-          placeholder="percorso assoluto del file — es. /var/log/system.log"
+          placeholder={t("log.pathPlaceholder")}
         />
-        <button disabled={busy || !path.trim()}>{busy ? "Avvio…" : "Segui"}</button>
+        <button disabled={busy || !path.trim()}>{busy ? t("log.starting") : t("log.follow")}</button>
       </form>
 
       {error && (
@@ -106,23 +108,21 @@ export function LogViewer() {
       )}
 
       {tails.length === 0 && (
-        <div className="empty">
-          Nessun log seguito. Inserisci il percorso di un file per iniziare il tail -f.
-        </div>
+        <div className="empty">{t("log.none")}</div>
       )}
 
       {tails.length > 0 && (
         <div className="log-tabs">
-          {tails.map((t) => (
+          {tails.map((tail) => (
             <div
-              key={t.id}
-              className={`log-tab ${t.id === activeId ? "active" : ""}`}
-              title={t.path}
+              key={tail.id}
+              className={`log-tab ${tail.id === activeId ? "active" : ""}`}
+              title={tail.path}
             >
-              <button className="log-tab-name" onClick={() => setActiveId(t.id)}>
-                📄 {baseName(t.path)}
+              <button className="log-tab-name" onClick={() => setActiveId(tail.id)}>
+                📄 {baseName(tail.path)}
               </button>
-              <button className="log-tab-close" title="Ferma" onClick={() => stop(t.id)}>
+              <button className="log-tab-close" title={t("log.stopTitle")} onClick={() => stop(tail.id)}>
                 ✕
               </button>
             </div>
@@ -139,7 +139,7 @@ export function LogViewer() {
             {lines.map((l, i) => (
               <div key={i}>{l}</div>
             ))}
-            {lines.length === 0 && <span className="dim">in attesa di nuove righe…</span>}
+            {lines.length === 0 && <span className="dim">{t("log.waitingLines")}</span>}
           </pre>
         </div>
       )}

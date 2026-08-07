@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
 import type { ApiError, Snippet, TaskInfo } from "../../lib/types";
@@ -25,41 +26,42 @@ function SnippetForm({
   onCancel: () => void;
   busy: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="snippet-form">
       <label className="form-row">
-        <span>Nome</span>
+        <span>{t("snippets.name")}</span>
         <input
           value={draft.name}
           onChange={(e) => onChange({ ...draft, name: e.target.value })}
-          placeholder="es. Riavvia nginx"
+          placeholder={t("snippets.namePlaceholder")}
         />
       </label>
       <label className="form-row form-row-col">
-        <span>Comando</span>
+        <span>{t("snippets.command")}</span>
         <textarea
           value={draft.command}
           onChange={(e) => onChange({ ...draft, command: e.target.value })}
-          placeholder="riga di shell — supporta pipe, &&, redirezioni"
+          placeholder={t("snippets.commandPlaceholder")}
           rows={2}
         />
       </label>
       <label className="form-row">
-        <span title="Vuoto = home dell'utente">Cartella</span>
+        <span title={t("snippets.folderTitle")}>{t("snippets.folder")}</span>
         <input
           value={draft.cwd}
           onChange={(e) => onChange({ ...draft, cwd: e.target.value })}
-          placeholder="opzionale — vuoto = home"
+          placeholder={t("snippets.folderPlaceholder")}
         />
       </label>
       <div className="dialog-actions">
-        <button onClick={onCancel}>Annulla</button>
+        <button onClick={onCancel}>{t("common.cancel")}</button>
         <button
           className="primary"
           onClick={onSave}
           disabled={busy || !draft.name.trim() || !draft.command.trim()}
         >
-          {busy ? "Salvo…" : "Salva"}
+          {busy ? t("snippets.saving") : t("common.save")}
         </button>
       </div>
     </div>
@@ -67,6 +69,7 @@ function SnippetForm({
 }
 
 export function Snippets() {
+  const { t } = useTranslation();
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -95,7 +98,7 @@ export function Snippets() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm("Eliminare questo snippet?")) return;
+    if (!confirm(t("snippets.deleteConfirm"))) return;
     const r = await post<{ snippets: Snippet[] }>("/api/snippets/delete", { id });
     if (r.ok) setSnippets(r.data.snippets);
   };
@@ -110,17 +113,14 @@ export function Snippets() {
   return (
     <div className="snippets">
       <div className="section-header">
-        <h2>Snippet</h2>
+        <h2>{t("nav.snippets")}</h2>
         {!draft && (
           <button className="small" onClick={() => setDraft({ ...EMPTY })}>
-            + Nuovo
+            {t("snippets.new")}
           </button>
         )}
       </div>
-      <p className="hint">
-        Comandi salvati che esegui al volo: l'output è in streaming come i task. Ideale per
-        one-liner ricorrenti (restart di servizi, pulizie, script di deploy).
-      </p>
+      <p className="hint">{t("snippets.intro")}</p>
 
       {error && (
         <div className="banner banner-error">
@@ -140,7 +140,7 @@ export function Snippets() {
       )}
 
       {snippets.length === 0 && !draft && (
-        <div className="empty">Nessuno snippet. Creane uno con “+ Nuovo”.</div>
+        <div className="empty">{t("snippets.empty")}</div>
       )}
 
       <div className="snippet-list">
@@ -155,13 +155,13 @@ export function Snippets() {
             </div>
             <div className="snippet-actions">
               <button className="primary small" onClick={() => run(s)}>
-                ▶ Esegui
+                {t("snippets.run")}
               </button>
               <button className="small" onClick={() => setDraft({ ...s })}>
-                Modifica
+                {t("common.edit")}
               </button>
               <button className="small danger" onClick={() => remove(s.id)}>
-                Elimina
+                {t("common.delete")}
               </button>
             </div>
           </div>
@@ -171,9 +171,9 @@ export function Snippets() {
       {task && (
         <div className="snippet-output">
           <div className="section-header">
-            <h3>Output · {task.name}</h3>
+            <h3>{t("snippets.output", { name: task.name })}</h3>
             <button className="small" onClick={() => setTask(null)}>
-              Chiudi
+              {t("common.close")}
             </button>
           </div>
           <TaskLog key={task.info.id} task={task.info} />

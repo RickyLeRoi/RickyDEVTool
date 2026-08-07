@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useStatsStore } from "../stores/statsStore";
 import { Sparkline } from "../components/Sparkline";
 import { ws } from "../lib/ws";
@@ -20,6 +21,7 @@ function alertTarget(kind: string): string | null {
 const DOCKER_POLL_MS = 60_000;
 
 export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => void }) {
+  const { t } = useTranslation();
   const { latest, cpuHistory, memHistory } = useStatsStore();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [bundles, setBundles] = useState<LaunchBundle[]>([]);
@@ -77,7 +79,9 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
           </span>
         </div>
         <Sparkline values={cpuHistory} width={180} height={24} />
-        {latest && <div className="vitals-sub">{latest.cores.length} core</div>}
+        {latest && (
+          <div className="vitals-sub">{t("vitals.cores", { count: latest.cores.length })}</div>
+        )}
       </div>
       <div className="vitals-block">
         <div className="vitals-row">
@@ -99,19 +103,19 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
           <button
             className="vitals-heading"
             onClick={() => onNavigate?.("launch")}
-            title="Vai agli Avvii"
+            title={t("vitals.goToLaunches")}
           >
-            Avvii rapidi ›
+            {t("vitals.quickLaunches")}
           </button>
           <div className="vitals-chips">
             {bundles.slice(0, 6).map((b) => (
               <button
                 key={b.id}
                 className="vitals-chip"
-                title={`Avvia "${b.name}"`}
+                title={t("vitals.runBundleTitle", { name: b.name })}
                 onClick={() => runBundle(b)}
               >
-                {ranBundle === b.id ? "avviato ✓" : `▶ ${b.name}`}
+                {ranBundle === b.id ? t("vitals.started") : t("vitals.bundleChip", { name: b.name })}
               </button>
             ))}
           </div>
@@ -123,7 +127,7 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
           <button
             className="vitals-shortcut"
             onClick={() => onNavigate?.("docker")}
-            title="Apri Docker"
+            title={t("vitals.openDocker")}
           >
             <span className="vitals-label">🐳 Docker ›</span>
             <span className="vitals-value">
@@ -131,8 +135,8 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
             </span>
           </button>
           <div className="vitals-sub">
-            {dockerRunning} attivi su {dockerTotal}
-            {docker?.host ? " · remoto" : ""}
+            {t("vitals.dockerActiveOf", { running: dockerRunning, total: dockerTotal })}
+            {docker?.host ? t("vitals.dockerRemote") : ""}
           </div>
         </div>
       )}
@@ -140,21 +144,25 @@ export function VitalsPanel({ onNavigate }: { onNavigate?: (section: string) => 
       <div className="vitals-spacer" />
       <div className="vitals-alerts">
         <div className="vitals-row">
-          <span className="vitals-label">Alert</span>
+          <span className="vitals-label">{t("vitals.alerts")}</span>
           {alerts.length > 0 && (
             <button className="small" onClick={() => post("/api/alerts/ack", {})}>
-              pulisci
+              {t("vitals.clear")}
             </button>
           )}
         </div>
-        {alerts.length === 0 && <div className="vitals-sub">Nessun alert</div>}
+        {alerts.length === 0 && <div className="vitals-sub">{t("vitals.noAlerts")}</div>}
         {alerts.slice(0, 5).map((a) => {
           const target = alertTarget(a.kind);
           return (
             <button
               key={a.id}
               className={`alert-item ${a.severity}`}
-              title={`${a.detail}${target ? " (clic: vai e conferma)" : " (clic per confermare)"}`}
+              title={
+                target
+                  ? t("vitals.alertGoConfirm", { detail: a.detail })
+                  : t("vitals.alertConfirm", { detail: a.detail })
+              }
               onClick={() => {
                 if (target) onNavigate?.(target);
                 post("/api/alerts/ack", { id: a.id });

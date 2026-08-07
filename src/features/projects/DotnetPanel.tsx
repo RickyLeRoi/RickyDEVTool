@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, post } from "../../lib/api";
 import { TaskLog } from "../../components/TaskLog";
 import type { ApiError, DotnetProject, TaskInfo } from "../../lib/types";
@@ -13,6 +14,7 @@ async function backendOs(): Promise<string> {
 }
 
 export function DotnetPanel({ path }: { path: string }) {
+  const { t } = useTranslation();
   const [project, setProject] = useState<DotnetProject | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [task, setTask] = useState<TaskInfo | null>(null);
@@ -53,7 +55,7 @@ export function DotnetPanel({ path }: { path: string }) {
   const openInVs = () =>
     post("/api/tools/visualstudio/launch", { target: project?.slnPath ?? path });
 
-  if (!project && !error) return <div className="empty">Leggo la solution…</div>;
+  if (!project && !error) return <div className="empty">{t("projects.dotnet.reading")}</div>;
 
   const executables = project?.projects.filter((p) => p.isExecutable) ?? [];
   const startup = project?.projects.find(
@@ -74,13 +76,13 @@ export function DotnetPanel({ path }: { path: string }) {
         <>
           <div className="node-actions">
             <label className="dim">
-              Avvio:{" "}
+              {t("projects.dotnet.startup")}{" "}
               <select
                 value={project.startupProjectPath ?? ""}
                 onChange={(e) => select(e.target.value || null, null)}
               >
                 <option value="" disabled>
-                  progetto…
+                  {t("projects.dotnet.selectProject")}
                 </option>
                 {executables.map((p) => (
                   <option key={p.csprojPath} value={p.csprojPath}>
@@ -91,7 +93,7 @@ export function DotnetPanel({ path }: { path: string }) {
             </label>
             {startup && startup.launchProfiles.length > 0 && (
               <label className="dim">
-                Profilo:{" "}
+                {t("projects.dotnet.profile")}{" "}
                 <select
                   value={project.selectedProfile ?? ""}
                   onChange={(e) =>
@@ -105,7 +107,7 @@ export function DotnetPanel({ path }: { path: string }) {
                       disabled={!lp.runnableCrossPlatform}
                     >
                       {lp.name}
-                      {!lp.runnableCrossPlatform ? " (solo VS/Windows)" : ""}
+                      {!lp.runnableCrossPlatform ? t("projects.dotnet.vsOnly") : ""}
                     </option>
                   ))}
                 </select>
@@ -116,32 +118,26 @@ export function DotnetPanel({ path }: { path: string }) {
             <button
               onClick={() => run("run")}
               disabled={running || !project.startupProjectPath}
-              title={!project.startupProjectPath ? "scegli il progetto di avvio" : undefined}
+              title={!project.startupProjectPath ? t("projects.dotnet.chooseStartup") : undefined}
             >
-              Run
+              {t("projects.dotnet.run")}
             </button>
             <button onClick={() => run("rebuild")} disabled={running}>
-              Rebuild
+              {t("projects.dotnet.rebuild")}
             </button>
             <button onClick={() => run("clean")} disabled={running}>
-              Clean
+              {t("projects.dotnet.clean")}
             </button>
             <button
               onClick={openInVs}
               disabled={!isWindows}
-              title={
-                isWindows
-                  ? "Apri la solution in Visual Studio"
-                  : "Visual Studio è disponibile solo su Windows"
-              }
+              title={isWindows ? t("projects.dotnet.openSlnVs") : t("projects.dotnet.vsWindowsOnly")}
             >
-              Open in VS
+              {t("projects.dotnet.openInVs")}
             </button>
           </div>
           {executables.length === 0 && (
-            <div className="banner banner-error">
-              Nessun progetto eseguibile nella solution (solo librerie).
-            </div>
+            <div className="banner banner-error">{t("projects.dotnet.noExecutable")}</div>
           )}
         </>
       )}

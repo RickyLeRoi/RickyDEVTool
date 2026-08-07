@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import type { ApiError } from "../lib/types";
 
 interface ModalProps {
@@ -24,9 +25,11 @@ export function Modal({
   error,
   busy = false,
   confirm,
-  cancelLabel = confirm ? "Annulla" : "Chiudi",
+  cancelLabel,
   className,
 }: ModalProps) {
+  const { t } = useTranslation();
+  const cancelText = cancelLabel ?? (confirm ? t("common.cancel") : t("common.close"));
   useEffect(() => {
     if (busy) return;
     const onKey = (e: KeyboardEvent) => {
@@ -54,7 +57,7 @@ export function Modal({
         )}
         <div className="dialog-actions">
           <button onClick={onCancel} disabled={busy}>
-            {cancelLabel}
+            {cancelText}
           </button>
           {confirm && (
             <button

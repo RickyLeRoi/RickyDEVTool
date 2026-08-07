@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { api, post } from "../../lib/api";
 import { ws } from "../../lib/ws";
 import {
@@ -15,23 +17,23 @@ import {
 } from "./storage";
 import type { AiReply, AiState, AiStatus, ApiError } from "../../lib/types";
 
-const STATE_LABEL: Record<AiState, string> = {
-  ready: "pronto",
-  starting: "in avvio…",
-  notInstalled: "of-free non installato",
-  failed: "non disponibile",
-  disabled: "disattivato",
+const STATE_KEYS: Record<AiState, "rickyai.stateReady"> = {
+  ready: "rickyai.stateReady",
+  starting: "rickyai.stateStarting" as "rickyai.stateReady",
+  notInstalled: "rickyai.stateNotInstalled" as "rickyai.stateReady",
+  failed: "rickyai.stateFailed" as "rickyai.stateReady",
+  disabled: "rickyai.stateDisabled" as "rickyai.stateReady",
 };
 
-const SUGGESTIONS = [
-  "Spiegami questo errore di build",
-  "Scrivimi uno script bash che…",
-  "Come funziona un process group su unix?",
-];
+const SUGGESTION_KEYS = [
+  "rickyai.suggestion1",
+  "rickyai.suggestion2",
+  "rickyai.suggestion3",
+] as const;
 
-function modelLabel(id: string): string {
-  if (id === "auto") return "Automatico (miglior quota)";
-  if (id === "private") return "Solo locale (privato)";
+function modelLabel(id: string, t: TFunction): string {
+  if (id === "auto") return t("rickyai.modelAuto");
+  if (id === "private") return t("rickyai.modelPrivate");
   return id;
 }
 
@@ -44,7 +46,8 @@ function StatusBar({
   onRestart: () => void;
   restarting: boolean;
 }) {
-  if (!status) return <div className="ai-status dim">Verifico RickyAI…</div>;
+  const { t } = useTranslation();
+  if (!status) return <div className="ai-status dim">{t("rickyai.verifying")}</div>;
 
   const ready = status.state === "ready";
   const badgeClass = ready ? "badge-ok" : status.state === "starting" ? "" : "badge-warn";
@@ -53,26 +56,31 @@ function StatusBar({
   return (
     <div className="ai-status">
       <div className="ai-status-line">
-        <span className={`badge ${badgeClass}`}>{STATE_LABEL[status.state]}</span>
+        <span className={`badge ${badgeClass}`}>{t(STATE_KEYS[status.state])}</span>
         {ready && (
-          <span className="dim" title={`endpoint OpenAI-compatibile su ${status.baseUrl}/v1`}>
+          <span className="dim" title={t("rickyai.endpointTitle", { url: status.baseUrl })}>
             {status.mode === "remote"
-              ? `${status.ofFree ? "of-free in rete" : "endpoint OpenAI"} · ${status.baseUrl}`
-              : `${status.managed ? "of-free" : "of-free (istanza esterna)"} · porta ${
-                  status.port
-                } · strategia ${status.strategy}`}
+              ? t("rickyai.readyRemote", {
+                  engine: status.ofFree ? t("rickyai.remoteOfFree") : t("rickyai.remoteOpenai"),
+                  url: status.baseUrl,
+                })
+              : t("rickyai.readyLocal", {
+                  engine: status.managed ? t("rickyai.localManaged") : t("rickyai.localExternal"),
+                  port: status.port,
+                  strategy: status.strategy,
+                })}
           </span>
         )}
         {ready && !status.ofFree && (
-          <span className="dim">nessun routing fra provider</span>
+          <span className="dim">{t("rickyai.noRouting")}</span>
         )}
         {ready && status.next && (
           <span className="dim">
-            prossima richiesta → <strong>{status.next.provider}</strong> {status.next.model}
+            {t("rickyai.nextRequest")} <strong>{status.next.provider}</strong> {status.next.model}
           </span>
         )}
         <button className="small" onClick={onRestart} disabled={restarting}>
-          {restarting ? "Riavvio…" : "Riavvia"}
+          {restarting ? t("rickyai.restarting") : t("rickyai.restart")}
         </button>
       </div>
 
@@ -101,15 +109,10 @@ function StatusBar({
 
       {!ready && (
         <div className="banner banner-warn ai-status-detail">
-          <div>{status.message ?? "RickyAI non è disponibile."}</div>
+          <div>{status.message ?? t("rickyai.notAvailable")}</div>
           {status.state === "notInstalled" && (
             <div className="hint">
-              RickyAI usa <code>of-free</code> (OnFeather Free): installalo con{" "}
-              <code>pip install -e .</code> dal repo <code>onfeather-free</code>, indica il
-              percorso del binario dalle impostazioni, oppure — se lo fai già girare altrove —
-              passa a <strong>Servizio in rete</strong> e mettine l'indirizzo. Le chiavi dei
-              provider si incollano nelle impostazioni; senza nessuna chiave restano i soli
-              modelli locali via Ollama.
+              <Trans i18nKey="rickyai.notInstalledHelp" components={{ c: <code />, b: <strong /> }} />
             </div>
           )}
           {status.log.length > 0 && (
@@ -122,6 +125,7 @@ function StatusBar({
 }
 
 function MessageBubble({ message }: { message: AiChatMessage }) {
+  const { t } = useTranslation();
   const mine = message.role === "user";
   return (
     <div className={`ai-msg ${mine ? "ai-msg-user" : "ai-msg-bot"}`}>
@@ -131,7 +135,7 @@ function MessageBubble({ message }: { message: AiChatMessage }) {
           {message.provider}
           {message.model ? ` · ${message.model}` : ""}
           {message.elapsedMs != null ? ` · ${(message.elapsedMs / 1000).toFixed(1)}s` : ""}
-          {message.failovers ? ` · ${message.failovers} failover` : ""}
+          {message.failovers ? ` · ${t("rickyai.failover", { count: message.failovers })}` : ""}
         </div>
       )}
     </div>
@@ -139,6 +143,7 @@ function MessageBubble({ message }: { message: AiChatMessage }) {
 }
 
 export function RickyAI() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [threads, setThreads] = useState<AiThread[]>(() => {
     const stored = loadThreads();
@@ -269,22 +274,22 @@ export function RickyAI() {
   return (
     <div className="rickyai">
       <div className="section-header">
-        <h2>RickyAI</h2>
+        <h2>{t("nav.rickyai")}</h2>
         <div className="ai-head-actions">
           <select
             className="ai-model"
             value={selectedModel}
             onChange={(e) => setModel(e.target.value)}
-            title="Quale modello usare"
+            title={t("rickyai.modelTitle")}
           >
             {models.map((m) => (
               <option key={m} value={m}>
-                {modelLabel(m)}
+                {modelLabel(m, t)}
               </option>
             ))}
           </select>
           <button className="small" onClick={startNewThread} disabled={active.messages.length === 0}>
-            + Nuova chat
+            {t("rickyai.newChat")}
           </button>
         </div>
       </div>
@@ -293,23 +298,23 @@ export function RickyAI() {
 
       <div className="ai-body">
         <aside className="ai-threads">
-          {threads.map((t) => (
+          {threads.map((thread) => (
             <div
-              key={t.id}
-              className={`ai-thread ${t.id === active.id ? "active" : ""}`}
+              key={thread.id}
+              className={`ai-thread ${thread.id === active.id ? "active" : ""}`}
               onClick={() => {
-                setActiveId(t.id);
+                setActiveId(thread.id);
                 setError(null);
               }}
             >
-              <span className="ai-thread-title">{t.title}</span>
+              <span className="ai-thread-title">{thread.title}</span>
               <button
                 className="ai-thread-del"
-                title="Elimina questa chat"
-                aria-label="Elimina chat"
+                title={t("rickyai.deleteChatTitle")}
+                aria-label={t("rickyai.deleteChatAria")}
                 onClick={(e) => {
                   e.stopPropagation();
-                  deleteThread(t.id);
+                  deleteThread(thread.id);
                 }}
               >
                 ×
@@ -322,17 +327,19 @@ export function RickyAI() {
           <div className="ai-messages" ref={listRef}>
             {active.messages.length === 0 && (
               <div className="ai-empty">
-                <div className="ai-empty-title">Chiedi qualcosa a RickyAI</div>
+                <div className="ai-empty-title">{t("rickyai.askSomething")}</div>
                 <div className="hint">
-                  Le richieste passano da <code>of-free</code>, che le smista sul provider gratuito
-                  con più quota rimasta. La conversazione resta su questo dispositivo.
+                  <Trans i18nKey="rickyai.emptyHint" components={{ c: <code /> }} />
                 </div>
                 <div className="ai-suggestions">
-                  {SUGGESTIONS.map((s) => (
-                    <button key={s} className="small ghost" onClick={() => setInput(s)}>
-                      {s}
-                    </button>
-                  ))}
+                  {SUGGESTION_KEYS.map((key) => {
+                    const label = t(key);
+                    return (
+                      <button key={key} className="small ghost" onClick={() => setInput(label)}>
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -357,13 +364,13 @@ export function RickyAI() {
               <div>{error.message}</div>
               <div className="ai-error-actions">
                 {error.retryAfter != null && (
-                  <span className="hint">riprovabile tra ~{error.retryAfter}s</span>
+                  <span className="hint">{t("rickyai.retryAfter", { seconds: error.retryAfter })}</span>
                 )}
                 <button className="small" onClick={retry} disabled={sending}>
-                  Riprova
+                  {t("rickyai.retry")}
                 </button>
                 <button className="small ghost" onClick={() => setError(null)}>
-                  Chiudi
+                  {t("common.close")}
                 </button>
               </div>
             </div>
@@ -380,7 +387,7 @@ export function RickyAI() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={
-                blocked ? "RickyAI non è disponibile" : "Scrivi un messaggio… (Invio per inviare)"
+                blocked ? t("rickyai.composerBlocked") : t("rickyai.composerPlaceholder")
               }
               rows={2}
               disabled={blocked}
@@ -392,7 +399,7 @@ export function RickyAI() {
               }}
             />
             <button className="primary" disabled={sending || blocked || !input.trim()}>
-              {sending ? "…" : "Invia"}
+              {sending ? "…" : t("rickyai.send")}
             </button>
           </form>
         </div>
